@@ -1,0 +1,10 @@
+# 36键电子琴 MIDI播放器 依赖
+
+# MIDI文件解析
+mido>=1.2.10
+
+# 键盘模拟 (二选一)
+keyboard>=0.13.5
+# pynput>=1.7.6  # 备选方案
+
+# GUI (Python自带tkinter，通常不需要安装)

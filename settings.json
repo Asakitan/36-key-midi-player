@@ -1,0 +1,18 @@
+{
+  "hotkeys": {
+    "play_pause": "F5",
+    "stop": "F6",
+    "speed_up": "F7",
+    "speed_down": "F8",
+    "toggle_topmost": "F9"
+  },
+  "last_file": "E:/弹琴/泡泡/mid/08689-ミカヅキ-乱步奇谭片尾曲.mid",
+  "speed": 1.0,
+  "transpose": -6,
+  "chord_mode": true,
+  "bass_density": 1.0,
+  "song_play_counts": {
+    "6d6224e565ec": 1
+  },
+  "direct_c_mode": true
+}
