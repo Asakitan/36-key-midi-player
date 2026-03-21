@@ -478,12 +478,12 @@ class MidiParser:
         
         density = len(self.notes) / self.total_time
         
-        if density <= 12:
+        if density <= 18:
             return  # 密度正常，不需要精简
         
         original_count = len(self.notes)
         print(f"[智能编曲] 检测到过密曲目: {original_count}音符/{self.total_time:.0f}秒 "
-              f"(密度={density:.1f}notes/s, 阈值=12)")
+              f"(密度={density:.1f}notes/s, 阈值=18)")
         
         # === 第一步：按时间窗口分组（50ms窗口 ≈ 同时发声） ===
         WINDOW_MS = 0.05  # 50ms
@@ -502,8 +502,8 @@ class MidiParser:
             time_groups.append((group_start, current_group))
         
         # === 第二步：智能筛选每个时间窗口的音符 ===
-        MAX_SIMULTANEOUS = 4  # 每个时刻最多保留4个音符
-        MIN_REPEAT_GAP = 0.08  # 同音重复最小间隔80ms
+        MAX_SIMULTANEOUS = 6  # 每个时刻最多保留6个音符
+        MIN_REPEAT_GAP = 0.04  # 同音重复最小间隔40ms
         
         kept_notes = []
         last_note_time = {}  # {pitch: last_time} 用于去重复
@@ -581,7 +581,7 @@ class MidiParser:
               f"(减少{reduction:.0f}%, 新密度={new_density:.1f}notes/s)")
         
         # 检查是否仍然过密，进行第二轮更激进的精简
-        if new_density > 18:
+        if new_density > 25:
             # 进一步精简：只保留旋律线+稀疏低音
             print(f"[智能编曲] 仍然过密，进行第二轮精简...")
             
@@ -649,8 +649,8 @@ class MidiParser:
         # === 分析歌曲是否需要智能编曲 ===
         # 统计"杂乱"段落占比
         WINDOW = 0.5  # 500ms分析窗口
-        DENSITY_THRESHOLD = 8  # 每秒8个音符以上视为密集
-        SIMULTANEOUS_THRESHOLD = 6  # 同时6个音符以上视为过密
+        DENSITY_THRESHOLD = 14  # 每秒14个音符以上视为密集
+        SIMULTANEOUS_THRESHOLD = 8  # 同时8个音符以上视为过密
         
         dense_windows = 0
         total_windows = 0
@@ -676,7 +676,7 @@ class MidiParser:
         
         dense_ratio = dense_windows / max(total_windows, 1)
         
-        if dense_ratio < 0.30 and thick_chords < 10 and density <= 10:
+        if dense_ratio < 0.50 and thick_chords < 20 and density <= 14:
             return  # 歌曲不杂乱，不需要处理
         
         print(f"[智能编曲] 检测到杂乱段落: 密集段{dense_ratio:.0%}, 厚重和弦{thick_chords}处, "
@@ -745,13 +745,13 @@ class MidiParser:
             window_notes = [n for n in sorted_notes if t <= n.time < t + WINDOW]
             window_density = len(window_notes) / WINDOW
             
-            if window_density <= 6:
+            if window_density <= 10:
                 # 稀疏段：保留所有
                 kept_notes.extend(window_notes)
             else:
                 # 密集段：根据重要性筛选
-                # 目标密度：6-8 notes/sec
-                target_count = max(3, int(6 * WINDOW))
+                # 目标密度：10-12 notes/sec
+                target_count = max(4, int(10 * WINDOW))
                 
                 # 按重要性排序
                 scored = [(n, note_importance.get(id(n), 0)) for n in window_notes]
@@ -1148,10 +1148,10 @@ class MidiParser:
                     repeat_count[pc] = []
                 repeat_count[pc].append(note)
             
-            # 标记高重复度的低音（同一音名出现次数占低音总数的30%以上）
+            # 标记高重复度的低音（同一音名出现次数占低音总数的40%以上）
             heavy_repeat_pitches = set()
             for pc, notes_list in repeat_count.items():
-                if len(notes_list) > len(bass_sorted) * 0.25:
+                if len(notes_list) > len(bass_sorted) * 0.40:
                     heavy_repeat_pitches.add(pc)
             
             # 对重复度高的低音进行稀疏化：每拍只保留一个
@@ -1162,14 +1162,14 @@ class MidiParser:
                 else:
                     non_pattern_bass.append(note)
             
-            # 稀疏化重复低音：每2拍保留一个
+            # 稀疏化重复低音：每拍保留一个
             if pattern_bass:
                 sparse_pattern = []
                 last_kept_time = {}
                 for note in pattern_bass:
                     pc = note.note % 12
-                    last_t = last_kept_time.get(pc, -beat_duration * 3)
-                    if note.time - last_t >= beat_duration * 2:
+                    last_t = last_kept_time.get(pc, -beat_duration * 2)
+                    if note.time - last_t >= beat_duration:
                         sparse_pattern.append(note)
                         last_kept_time[pc] = note.time
                 
