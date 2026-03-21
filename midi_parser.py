@@ -476,6 +476,8 @@ class MidiParser:
         if not self.notes or self.total_time <= 0:
             return
         
+        return  # 不丢弃音符：全部音符交由播放器处理
+        
         density = len(self.notes) / self.total_time
         
         if density <= 18:
@@ -642,6 +644,8 @@ class MidiParser:
         """
         if not self.notes or self.total_time <= 0:
             return
+        
+        return  # 不丢弃音符：全部音符交由播放器处理
         
         sorted_notes = sorted(self.notes, key=lambda n: n.time)
         density = len(sorted_notes) / self.total_time
@@ -952,19 +956,37 @@ class MidiParser:
         # 策略：将极速段内的音符时间等比拉伸，使密度降到目标值
         # 后续音符的时间向后推移
         
+        # BPM 保护：拉伸因子上限 = 1/0.85 ≈ 1.176（最多减速到原速85%）
+        # 对应：不允许 BPM 变慢超过 15%，也不能快过 15%（此函数只拉伸不压缩）
+        MAX_STRETCH = 1.0 / 0.85          # ≈ 1.176 → BPM 最低为原始的 85%
+        MAX_TOTAL_RATIO = 1.0 / 0.85      # 全曲累积总时长变化不超过此倍数
+        
         time_shift = 0.0  # 累积时间偏移
         notes_adjusted = 0
+        original_total_time = self.total_time
         
         for seg_start, seg_end, seg_density in merged_segments:
             if seg_density <= HUMAN_MAX_DENSITY:
                 continue
             
-            # 拉伸系数：当前密度/目标密度
-            stretch_ratio = min(seg_density / TARGET_DENSITY, 1.8)  # 最多拉伸1.8倍
+            # 全局保护：如果已经累积拉伸超过上限，停止继续拉伸
+            if (original_total_time + time_shift) / original_total_time >= MAX_TOTAL_RATIO:
+                print(f"[速度优化] 已达BPM下限(85%)，停止继续拉伸")
+                break
+            
+            # 单段拉伸系数：密度比值，但不超过 MAX_STRETCH
+            stretch_ratio = min(seg_density / TARGET_DENSITY, MAX_STRETCH)
             
             seg_duration = seg_end - seg_start
             new_duration = seg_duration * stretch_ratio
             time_added = new_duration - seg_duration
+            
+            # 精确控制：不超出全局总时长上限
+            budget_left = original_total_time * MAX_TOTAL_RATIO - original_total_time - time_shift
+            if time_added > budget_left:
+                time_added = max(0.0, budget_left)
+                new_duration = seg_duration + time_added
+                stretch_ratio = new_duration / seg_duration if seg_duration > 0 else 1.0
             
             # 调整该段内的音符时间
             for note in sorted_notes:
@@ -981,8 +1003,10 @@ class MidiParser:
         
         if time_shift > 0:
             self.total_time += time_shift
+            bpm_ratio = original_total_time / self.total_time  # 拉伸后BPM变慢
             print(f"[速度优化] 已拉伸 {notes_adjusted} 个音符, "
-                  f"总时长增加 {time_shift:.2f}秒 ({time_shift/self.total_time*100:.1f}%)")
+                  f"总时长增加 {time_shift:.2f}秒 ({time_shift/self.total_time*100:.1f}%), "
+                  f"BPM变化: {bpm_ratio:.2%} (范围: 85%~115%)")
     
     def _analyze_pitch_parts(self):
         """
@@ -1076,21 +1100,46 @@ class MidiParser:
             elif avg_pitch > 65:  # 平均音高高于F4，大概率是旋律声部
                 melody_channels.add(ch)
         
-        # === 第三步：计算智能分割点 ===
+        # === 第三步：计算智能分割点（最大音高间隙法 / Largest Pitch Gap）===
+        # 标准MIR方法（Cambouropoulos 2006等）：
+        #   在音高分布中，找高低音区之间音高值最稀疏的间隙作为分割点。
+        #   默认分割点 = C4(60)，即钢琴五线谱高低音谱号分界线。
+        #   只有当分布中存在 ≥3 半音的明显间隙，且两侧各有 ≥5% 的音符时，
+        #   才用间隙中点替代默认值。
+        SPLIT_SEARCH_MIN = 36   # C2 搜索范围下限
+        SPLIT_SEARCH_MAX = 72   # C5 搜索范围上限
+        
+        pitch_counts: Dict[int, int] = {}
+        for p in all_pitches:
+            pitch_counts[p] = pitch_counts.get(p, 0) + 1
+        
+        unique_sorted_pitches = sorted(pitch_counts.keys())
+        best_gap = 0
+        best_split = 60  # 默认 C4
+        
+        for _idx in range(len(unique_sorted_pitches) - 1):
+            lo = unique_sorted_pitches[_idx]
+            hi = unique_sorted_pitches[_idx + 1]
+            gap = hi - lo
+            mid = (lo + hi) // 2
+            if SPLIT_SEARCH_MIN <= mid <= SPLIT_SEARCH_MAX and gap >= 3 and gap > best_gap:
+                lo_count = sum(pitch_counts.get(p, 0) for p in unique_sorted_pitches[:_idx + 1])
+                hi_count = sum(pitch_counts.get(p, 0) for p in unique_sorted_pitches[_idx + 1:])
+                # 两侧各需至少 5% 的音符，排除边缘孤立音偷走分割点
+                if min(lo_count, hi_count) >= len(all_pitches) * 0.05:
+                    best_gap = gap
+                    best_split = mid
+        
+        self.pitch_split_point = best_split
+        # 安全边界：确保分割点在实际音域内
+        self.pitch_split_point = max(pitch_min, min(pitch_max - 5, self.pitch_split_point))
+        
+        # 旋律线中位音（供后续打印统计）
         if melody_line_pitches:
             melody_sorted = sorted(melody_line_pitches)
             melody_median = melody_sorted[len(melody_sorted) // 2]
-            # 分割点 = 旋律线的10%分位数，但不高于C4(60)
-            melody_10th = melody_sorted[max(0, len(melody_sorted) // 10)]
-            self.pitch_split_point = melody_10th
         else:
             melody_median = (pitch_min + pitch_max) // 2
-            self.pitch_split_point = pitch_min + total_range // 4
-        
-        MAX_SPLIT_POINT = 60  # C4
-        MIN_SPLIT_POINT = 48  # C3
-        self.pitch_split_point = max(MIN_SPLIT_POINT, min(MAX_SPLIT_POINT, self.pitch_split_point))
-        self.pitch_split_point = max(pitch_min, min(pitch_max - 5, self.pitch_split_point))
         
         # === 第四步：智能分割（多因子，不只看音高）===
         self.melody_notes = []

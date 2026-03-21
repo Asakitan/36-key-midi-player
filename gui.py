@@ -21,6 +21,7 @@ from midi_parser import NoteEvent
 from config import (
     WINDOW_TITLE, WINDOW_SIZE,
     KEYBOARD_LAYOUT, NOTE_NAMES, BLACK_KEY_LAYOUT, BLACK_KEY_NAMES,
+    NOTE_NAMES_EXTENDED, BLACK_KEY_NAMES_EXTENDED,
     DEFAULT_HOTKEYS, CONFIG_FILE
 )
 
@@ -965,6 +966,11 @@ class PianoKey(tk.Canvas):
     def _restore(self):
         self._fade_out()
 
+    def update_note_name(self, new_name: str):
+        """更新显示的音符名并重绘"""
+        self.note_name = new_name
+        self._draw()
+
     def reset(self):
         self._cancel_animations()
         self._is_pressed = False
@@ -980,6 +986,8 @@ class PianoKeyboard(tk.Frame):
         self._create()
 
     def _create(self):
+        self._row_label_widgets = []   # 保存行标签 widget，供 set_mode_system 更新
+        self._key_positions = {}        # key -> (row_name, col_idx, is_black, black_row_name)
         row_labels = ['高音', '中音', '低音']
         row_colors = [ModernColors.ROW_HIGH, ModernColors.ROW_MID_HIGH, ModernColors.ROW_MID]
         for row_idx, (row_name, keys) in enumerate(KEYBOARD_LAYOUT.items()):
@@ -987,6 +995,7 @@ class PianoKeyboard(tk.Frame):
                            bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_SECONDARY,
                            font=('Microsoft YaHei UI', 10))
             lbl.grid(row=row_idx * 2, column=0, padx=8, pady=2, rowspan=2)
+            self._row_label_widgets.append(lbl)
             for col_idx, key in enumerate(keys):
                 note_name = NOTE_NAMES[row_name][col_idx]
                 piano_key = PianoKey(self, note_name, key,
@@ -994,6 +1003,7 @@ class PianoKeyboard(tk.Frame):
                                      color_role=('ROW_HIGH', 'ROW_MID_HIGH', 'ROW_MID')[row_idx])
                 piano_key.grid(row=row_idx * 2 + 1, column=col_idx + 1, padx=2, pady=2)
                 self.keys[key] = piano_key
+                self._key_positions[key] = (row_name, col_idx, False, None)
             black_row_name = f'{row_name}_black'
             if black_row_name in BLACK_KEY_LAYOUT:
                 black_keys = BLACK_KEY_LAYOUT[black_row_name]
@@ -1006,6 +1016,30 @@ class PianoKeyboard(tk.Frame):
                                              color_role='KEY_NORMAL')
                         piano_key.grid(row=row_idx * 2, column=col_idx + 1, padx=2, pady=1)
                         self.keys[bkey] = piano_key
+                        self._key_positions[bkey] = (row_name, col_idx, True, black_row_name)
+
+    def set_mode_system(self, system: str):
+        """切换模式系统时更新键盘音符名（classic=简谱数字，extended=绝对音名）"""
+        white_names = NOTE_NAMES_EXTENDED if system == 'extended' else NOTE_NAMES
+        black_names = BLACK_KEY_NAMES_EXTENDED if system == 'extended' else BLACK_KEY_NAMES
+        row_labels_classic  = ['高音', '中音', '低音']
+        row_labels_extended = ['C5-B5', 'C4-B4', 'C3-B3']
+        labels = row_labels_extended if system == 'extended' else row_labels_classic
+        for idx, lbl_widget in enumerate(self._row_label_widgets):
+            lbl_widget.configure(text=labels[idx])
+        for key, piano_key in self.keys.items():
+            pos = self._key_positions.get(key)
+            if pos is None:
+                continue
+            row_name, col_idx, is_black, black_row_name = pos
+            if is_black:
+                row_dict = black_names.get(black_row_name, [])
+                new_name = row_dict[col_idx] if col_idx < len(row_dict) else None
+            else:
+                row_list = white_names.get(row_name, [])
+                new_name = row_list[col_idx] if col_idx < len(row_list) else None
+            if new_name:
+                piano_key.update_note_name(new_name)
 
     def highlight_key(self, key: str, duration_ms: int = 180):
         key = key.lower()
@@ -1024,10 +1058,7 @@ class PianoKeyboard(tk.Frame):
 
 # ==================== MiniPianoBar 60键可视化钢琴 ======================================
 class MiniPianoBar(tk.Frame):
-    """60键可视化钢琴键盘 C2-B6 - 实时显示音符"""
-    MIDI_START = 36   # C2
-    MIDI_END = 95     # B6
-    NUM_OCTAVES = 5
+    """可视化钢琴键盘 - 实时显示音符，支持切换音域"""
     WHITE_NOTES = [0, 2, 4, 5, 7, 9, 11]
     BLACK_NOTES = [1, 3, 6, 8, 10]
     BLACK_POS = [0.58, 1.58, 3.40, 4.40, 5.40]
@@ -1035,6 +1066,11 @@ class MiniPianoBar(tk.Frame):
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, bg=ModernColors.BG_CARD, **kwargs)
+        # 可切换的音域参数（classic 默认）
+        self.midi_start  = 36
+        self.midi_end    = 95
+        self.num_octaves = 5
+        self._oct_labels = ['C2', 'C3', 'C4', 'C5', 'C6']
         self.canvas = tk.Canvas(self, bg=ModernColors.PIANO_BG, highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         self._white_items = {}
@@ -1044,6 +1080,21 @@ class MiniPianoBar(tk.Frame):
         self._active = {}       # midi -> {remaining_ms, velocity}
         self._decay_running = False
         self.canvas.bind("<Configure>", lambda e: self._build_keys())
+
+    def set_mode_system(self, system: str):
+        """classic: C2-B6 (5 八度)  extended: C1-B7 (7 八度)"""
+        if system == 'extended':
+            self.midi_start  = 24
+            self.midi_end    = 107
+            self.num_octaves = 7
+            self._oct_labels = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7']
+        else:
+            self.midi_start  = 36
+            self.midi_end    = 95
+            self.num_octaves = 5
+            self._oct_labels = ['C2', 'C3', 'C4', 'C5', 'C6']
+        self.reset()
+        self._build_keys()
 
     def _build_keys(self):
         self.canvas.delete("all")
@@ -1057,15 +1108,15 @@ class MiniPianoBar(tk.Frame):
         top_pad = max(1, (h - key_h) // 2)  # 居中
         if w <= 1:
             return
-        num_white = self.NUM_OCTAVES * 7
+        num_white = self.num_octaves * 7
         ww = w / num_white
         bw = ww * 0.62
         bh = key_h * 0.58
         C = ModernColors
         # 白键
-        for octave in range(self.NUM_OCTAVES):
+        for octave in range(self.num_octaves):
             for i, offset in enumerate(self.WHITE_NOTES):
-                midi = self.MIDI_START + octave * 12 + offset
+                midi = self.midi_start + octave * 12 + offset
                 idx = octave * 7 + i
                 x1 = idx * ww
                 x2 = (idx + 1) * ww - 0.8
@@ -1073,9 +1124,9 @@ class MiniPianoBar(tk.Frame):
                     fill=C.PIANO_WHITE, outline=C.BORDER, width=0.5)
                 self._white_items[midi] = item
         # 黑键
-        for octave in range(self.NUM_OCTAVES):
+        for octave in range(self.num_octaves):
             for offset, bpos in zip(self.BLACK_NOTES, self.BLACK_POS):
-                midi = self.MIDI_START + octave * 12 + offset
+                midi = self.midi_start + octave * 12 + offset
                 cx = (octave * 7 + bpos) * ww + ww / 2
                 x1 = cx - bw / 2
                 x2 = cx + bw / 2
@@ -1083,8 +1134,7 @@ class MiniPianoBar(tk.Frame):
                     fill=C.PIANO_BLACK, outline=C.PIANO_BG, width=0.5)
                 self._black_items[midi] = item
         # 八度标签 + 竖分隔线
-        labels = ['C2', 'C3', 'C4', 'C5', 'C6']
-        for octave, name in enumerate(labels):
+        for octave, name in enumerate(self._oct_labels):
             cx = octave * 7 * ww
             if octave > 0:
                 lid = self.canvas.create_line(cx, top_pad, cx, top_pad + key_h,
@@ -1096,7 +1146,7 @@ class MiniPianoBar(tk.Frame):
             self._label_items.append(tid)
 
     def note_on(self, midi_note, velocity=1.0, duration_ms=200):
-        if midi_note < self.MIDI_START or midi_note > self.MIDI_END:
+        if midi_note < self.midi_start or midi_note > self.midi_end:
             return
         v = min(1.0, velocity)
         C = ModernColors
@@ -2260,8 +2310,12 @@ class ControlPanel(tk.Frame):
             self._mode_system_info.configure(text="C2-B6 | L Shift/L Ctrl切换",
                                              fg=ModernColors.TEXT_SECONDARY)
         else:
-            self._mode_system_info.configure(text="A0-C8 | </> 切换 (需后期解锁)",
+            self._mode_system_info.configure(text="A0-C8 | </> 切换",
                                              fg=ModernColors.ACCENT_ORANGE)
+        if hasattr(self, 'piano') and self.piano:
+            self.piano.set_mode_system(system)
+        if hasattr(self, 'mini_piano') and self.mini_piano:
+            self.mini_piano.set_mode_system(system)
         # 如果已加载文件，重新分析映射
         if self.player.parser.notes:
             self.player._analyze_and_setup_mapping()
@@ -3260,12 +3314,14 @@ class MidiPlayerGUI:
         # 注入 StatusPill 引用
         self.control.shift_pill = self._shift_pill
         self.control.sustain_pill = self._sustain_pill
+        self.control.piano = self.piano           # 注入键盘引用，供模式系统切换使用
 
         # 60键可视化钢琴 (填满左侧剩余空间)
         piano_card = tk.Frame(left, bg=ModernColors.BG_CARD, bd=0)
         piano_card.pack(fill=tk.BOTH, expand=True, pady=(3, 0))
         self.mini_piano = MiniPianoBar(piano_card)
         self.mini_piano.pack(fill=tk.BOTH, expand=True)
+        self.control.mini_piano = self.mini_piano  # 注入底部可视化钢琴
 
         # --- 右侧 ---
         right = tk.Frame(main, bg=ModernColors.BG_DARK, width=240)

@@ -58,6 +58,19 @@ BLACK_KEY_NAMES = {
     'row3_black': ['#1̣', '#2̣', None, '#4̣', '#5̣', '#6̣'],
 }
 
+# 扩展模式（</>）键盘显示用绝对音名（如 C5、C#4）
+NOTE_NAMES_EXTENDED = {
+    'row1': ['C5', 'D5', 'E5', 'F5', 'G5', 'A5', 'B5'],   # Q-U
+    'row2': ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4'],   # A-J
+    'row3': ['C3', 'D3', 'E3', 'F3', 'G3', 'A3', 'B3'],   # Z-M
+}
+
+BLACK_KEY_NAMES_EXTENDED = {
+    'row1_black': ['C#5', 'D#5', None, 'F#5', 'G#5', 'A#5'],
+    'row2_black': ['C#4', 'D#4', None, 'F#4', 'G#4', 'A#4'],
+    'row3_black': ['C#3', 'D#3', None, 'F#3', 'G#3', 'A#3'],
+}
+
 # MIDI音符到按键的映射（普通模式，36键全音阶）
 # 普通模式音域: C3-B5 (MIDI 48-83, 3个八度, 36个键)
 #   低音区 C3-B3 (48-59) -> Z-M (白键) + 1-5 (黑键)
@@ -125,7 +138,7 @@ KEY_TO_MIDI_GT = {v: k for k, v in MIDI_TO_KEY_GT.items()}
 DEFAULT_MODE_SYSTEM = 'classic'
 
 # 模式切换设置
-MODE_SWITCH_DELAY_MS = 200    # 切换模式后必须等待的延迟(毫秒)，确保游戏响应
+MODE_SWITCH_DELAY_MS = 100    # 切换模式后必须等待的延迟(毫秒)，确保游戏响应
 MODE_KEY_PRESS_MS = 50        # 模式切换按键按下时长(毫秒)
 
 # 黑键集合（完整5八度: C2-B6, MIDI 36-95）
