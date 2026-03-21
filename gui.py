@@ -2793,8 +2793,19 @@ class MidiVisualizer(tk.Frame):
                 poly.extend([cx - hbs[i], ys[i]])
 
             mid_i = N // 2
-            fc = self._get_bar_color(mid_i, bright_mul=fill_bright,
-                                     hue_shift=hue_shift)
+            bg_hex = ModernColors.VIZ_BG
+            bg_r2 = int(bg_hex[1:3], 16)
+            bg_g2 = int(bg_hex[3:5], 16)
+            bg_b2 = int(bg_hex[5:7], 16)
+            # 填充色: 从VIZ_BG lerp到bar色, 而不是直接乘亮度 (light模式不会变黑)
+            base_c = self._get_bar_color(mid_i, bright_mul=1.0, hue_shift=hue_shift)
+            bc_r = int(base_c[1:3], 16)
+            bc_g = int(base_c[3:5], 16)
+            bc_b = int(base_c[5:7], 16)
+            fr = int(bg_r2 + (bc_r - bg_r2) * fill_bright)
+            fg2 = int(bg_g2 + (bc_g - bg_g2) * fill_bright)
+            fb = int(bg_b2 + (bc_b - bg_b2) * fill_bright)
+            fc = f"#{max(0,min(255,fr)):02x}{max(0,min(255,fg2)):02x}{max(0,min(255,fb)):02x}"
             self.canvas.create_polygon(poly, fill=fc, outline='', smooth=True)
 
             # ---- 全宽平滑边缘曲线, 分4段染色 ----
