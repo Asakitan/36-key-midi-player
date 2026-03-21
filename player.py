@@ -41,41 +41,42 @@ HUMANIZE_ARPEGGIO_MS = 15        # 琶音延迟(毫秒)，和弦从低到高微�
 # 核心原则：按键时长 = MIDI音符时长 × 缩放，让游戏内置延音自然工作
 # 当MIDI踏板踩下时，额外延长按键时长来模拟延音效果
 SUSTAIN_ENABLED = True           # 启用延音模式（尊重MIDI音符原始时长）
-SUSTAIN_SCALE = 1.28             # 延音缩放系数（基础延长28%，让音符更饱满丰润）
-SUSTAIN_MIN_MS = 180             # 最短按键时长(ms)，确保游戏识别且音色饱满
-SUSTAIN_MAX_S = 10.0             # 最长按键时长(秒)，允许超长延音自然衰减
-SUSTAIN_OVERLAP_MS = 200         # 连音重叠(ms)，充分重叠使音符衔接如歌无断裂
+SUSTAIN_SCALE = 1.45             # 延音缩放系数（基础延长45%，让音符更饱满丰润）
+SUSTAIN_MIN_MS = 220             # 最短按键时长(ms)，确保游戏识别且音色饱满
+SUSTAIN_MAX_S = 12.0             # 最长按键时长(秒)，允许超长延音自然衰减
+SUSTAIN_OVERLAP_MS = 280         # 连音重叠(ms)，充分重叠使音符衔接如歌无断裂
 
 # === MIDI踏板数据 → 按键时长加成 ===
 # 不再按空格键切换游戏踏板（容易卡住），改为读取MIDI踏板数据延长按键
-SUSTAIN_PEDAL_BOOST = 1.85       # 踏板踩下时按键时长额外乘以此系数（更饱满的延音共鸣）
-SUSTAIN_PEDAL_MIN_MS = 400       # 踏板踩下时最短按键时长(ms)，让短音符也有延音感
+SUSTAIN_PEDAL_BOOST = 2.10       # 踏板踩下时按键时长额外乘以此系数（更饱满的延音共鸣）
+SUSTAIN_PEDAL_MIN_MS = 500       # 踏板踩下时最短按键时长(ms)，让短音符也有延音感
 
 # === 同键防吞音设置 ===
-SAME_KEY_RELEASE_GAP_MS = 25    # 同一个键连续按时，释放后等待的间隔(毫秒)，确保游戏识别
+SAME_KEY_RELEASE_GAP_MS = 35     # 同一个键连续按时，释放后等待的间隔(毫秒)，确保游戏识别
+SAME_KEY_REPRESS_MIN_MS = 50     # 同键已按下时允许重新触发的最小间隔(毫秒)
 
 # === 单键速率限制 ===
-# 同一个键两次按下的最小间隔(毫秒)，随机 5~6 次/秒
+# 同一个键两次按下的最小间隔(毫秒)，随机 8~12 次/秒
 # 每次按下时在此范围内随机选取阈值，模拟人手不稳定性
-PER_KEY_MIN_INTERVAL_LOW  = 167   # ≈6次/秒
-PER_KEY_MIN_INTERVAL_HIGH = 200   # ≈5次/秒
+PER_KEY_MIN_INTERVAL_LOW  = 80    # ≈12次/秒
+PER_KEY_MIN_INTERVAL_HIGH = 125   # ≈8次/秒
 
 # === 钢琴家演奏模拟 - 细节化表情处理 ===
 # 力度到时长映射：强音符持续更久，弱音符更短促
-PIANO_VEL_SUSTAIN_MIN = 0.85     # 最弱力度的时长缩放 (pp)，不过度缩短弱音
-PIANO_VEL_SUSTAIN_MAX = 1.20     # 最强力度的时长缩放 (ff)，重音更饱满
+PIANO_VEL_SUSTAIN_MIN = 0.88     # 最弱力度的时长缩放 (pp)，不过度缩短弱音
+PIANO_VEL_SUSTAIN_MAX = 1.30     # 最强力度的时长缩放 (ff)，重音更饱满
 # 音区表情差异
-PIANO_HIGH_SUSTAIN = 1.18        # 高音旋律充分延长，突出歌唱性与旋律线条
-PIANO_MID_SUSTAIN = 1.05         # 中音区微延长，保持温暖饱满
-PIANO_LOW_SUSTAIN = 0.82         # 低音根音缩短，避免低音抢戏
+PIANO_HIGH_SUSTAIN = 1.25        # 高音旋律充分延长，突出歌唱性与旋律线条
+PIANO_MID_SUSTAIN = 1.12         # 中音区微延长，保持温暖饱满
+PIANO_LOW_SUSTAIN = 0.85         # 低音根音缩短，避免低音抢戏
 # 弹性速度（rubato）：长音符微微拉伸，短音符微微加快
 PIANO_RUBATO_ENABLED = True      # 启用弹性速度
-PIANO_RUBATO_LONG_STRETCH = 1.14 # 长音符拉伸系数 (>0.5s 的音符)，更有歌唱感
+PIANO_RUBATO_LONG_STRETCH = 1.22 # 长音符拉伸系数 (>0.5s 的音符)，更有歌唱感
 PIANO_RUBATO_SHORT_TIGHTEN = 1.0 # 短音符不缩短（避免游戏吞音）
 # 乐句呼吸：乐句结尾稍微渐慢
 PIANO_PHRASE_BREATH = True       # 启用乐句呼吸
 PIANO_PHRASE_GAP_THRESHOLD = 0.3 # 乐句间隙阈值(秒)，超过此值视为新乐句
-PIANO_PHRASE_END_STRETCH = 1.30  # 乐句末尾音符充分拉伸，句尾自然渐慢如呼吸
+PIANO_PHRASE_END_STRETCH = 1.40  # 乐句末尾音符充分拉伸，句尾自然渐慢如呼吸
 
 @dataclass
 class PlaybackState:
@@ -107,9 +108,16 @@ class KeyboardSimulator:
         now = time.monotonic()
         last = self._last_press_time.get(key, 0.0)
         elapsed_ms = (now - last) * 1000.0
-        min_interval = random.uniform(PER_KEY_MIN_INTERVAL_LOW, PER_KEY_MIN_INTERVAL_HIGH)
-        if elapsed_ms < min_interval:
-            return 0
+        
+        # 同键重复按下时使用更短的间隔阈值，防止快速同音被吞
+        if key in self._active_keys:
+            if elapsed_ms < SAME_KEY_REPRESS_MIN_MS:
+                return 0
+        else:
+            min_interval = random.uniform(PER_KEY_MIN_INTERVAL_LOW, PER_KEY_MIN_INTERVAL_HIGH)
+            if elapsed_ms < min_interval:
+                return 0
+        
         self._last_press_time[key] = now
 
         gen = self._key_press_gen.get(key, 0) + 1
@@ -117,6 +125,7 @@ class KeyboardSimulator:
         
         try:
             if key in self._active_keys:
+                # 同键重复：先释放，短暂等待让游戏识别，再重新按下
                 if self.use_keyboard and KEYBOARD_AVAILABLE:
                     keyboard.release(key)
                 elif self.controller:
@@ -276,6 +285,14 @@ class MidiPlayer:
         self.play_bass = True     # 播放低音部
         self.bass_density = 1.0   # 伴奏密度 (1.0=全部, 0.5=一半, 0.33=三分之一)
         self._bass_skip_counter = 0  # 伴奏跳过计数器
+        
+        # 智能低音整合（关闭低音部时，保留重要的低音音符到主旋律）
+        self._bass_integration_enabled = True  # 启用低音整合
+        self._integrated_bass_notes = set()  # 需要整合到主旋律的低音音符时间戳集合
+        self._bass_solo_sections = []  # 低音独奏段落 [(start_time, end_time)]
+        
+        # 动态延音分析结果
+        self._song_sustain_profile = None  # 歌曲延音特征分析结果
         
         # 结尾Glissando
         self._play_ending_glissando = False  # 播放结尾滑奏（默认关闭）
@@ -523,6 +540,11 @@ class MidiPlayer:
             self.state = PlaybackState()
             # 分析音域并建立全局映射
             self._analyze_and_setup_mapping()
+            # 动态分析歌曲延音特征
+            self._song_sustain_profile = self._analyze_song_sustain_profile()
+            # 分析低音独奏段落和低音整合
+            self._analyze_bass_solo_sections()
+            self._select_bass_for_integration()
             # 加载MIDI踏板数据（用于按键时长加成，不按空格键）
             self._sustain_pedal_events = getattr(self.parser, 'sustain_events', [])
             self._sustain_event_index = 0
@@ -744,6 +766,244 @@ class MidiPlayer:
         print(f"[智能映射] 分布: 低音(Z-M){low_count} + 中音(A-J){mid_count} + 高音(Q-U){high_count}")
         if shift_count > 0:
             print(f"[智能映射] SHIFT区(C6-B6): {shift_count}个音符需要SHIFT模式")
+    
+    def _analyze_song_sustain_profile(self):
+        """
+        动态分析整首歌曲的延音特征，为每个段落计算最佳延音参数
+        
+        分析内容：
+        1. 歌曲整体节奏密度（慢歌需要更长延音）
+        2. 每个段落的音符密度和时值分布
+        3. BPM和拍号对延音的影响
+        4. 长音符/短音符比例
+        
+        Returns:
+            dict: 歌曲延音特征
+        """
+        if not self.parser.notes:
+            return None
+        
+        notes = sorted(self.parser.notes, key=lambda n: n.time)
+        total_time = self.parser.total_time or 1.0
+        bpm = self.parser.bpm if hasattr(self.parser, 'bpm') else 120
+        beat_duration = 60.0 / bpm
+        
+        # 整体分析
+        durations = [n.duration for n in notes]
+        avg_duration = sum(durations) / len(durations) if durations else 0.3
+        median_duration = sorted(durations)[len(durations)//2] if durations else 0.3
+        long_note_ratio = sum(1 for d in durations if d > beat_duration) / len(durations) if durations else 0.3
+        
+        # 音符密度（每秒音符数）
+        density = len(notes) / total_time
+        
+        # 分析力度分布
+        velocities = [n.velocity for n in notes]
+        avg_velocity = sum(velocities) / len(velocities) if velocities else 80
+        
+        # 计算gap分布（音符间的间隔）
+        gaps = []
+        for i in range(1, len(notes)):
+            gap = notes[i].time - notes[i-1].time
+            if gap > 0:
+                gaps.append(gap)
+        avg_gap = sum(gaps) / len(gaps) if gaps else 0.2
+        
+        # 动态延音缩放系数
+        # 慢歌（密度低、长音符多）→ 延音更长
+        # 快歌（密度高、短音符多）→ 延音适中
+        if density < 3:       # 极慢歌曲
+            dynamic_sustain_scale = 1.8
+        elif density < 5:     # 慢歌/抒情曲
+            dynamic_sustain_scale = 1.6
+        elif density < 8:     # 中速
+            dynamic_sustain_scale = 1.4
+        elif density < 12:    # 中快速
+            dynamic_sustain_scale = 1.25
+        else:                 # 快歌
+            dynamic_sustain_scale = 1.1
+        
+        # 长音符多的歌曲额外增加延音
+        if long_note_ratio > 0.3:
+            dynamic_sustain_scale *= 1.15
+        
+        # 动态重叠量
+        if density < 5:
+            dynamic_overlap_ms = 350  # 慢歌更多重叠
+        elif density < 10:
+            dynamic_overlap_ms = 280
+        else:
+            dynamic_overlap_ms = 200
+        
+        profile = {
+            'avg_duration': avg_duration,
+            'median_duration': median_duration,
+            'long_note_ratio': long_note_ratio,
+            'density': density,
+            'bpm': bpm,
+            'beat_duration': beat_duration,
+            'avg_gap': avg_gap,
+            'avg_velocity': avg_velocity,
+            'dynamic_sustain_scale': dynamic_sustain_scale,
+            'dynamic_overlap_ms': dynamic_overlap_ms,
+        }
+        
+        print(f"[延音分析] 密度:{density:.1f}n/s 平均时值:{avg_duration:.3f}s "
+              f"长音比:{long_note_ratio:.1%} 动态缩放:{dynamic_sustain_scale:.2f} "
+              f"动态重叠:{dynamic_overlap_ms}ms")
+        
+        return profile
+    
+    def _analyze_bass_solo_sections(self):
+        """
+        分析低音部独奏段落（过渡段用低音当主旋律的情况）
+        
+        检测条件：
+        1. 某段时间内只有低音部的音符
+        2. 低音部音符形成连续的旋律线
+        3. 高音部在该段时间内无音符或极少
+        
+        结果保存到 self._bass_solo_sections 和 self._integrated_bass_notes
+        """
+        if not self.parser.notes or not self.parser.melody_notes:
+            self._bass_solo_sections = []
+            self._integrated_bass_notes = set()
+            return
+        
+        split_point = self.parser.pitch_split_point
+        sorted_notes = sorted(self.parser.notes, key=lambda n: n.time)
+        
+        # 使用滑动窗口检测低音独奏段落
+        WINDOW_SIZE = 1.0  # 1秒窗口
+        STEP = 0.25  # 250ms步进
+        MIN_BASS_ONLY_DURATION = 0.5  # 最少持续0.5秒才算独奏段
+        
+        bass_solo_windows = []
+        t = 0
+        total_time = self.parser.total_time or 1.0
+        
+        while t < total_time:
+            window_end = t + WINDOW_SIZE
+            
+            # 统计窗口内的高低音音符数
+            melody_in_window = sum(1 for n in sorted_notes 
+                                   if t <= n.time < window_end and n.note >= split_point)
+            bass_in_window = [n for n in sorted_notes 
+                             if t <= n.time < window_end and n.note < split_point]
+            
+            # 如果窗口内几乎只有低音
+            if len(bass_in_window) >= 2 and melody_in_window <= 1:
+                bass_solo_windows.append((t, window_end, bass_in_window))
+            
+            t += STEP
+        
+        # 合并连续的独奏段落
+        sections = []
+        if bass_solo_windows:
+            current_start = bass_solo_windows[0][0]
+            current_end = bass_solo_windows[0][1]
+            current_notes = list(bass_solo_windows[0][2])
+            
+            for start, end, notes in bass_solo_windows[1:]:
+                if start <= current_end + STEP:  # 连续窗口
+                    current_end = end
+                    current_notes.extend(notes)
+                else:
+                    if current_end - current_start >= MIN_BASS_ONLY_DURATION:
+                        sections.append((current_start, current_end))
+                        # 将这些低音音符标记为需要整合
+                        for n in current_notes:
+                            self._integrated_bass_notes.add((round(n.time, 4), n.note))
+                    current_start = start
+                    current_end = end
+                    current_notes = list(notes)
+            
+            # 最后一段
+            if current_end - current_start >= MIN_BASS_ONLY_DURATION:
+                sections.append((current_start, current_end))
+                for n in current_notes:
+                    self._integrated_bass_notes.add((round(n.time, 4), n.note))
+        
+        self._bass_solo_sections = sections
+        
+        if sections:
+            print(f"[低音分析] 发现 {len(sections)} 个低音独奏段落:")
+            for s, e in sections[:5]:
+                print(f"  {s:.1f}s - {e:.1f}s")
+            print(f"[低音分析] 已标记 {len(self._integrated_bass_notes)} 个低音整合到主旋律")
+    
+    def _select_bass_for_integration(self):
+        """
+        当自动关闭低音部后，选取一部分低音音符整合到主旋律中
+        
+        选取算法（加强版）：
+        1. 低音独奏段的所有音符（已在 _analyze_bass_solo_sections 中标记）
+        2. 每个小节的第一拍和第三拍低音（标记节拍重音根音）
+        3. 旋律有间隙时的低音填充（降低间隙门槛到1拍）
+        4. 力度较强的低音（和弦根音）
+        5. 持续时间较长的低音（通常是旋律性低音）
+        6. 旋律与低音同步出现的低音（已被编曲者认为是旋律的一部分）
+        """
+        if not self.parser.bass_notes or not self.parser.melody_notes:
+            return
+        
+        bpm = self.parser.bpm if hasattr(self.parser, 'bpm') else 120
+        beat_duration = 60.0 / bpm
+        measure_duration = beat_duration * 4  # 假设4/4拍
+        
+        sorted_bass = sorted(self.parser.bass_notes, key=lambda n: n.time)
+        sorted_melody = sorted(self.parser.melody_notes, key=lambda n: n.time)
+        
+        # 建立旋律时间索引（加速查询）
+        melody_times = [n.time for n in sorted_melody]
+        
+        # 1. 每小节第一拍和第三拍的低音根音
+        last_integrated_time = -beat_duration * 4
+        for note in sorted_bass:
+            # 每四拍至少取一个低音
+            if note.time - last_integrated_time >= beat_duration * 3.5:
+                self._integrated_bass_notes.add((round(note.time, 4), note.note))
+                last_integrated_time = note.time
+        
+        # 2. 旋律间隙时的低音填充（门槛提高到2拍）
+        for i in range(1, len(sorted_melody)):
+            gap = sorted_melody[i].time - sorted_melody[i-1].time
+            if gap > beat_duration * 2.0:  # 超过2拍的间隙
+                gap_start = sorted_melody[i-1].time + sorted_melody[i-1].duration * 0.5
+                gap_end = sorted_melody[i].time
+                for bass_note in sorted_bass:
+                    if gap_start <= bass_note.time < gap_end:
+                        self._integrated_bass_notes.add((round(bass_note.time, 4), bass_note.note))
+        
+        # 3. 力度较强的低音（可能是和弦根音）
+        if sorted_bass:
+            avg_vel = sum(n.velocity for n in sorted_bass) / len(sorted_bass)
+            for note in sorted_bass:
+                if note.velocity > avg_vel * 1.25:  # 力度超过平均值25%才保留
+                    self._integrated_bass_notes.add((round(note.time, 4), note.note))
+        
+        # 4. 持续时间较长的低音（旋律性低音线条）
+        if sorted_bass:
+            avg_dur = sum(n.duration for n in sorted_bass) / len(sorted_bass)
+            for note in sorted_bass:
+                if note.duration > avg_dur * 1.8:  # 时值超过平均值80%
+                    self._integrated_bass_notes.add((round(note.time, 4), note.note))
+        
+        # 5. 与旋律同步出现的低音（编曲者有意安排，间距<50ms视为同步，但只保留力度较强的）
+        import bisect
+        for bass_note in sorted_bass:
+            idx = bisect.bisect_left(melody_times, bass_note.time - 0.05)
+            if idx < len(melody_times) and abs(melody_times[idx] - bass_note.time) < 0.05:
+                if bass_note.velocity > avg_vel * 1.1:
+                    self._integrated_bass_notes.add((round(bass_note.time, 4), bass_note.note))
+        
+        # 6. 低音音高接近分割点的（主旋律低音区，仅保留3个半音内）
+        split_point = self.parser.pitch_split_point if hasattr(self.parser, 'pitch_split_point') else 48
+        for note in sorted_bass:
+            if note.note >= split_point - 3:  # 分割点附近3个半音内
+                self._integrated_bass_notes.add((round(note.time, 4), note.note))
+        
+        print(f"[低音整合] 共选取 {len(self._integrated_bass_notes)} 个低音整合到主旋律 (共{len(sorted_bass)}个低音)")
     
     def set_transpose(self, semitones: int):
         """
@@ -2658,8 +2918,17 @@ class MidiPlayer:
             # 延音关闭时，使用固定短时长
             return max(SUSTAIN_MIN_MS / 1000.0, min(0.15, base_duration * 0.5))
         
-        # === 1. 基础：以MIDI音符原始时长为基准 ===
-        duration = base_duration * SUSTAIN_SCALE
+        # === 0. 动态延音缩放（基于整首歌曲分析）===
+        profile = getattr(self, '_song_sustain_profile', None)
+        if profile:
+            dynamic_scale = profile.get('dynamic_sustain_scale', SUSTAIN_SCALE)
+            dynamic_overlap = profile.get('dynamic_overlap_ms', SUSTAIN_OVERLAP_MS)
+        else:
+            dynamic_scale = SUSTAIN_SCALE
+            dynamic_overlap = SUSTAIN_OVERLAP_MS
+        
+        # === 1. 基础：以MIDI音符原始时长为基准，使用动态缩放 ===
+        duration = base_duration * dynamic_scale
         
         # === 2. 力度→时长映射（钢琴家核心表情） ===
         # 强音符(ff)按键更久→更饱满的延音；弱音符(pp)更短促→更轻柔
@@ -2705,19 +2974,19 @@ class MidiPlayer:
         # 核心：让音符之间无缝过渡，像人声歌唱一样连贯
         if next_event_time is not None:
             gap = next_event_time - current_time
-            overlap_ms = SUSTAIN_OVERLAP_MS
+            overlap_ms = dynamic_overlap
             
             if 0 < gap < duration:
                 # 音符已自然重叠 → 额外延长少量，确保重叠足够丰满
-                extra_overlap = overlap_ms * 0.4 / 1000.0  # 额外40%重叠量
+                extra_overlap = overlap_ms * 0.5 / 1000.0  # 额外50%重叠量
                 duration = max(duration, gap + extra_overlap)
-            elif 0 < gap < 2.0 and duration < gap:
+            elif 0 < gap < 2.5 and duration < gap:
                 # 音符时长短于间隔 → 延长填充间隙 + 充足重叠
                 duration = gap + (overlap_ms / 1000.0)
             
             # 连续短音符（快速旋律跑动）：确保最小重叠，避免断裂
-            if 0 < gap < 0.25 and duration < gap + 0.03:
-                duration = gap + 0.03  # 至少30ms重叠
+            if 0 < gap < 0.25 and duration < gap + 0.04:
+                duration = gap + 0.04  # 至少40ms重叠
         
         # === 8. 范围限制 ===
         duration = max(min_dur, duration)
@@ -2768,6 +3037,13 @@ class MidiPlayer:
             
             # 收集所有音符（根据音部设置过滤）
             for midi_note in event.midi_notes:
+                # 通道过滤 - 检查该音符所在通道是否被用户禁用
+                note_channel = None
+                if isinstance(event.original_event, NoteEvent):
+                    note_channel = event.original_event.channel
+                if note_channel is not None and not self.mapper.is_channel_enabled(note_channel):
+                    continue
+                
                 # 音部过滤
                 split_point = self.parser.pitch_split_point if hasattr(self.parser, 'pitch_split_point') else 48
                 
@@ -2775,9 +3051,20 @@ class MidiPlayer:
                     if not self.play_melody:
                         continue
                 else:
+                    # 低音部处理
                     if not self.play_bass:
-                        continue
-                    if self.bass_density < 1.0:
+                        # 即使关闭低音部，也保留整合到主旋律的低音
+                        if self._bass_integration_enabled and hasattr(self, '_integrated_bass_notes'):
+                            note_key = (round(event.time, 4), midi_note)
+                            is_integrated = note_key in self._integrated_bass_notes
+                            # 也检查低音独奏段落
+                            is_in_solo = any(s <= event.time <= e for s, e in self._bass_solo_sections)
+                            if not is_integrated and not is_in_solo:
+                                continue
+                            # 整合的低音通过，不跳过
+                        else:
+                            continue
+                    elif self.bass_density < 1.0:
                         self._bass_skip_counter += self.bass_density
                         if self._bass_skip_counter < 1.0:
                             continue
@@ -2802,6 +3089,11 @@ class MidiPlayer:
                 continue
             
             event, velocity, press_duration = note_info_map[original_note]
+            
+            # 获取通道信息用于通道专属移调
+            note_channel = None
+            if isinstance(event.original_event, NoteEvent):
+                note_channel = event.original_event.channel
             
             # ========== C调直转模式 ==========
             if self._direct_c_mode and self._direct_c_note_map:
@@ -2828,6 +3120,12 @@ class MidiPlayer:
             user_transpose = getattr(self, '_user_transpose', 0)
             if user_transpose != 0:
                 mapped_note += user_transpose
+            
+            # 应用通道专属移调（如果用户设置了通道移调）
+            if note_channel is not None and note_channel in self.mapper.channel_transpose:
+                ch_trans = self.mapper.channel_transpose[note_channel] - self.mapper.transpose
+                if ch_trans != 0:
+                    mapped_note += ch_trans
             
             # 确保在4八度范围内 (48-95)
             while mapped_note < 48:

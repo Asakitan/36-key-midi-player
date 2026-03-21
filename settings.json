@@ -6,13 +6,18 @@
     "speed_down": "F8",
     "toggle_topmost": "F9"
   },
-  "last_file": "E:/弹琴/泡泡/mid/08689-ミカヅキ-乱步奇谭片尾曲.mid",
+  "last_file": "E:/弹琴/自选\\陆行鸟之歌3.mid",
   "speed": 1.0,
   "transpose": -6,
   "chord_mode": true,
   "bass_density": 1.0,
   "song_play_counts": {
-    "6d6224e565ec": 1
+    "6d6224e565ec": 1,
+    "e17f071612b5": 2,
+    "40cfef3f1772": 1,
+    "d56685d31798": 1,
+    "5da44f1dbbb5": 1
   },
-  "direct_c_mode": true
+  "direct_c_mode": false,
+  "proficiency_enabled": false
 }
