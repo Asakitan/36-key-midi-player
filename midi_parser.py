@@ -657,17 +657,17 @@ class MidiParser:
         if melody_line_pitches:
             melody_sorted = sorted(melody_line_pitches)
             melody_median = melody_sorted[len(melody_sorted) // 2]
-            # 用25%分位数作为分割点（保留更多旋律）
-            melody_25th = melody_sorted[len(melody_sorted) // 4]
-            self.pitch_split_point = melody_25th
+            # 用10%分位数作为分割点（保留更多旋律到主旋律区域）
+            melody_10th = melody_sorted[max(0, len(melody_sorted) // 10)]
+            self.pitch_split_point = melody_10th
         else:
             melody_median = (pitch_min + pitch_max) // 2
-            self.pitch_split_point = pitch_min + total_range // 3
+            self.pitch_split_point = pitch_min + total_range // 4
         
         # === 分割点范围 ===
-        # 上限：不能高于G6(91)，保留更多旋律音（支持SHIFT扩展）
+        # 上限：不能高于C4(60)，C4及以上的音必须归入主旋律
         # 下限：不能低于C3(48)，只分离真正的低音贝斯
-        MAX_SPLIT_POINT = 91  # G6
+        MAX_SPLIT_POINT = 60  # C4（硬性上限：C4以上永远是主旋律）
         MIN_SPLIT_POINT = 48  # C3
         self.pitch_split_point = max(MIN_SPLIT_POINT, min(MAX_SPLIT_POINT, self.pitch_split_point))
         

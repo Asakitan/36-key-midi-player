@@ -1312,7 +1312,8 @@ class HotkeyButton(tk.Frame):
 class ThemedFilePicker(tk.Toplevel):
     """内置主题文件/文件夹选择器 - 避免原生 filedialog 被 topmost 主窗口遮挡"""
     def __init__(self, parent, title="选择文件", mode="file",
-                 filetypes=None, initialdir=None):
+                 filetypes=None, initialdir=None,
+                 pinned_dirs=None, on_pin_change=None):
         super().__init__(parent)
         self.overrideredirect(True)
         self.attributes('-topmost', True)
@@ -1323,6 +1324,8 @@ class ThemedFilePicker(tk.Toplevel):
         self._filetypes = filetypes or [("所有文件", "*.*")]
         self._result = None
         self._entries = []           # list of (display, full_path, is_dir)
+        self._pinned_dirs = list(pinned_dirs or [])   # 置顶文件夹列表
+        self._on_pin_change = on_pin_change           # 置顶变更回调
 
         # Parse allowed extensions
         self._exts = set()
@@ -1380,9 +1383,18 @@ class ThemedFilePicker(tk.Toplevel):
         btn_up.bind('<Button-1>', lambda e: self._go_up())
         btn_up.bind('<Enter>', lambda e: btn_up.configure(fg=C.TEXT_PRIMARY))
         btn_up.bind('<Leave>', lambda e: btn_up.configure(fg=C.TEXT_SECONDARY))
-        self._path_lbl = tk.Label(nav, text='', bg=C.BG_CARD, fg=C.TEXT_DIM,
-                                   font=('Consolas', 8), anchor='w')
-        self._path_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        # 可编辑路径输入框（回车跳转）
+        self._path_var = tk.StringVar()
+        self._path_lbl = tk.Entry(nav, textvariable=self._path_var,
+                                  bg=C.BG_INPUT, fg=C.TEXT_DIM,
+                                  insertbackground=C.TEXT_PRIMARY,
+                                  relief='flat', font=('Consolas', 8),
+                                  highlightthickness=1,
+                                  highlightbackground=C.BORDER,
+                                  highlightcolor=C.ACCENT_BLUE)
+        self._path_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=4)
+        self._path_lbl.bind('<Return>', lambda e: self._navigate_to_path())
+        self._path_lbl.bind('<FocusOut>', lambda e: self._path_var.set(self._cwd))
 
         tk.Frame(self, bg=C.BORDER, height=1).pack(fill=tk.X)
 
@@ -1403,6 +1415,7 @@ class ThemedFilePicker(tk.Toplevel):
         self._lb.bind('<Double-Button-1>', self._on_double)
         self._lb.bind('<<ListboxSelect>>', self._on_select)
         self._lb.bind('<Return>', self._on_double)
+        self._lb.bind('<Button-3>', self._show_context_menu)  # 右键菜单
 
         tk.Frame(self, bg=C.BORDER, height=1).pack(fill=tk.X)
 
@@ -1435,10 +1448,35 @@ class ThemedFilePicker(tk.Toplevel):
                   activebackground=C.ACCENT_CYAN,
                   command=self._confirm).pack(side=tk.LEFT)
 
+    def _navigate_to_path(self):
+        """用户在路径框中手动输入路径后回车跳转"""
+        typed = self._path_var.get().strip()
+        if typed and os.path.isdir(typed):
+            self._cwd = os.path.normpath(typed)
+            self._populate()
+        else:
+            # 路径无效，恢复显示
+            self._path_var.set(self._cwd)
+
     def _populate(self):
         self._lb.delete(0, tk.END)
         self._entries.clear()
-        self._path_lbl.configure(text=self._cwd)
+        self._path_var.set(self._cwd)
+        C = ModernColors
+
+        # === 置顶文件夹区域（仅 dir 模式）===
+        valid_pinned = [p for p in self._pinned_dirs if os.path.isdir(p)]
+        if self._mode == 'dir' and valid_pinned:
+            for pdir in valid_pinned:
+                name = os.path.basename(pdir) or pdir
+                self._entries.append((name, pdir, 'pinned'))
+                self._lb.insert(tk.END, f"   \U0001f4cc  {name}")
+                self._lb.itemconfig(tk.END, fg=C.ACCENT_ORANGE)
+            # 分隔线
+            self._entries.append(('', '', 'separator'))
+            self._lb.insert(tk.END, '   ──────────────────────────')
+            self._lb.itemconfig(tk.END, fg=C.TEXT_DIM)
+
         try:
             items = sorted(os.listdir(self._cwd), key=lambda x: x.lower())
         except PermissionError:
@@ -1456,7 +1494,7 @@ class ThemedFilePicker(tk.Toplevel):
         for name, full in dirs:
             self._entries.append((name, full, True))
             self._lb.insert(tk.END, f"   \U0001f4c1  {name}")
-            self._lb.itemconfig(tk.END, fg=ModernColors.ACCENT_CYAN)
+            self._lb.itemconfig(tk.END, fg=C.ACCENT_CYAN)
         for name, full in files:
             self._entries.append((name, full, False))
             self._lb.insert(tk.END, f"   \U0001f3b5  {name}")
@@ -1472,7 +1510,9 @@ class ThemedFilePicker(tk.Toplevel):
         if not sel:
             return
         _, fpath, is_dir = self._entries[sel[0]]
-        if is_dir:
+        if is_dir == 'separator':
+            return
+        if is_dir:  # True or 'pinned'
             self._cwd = fpath
             self._populate()
         else:
@@ -1484,17 +1524,66 @@ class ThemedFilePicker(tk.Toplevel):
         if not sel:
             return
         _, fpath, is_dir = self._entries[sel[0]]
+        if is_dir == 'separator':
+            return
         if not is_dir:
             self._fname_var.set(os.path.basename(fpath))
-        elif self._mode == 'dir':
-            self._fname_var.set(os.path.basename(fpath))
+        elif self._mode == 'dir' and fpath:
+            self._fname_var.set(os.path.basename(fpath) or fpath)
+
+    def _show_context_menu(self, event):
+        """右键菜单：仅在 dir 模式下对文件夹显示置顶选项"""
+        if self._mode != 'dir':
+            return
+        idx = self._lb.nearest(event.y)
+        if idx < 0 or idx >= len(self._entries):
+            return
+        _, fpath, is_dir = self._entries[idx]
+        if is_dir == 'separator' or not is_dir:
+            return
+        C = ModernColors
+        menu = tk.Menu(self, tearoff=0,
+                       bg=C.BG_CARD, fg=C.TEXT_PRIMARY,
+                       activebackground=C.BG_HOVER, activeforeground=C.TEXT_BRIGHT,
+                       relief='flat', bd=1)
+        self._lb.selection_clear(0, tk.END)
+        self._lb.selection_set(idx)
+        if fpath in self._pinned_dirs:
+            menu.add_command(label="取消置顶  📌",
+                             command=lambda p=fpath: self._unpin_folder(p))
+        else:
+            menu.add_command(label="置顶此文件夹  📌",
+                             command=lambda p=fpath: self._pin_folder(p))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _pin_folder(self, fpath):
+        """将文件夹加入置顶列表"""
+        if fpath not in self._pinned_dirs:
+            self._pinned_dirs.append(fpath)
+            if self._on_pin_change:
+                self._on_pin_change(list(self._pinned_dirs))
+        self._populate()
+
+    def _unpin_folder(self, fpath):
+        """从置顶列表移除文件夹"""
+        if fpath in self._pinned_dirs:
+            self._pinned_dirs.remove(fpath)
+            if self._on_pin_change:
+                self._on_pin_change(list(self._pinned_dirs))
+        self._populate()
 
     def _confirm(self):
         if self._mode == 'dir':
             sel = self._lb.curselection()
             if sel:
                 _, fpath, is_dir = self._entries[sel[0]]
-                self._result = fpath if is_dir else self._cwd
+                if is_dir == 'separator':
+                    self._result = self._cwd
+                else:
+                    self._result = fpath if is_dir else self._cwd
             else:
                 self._result = self._cwd
         else:
@@ -1538,6 +1627,7 @@ class ControlPanel(tk.Frame):
         self._folder_loop_active = False
         self._folder_loop_files = []
         self._folder_loop_index = 0
+        self._current_file = None   # 当前加载的文件路径
         self._create()
 
     def _create(self):
@@ -1866,11 +1956,16 @@ class ControlPanel(tk.Frame):
         """内置主题文件夹选择器"""
         last_folder = self.settings.get('last_folder', '')
         initialdir = last_folder if last_folder and os.path.isdir(last_folder) else os.path.expanduser('~')
+        pinned_dirs = self.settings.get('pinned_folders', [])
+        def save_pins(new_pins):
+            self.settings.set('pinned_folders', new_pins)
         picker = ThemedFilePicker(
             parent=self.winfo_toplevel(),
             title="选择循环播放的文件夹",
             mode="dir",
-            initialdir=initialdir
+            initialdir=initialdir,
+            pinned_dirs=pinned_dirs,
+            on_pin_change=save_pins
         )
         self.wait_window(picker)
         return picker.get_result()
@@ -1879,6 +1974,7 @@ class ControlPanel(tk.Frame):
         filepath = self._ask_open_file()
         if filepath:
             if self.player.load_midi(filepath):
+                self._current_file = filepath
                 self.file_label.configure(text=os.path.basename(filepath),
                                           fg=ModernColors.TEXT_PRIMARY)
                 self.transpose_var.set(0)
@@ -1945,6 +2041,10 @@ class ControlPanel(tk.Frame):
                 proficiency_info = self.player.get_proficiency_info()
                 msg += f"\n熟练度: {proficiency_info['proficiency']*100:.0f}% (已弹{proficiency_info['play_count']}次)"
                 self._update_pitch_analysis()
+                # 恢复该歌曲上次保存的音部/密度设置（覆盖自动分析结果）
+                if self._restore_song_settings(filepath):
+                    self.player.set_part_filter(self.melody_var.get(), self.bass_var.get())
+                    self.player._analyze_and_setup_mapping()
                 pitch_info = self.player.parser.get_pitch_analysis()
                 if pitch_info.get('melody_count', 0) > 0 or pitch_info.get('bass_count', 0) > 0:
                     msg += f"\n\n音部分析:"
@@ -2002,12 +2102,17 @@ class ControlPanel(tk.Frame):
         filepath = self._folder_loop_files[self._folder_loop_index]
         self._folder_loop_index = (self._folder_loop_index + 1) % len(self._folder_loop_files)
         if self.player.load_midi(filepath):
+            self._current_file = filepath
             self.file_label.configure(text=os.path.basename(filepath), fg=ModernColors.TEXT_PRIMARY)
             self.transpose_var.set(0)
             self.player.set_transpose(0)
             self.player.mapper.clear_channel_settings()
             if self.direct_c_var.get():
                 self.player.set_direct_c_mode(True, save=False)
+            self._update_pitch_analysis()
+            if self._restore_song_settings(filepath):
+                self.player.set_part_filter(self.melody_var.get(), self.bass_var.get())
+                self.player._analyze_and_setup_mapping()
             self.player.play()
             self.play_btn.set_text("暂停")
             self.status_label.configure(text=f"循环: {os.path.basename(filepath)}")
@@ -2120,6 +2225,34 @@ class ControlPanel(tk.Frame):
                                                fg=ModernColors.TEXT_SECONDARY)
             self._update_octave_offset_label()
 
+    def _save_song_settings(self):
+        """保存当前歌曲的音部/密度设置"""
+        if not self._current_file:
+            return
+        key = os.path.abspath(self._current_file)
+        all_song = self.settings.get('song_settings', {})
+        all_song[key] = {
+            'melody': self.melody_var.get(),
+            'bass': self.bass_var.get(),
+            'bass_density': self.bass_density_var.get(),
+        }
+        self.settings.set('song_settings', all_song)
+
+    def _restore_song_settings(self, filepath):
+        """加载歌曲时恢复已保存的音部/密度设置，返回是否有保存记录"""
+        key = os.path.abspath(filepath)
+        all_song = self.settings.get('song_settings', {})
+        if key not in all_song:
+            return False
+        saved = all_song[key]
+        self.melody_var.set(saved.get('melody', True))
+        self.bass_var.set(saved.get('bass', True))
+        density = saved.get('bass_density', 1.0)
+        self.bass_density_var.set(density)
+        self.bass_density_label.configure(text=f"{density:.0%}")
+        self.player.set_bass_density(density)
+        return True
+
     def _on_part_toggle(self):
         play_melody = self.melody_var.get()
         play_bass = self.bass_var.get()
@@ -2141,12 +2274,14 @@ class ControlPanel(tk.Frame):
         else:
             self.part_info_label.configure(text=f"仅低音 ({bass_count}音符)",
                                            fg=ModernColors.ACCENT_ORANGE)
+        self._save_song_settings()
 
     def _on_bass_density_change(self, value):
         density = float(value)
         self.player.set_bass_density(density)
         self.bass_density_label.configure(text=f"{density:.0%}")
         self.settings.set('bass_density', density)
+        self._save_song_settings()
 
     def _on_glissando_toggle(self):
         val = self.glissando_var.get()
@@ -2415,13 +2550,14 @@ class MidiVisualizer(tk.Frame):
         'p': 30, 't': 31, '[': 32, 'y': 33, ']': 34, 'u': 35,
     }
 
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, settings=None, **kwargs):
         super().__init__(parent, bg=ModernColors.BG_CARD, **kwargs)
+        self._settings = settings
         self._bar_values = [0.0] * self.NUM_BARS
         self._bar_peaks = [0.0] * self.NUM_BARS
         self._wave_history = []
         self._running = False
-        self._mode = 'bar'
+        self._mode = settings.get('viz_mode', 'bar') if settings else 'bar'
         self._colors = self._generate_colors()       # fallback static colors
         self._glow_colors = self._generate_glow_colors()
         # --- 色彩动画 ---
@@ -2435,7 +2571,8 @@ class MidiVisualizer(tk.Frame):
         top_bar.pack(fill=tk.X, padx=8, pady=(6, 2))
         tk.Label(top_bar, text="可视化", bg=ModernColors.BG_CARD,
                  fg=ModernColors.TEXT_DIM, font=('Microsoft YaHei UI', 8)).pack(side=tk.LEFT)
-        self._mode_btn = SmoothButton(top_bar, text="柱状图", width=56, height=22,
+        mode_labels = {'bar': '柱状图', 'grid': '网格', 'curve': '曲线'}
+        self._mode_btn = SmoothButton(top_bar, text=mode_labels.get(self._mode, '柱状图'), width=56, height=22,
                                        bg=ModernColors.BG_HOVER,
                                        font_size=8, command=self._toggle_mode)
         self._mode_btn.pack(side=tk.RIGHT)
@@ -2514,6 +2651,8 @@ class MidiVisualizer(tk.Frame):
         idx = modes.index(self._mode) if self._mode in modes else 0
         self._mode = modes[(idx + 1) % len(modes)]
         self._mode_btn.set_text(mode_labels.get(self._mode, self._mode))
+        if self._settings:
+            self._settings.set('viz_mode', self._mode)
         self._draw()
 
     def trigger_note(self, key: str, velocity: float = 1.0):
@@ -2973,7 +3112,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                                        title="咲 Midi Player", version="v2.0.1+2001",
+                                        title="咲 Midi Player", version="v2.0.2+2002",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 
@@ -3073,7 +3212,7 @@ class MidiPlayerGUI:
         # 可视化卡片 (填满剩余空间)
         self.viz_card = tk.Frame(right, bg=ModernColors.BG_CARD, bd=0)
         self.viz_card.pack(fill=tk.BOTH, expand=True)
-        self.visualizer = MidiVisualizer(self.viz_card)
+        self.visualizer = MidiVisualizer(self.viz_card, settings=self.settings)
         self.visualizer.pack(fill=tk.BOTH, expand=True)
 
         self.info = _DummyInfoPanel()
