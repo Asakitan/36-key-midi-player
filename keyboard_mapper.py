@@ -1,58 +1,94 @@
 # -*- coding: utf-8 -*-
 """
-键盘映射模块 - 负责将MIDI音符映射到键盘按键（支持SHIFT切换）
+键盘映射模块 - 负责将MIDI音符映射到键盘按键（支持SHIFT/CTRL三模式切换）
 
-游戏36键电子琴布局（含黑键/半音）+ SHIFT扩展：
-  普通模式（无SHIFT）：
+游戏60键电子琴布局（含黑键/半音）+ SHIFT/CTRL扩展：
+  普通模式（无修饰键）：
   - Z-M = 低音区 (C3-B3, MIDI 48-59)
   - A-J = 中音区 (C4-B4, MIDI 60-71)
   - Q-U = 高音区 (C5-B5, MIDI 72-83)
 
-  SHIFT模式（按SHIFT切换）：
+  SHIFT模式（按L Shift切换高八度）：
   - Z-M = 低音区 (C4-B4, MIDI 60-71)
   - A-J = 中音区 (C5-B5, MIDI 72-83)
   - Q-U = 高音区 (C6-B6, MIDI 84-95)
 
-总可用范围: C3-B6 (MIDI 48-95, 4个八度, 48个半音)
+  CTRL模式（按L Ctrl切换低八度）：
+  - Z-M = 低音区 (C2-B2, MIDI 36-47)
+  - A-J = 中音区 (C3-B3, MIDI 48-59)
+  - Q-U = 高音区 (C4-B4, MIDI 60-71)
+
+完整支持范围: C2-B6 (MIDI 36-95, 5个八度, 60个半音)
+  MIDI 36-47: C2-B2 仅CTRL模式可达
+  MIDI 48-59: CTRL或普通模式可达
+  MIDI 60-71: 三种模式均可达
+  MIDI 72-83: 普通或SHIFT模式可达
+  MIDI 84-95: 仅SHIFT模式可达
 """
 
 from typing import Optional, List, Dict
-from config import MIDI_TO_KEY, MIDI_TO_KEY_SHIFT
+from config import (MIDI_TO_KEY, MIDI_TO_KEY_SHIFT, MIDI_TO_KEY_CTRL,
+                    MIDI_TO_KEY_LT, MIDI_TO_KEY_GT, DEFAULT_MODE_SYSTEM)
 
 
 class KeyboardMapper:
-    """键盘映射器 - 将MIDI音符映射到36键全音阶（支持SHIFT 4八度）"""
+    """键盘映射器 - 将MIDI音符映射到60键全音阶（支持SHIFT/CTRL三模式 + </>扩展模式）"""
     
-    # 完整支持范围（C3-B6, MIDI 48-95, 4个完整八度，需SHIFT切换）
-    MIN_SUPPORTED_NOTE = 48  # C3 (普通模式最低)
-    MAX_SUPPORTED_NOTE = 95  # B6 (SHIFT模式最高)
+    # === classic 模式范围（CTRL/SHIFT, C2-B6, MIDI 36-95） ===
+    CLASSIC_MIN = 36   # C2
+    CLASSIC_MAX = 95   # B6
     
-    # 四个音区的范围
-    LOW_RANGE = (48, 59)        # C3-B3 -> 仅普通模式
-    MID_RANGE = (60, 71)        # C4-B4 -> 两种模式均可
-    HIGH_RANGE = (72, 83)       # C5-B5 -> 两种模式均可
+    CTRL_RANGE = (36, 47)       # C2-B2 -> 仅CTRL模式
+    LOW_RANGE = (48, 59)        # C3-B3 -> CTRL或普通模式
+    MID_RANGE = (60, 71)        # C4-B4 -> 三种模式均可
+    HIGH_RANGE = (72, 83)       # C5-B5 -> 普通或SHIFT模式
     SHIFT_RANGE = (84, 95)      # C6-B6 -> 仅SHIFT模式
     
-    # 普通模式范围
-    NORMAL_MIN = 48   # C3
-    NORMAL_MAX = 83   # B5
-    # SHIFT模式范围
-    SHIFT_MIN = 60    # C4
-    SHIFT_MAX = 95    # B6
+    NORMAL_MIN = 48; NORMAL_MAX = 83
+    SHIFT_MIN = 60;  SHIFT_MAX = 95
+    CTRL_MIN = 36;   CTRL_MAX = 71
+    
+    # === extended 模式范围（</>，A0-C8, MIDI 21-108） ===
+    EXTENDED_MIN = 21   # A0
+    EXTENDED_MAX = 108  # C8
+    
+    LT_RANGE = (21, 47)         # A0-B2 -> 仅<模式
+    # NORMAL same as above      # C3-B5 -> 普通模式
+    GT_RANGE = (84, 108)        # C6-C8 -> 仅>模式
+    
+    LT_MIN = 21;  LT_MAX = 47
+    GT_MIN = 84;  GT_MAX = 108
     
     def __init__(self):
+        # 模式系统: 'classic' (CTRL/SHIFT) 或 'extended' (</>)
+        self.mode_system = DEFAULT_MODE_SYSTEM
+        
         # 普通模式映射表（36键 C3-B5）
         self.midi_to_key = MIDI_TO_KEY.copy()
         # SHIFT模式映射表（36键 C4-B6）
         self.midi_to_key_shift = MIDI_TO_KEY_SHIFT.copy()
+        # CTRL模式映射表（36键 C2-B4）
+        self.midi_to_key_ctrl = MIDI_TO_KEY_CTRL.copy()
+        # <模式映射表（27键 A0-B2）
+        self.midi_to_key_lt = MIDI_TO_KEY_LT.copy()
+        # >模式映射表（25键 C6-C8）
+        self.midi_to_key_gt = MIDI_TO_KEY_GT.copy()
         
-        # 全范围映射表（48-95，用于分析和覆盖率计算）
-        # 普通模式覆盖48-83，SHIFT补充84-95
+        # 全范围映射表（classic: 36-95，用于分析和覆盖率计算）
         self.midi_to_key_full = {}
+        self.midi_to_key_full.update(self.midi_to_key_ctrl)
         self.midi_to_key_full.update(self.midi_to_key)
         for k, v in self.midi_to_key_shift.items():
             if k not in self.midi_to_key_full:
                 self.midi_to_key_full[k] = v
+        
+        # extended全范围映射表（21-108）
+        self.midi_to_key_full_ext = {}
+        self.midi_to_key_full_ext.update(self.midi_to_key_lt)
+        self.midi_to_key_full_ext.update(self.midi_to_key)
+        for k, v in self.midi_to_key_gt.items():
+            if k not in self.midi_to_key_full_ext:
+                self.midi_to_key_full_ext[k] = v
         
         # 全局移调设置
         self.transpose = 0
@@ -95,18 +131,28 @@ class KeyboardMapper:
         """设置是否启用智能映射（兼容旧接口）"""
         pass  # 36键模式下始终直接映射
     
-    def map_note(self, midi_note: int, channel: int = None, shift_mode: bool = False) -> Optional[str]:
+    def set_mode_system(self, system: str):
+        """设置模式系统: 'classic' (CTRL/SHIFT) 或 'extended' (</>)"""
+        self.mode_system = system
+    
+    def get_playable_range(self) -> tuple:
+        """获取当前模式系统的可弹奏范围"""
+        if self.mode_system == 'extended':
+            return (self.EXTENDED_MIN, self.EXTENDED_MAX)
+        return (self.CLASSIC_MIN, self.CLASSIC_MAX)
+    
+    def map_note(self, midi_note: int, channel: int = None, shift_mode: bool = False,
+                 ctrl_mode: bool = False, lt_mode: bool = False, gt_mode: bool = False) -> Optional[str]:
         """
         将MIDI音符映射到36键
 
-        36键全音阶映射策略（支持SHIFT扩展至C3-B6）：
-        - 范围内(48-95)的音符直接映射（根据shift_mode选择映射表）
-        - 超出范围的音符折叠到最近的八度，保持音名
-        
         Args:
             midi_note: MIDI音符号 (0-127)
             channel: MIDI通道 (0-15)
             shift_mode: 当前是否为SHIFT模式
+            ctrl_mode: 当前是否为CTRL模式
+            lt_mode: 当前是否为<模式
+            gt_mode: 当前是否为>模式
             
         Returns:
             键盘按键字符，如果无法映射则返回None
@@ -124,54 +170,90 @@ class KeyboardMapper:
         # 应用移调
         adjusted_note = midi_note + transpose
         
-        # 选择映射表
-        mapping = self.midi_to_key_shift if shift_mode else self.midi_to_key
+        # 选择映射表（根据当前模式）
+        if lt_mode:
+            mapping = self.midi_to_key_lt
+        elif gt_mode:
+            mapping = self.midi_to_key_gt
+        elif ctrl_mode:
+            mapping = self.midi_to_key_ctrl
+        elif shift_mode:
+            mapping = self.midi_to_key_shift
+        else:
+            mapping = self.midi_to_key
         
         # 直接查找
         if adjusted_note in mapping:
             return mapping[adjusted_note]
         
         # 超出当前模式范围：尝试全范围映射表
-        if adjusted_note in self.midi_to_key_full:
-            return self.midi_to_key_full[adjusted_note]
+        full_map = self.midi_to_key_full_ext if self.mode_system == 'extended' else self.midi_to_key_full
+        if adjusted_note in full_map:
+            return full_map[adjusted_note]
         
         # 超出范围的音符：八度折叠
         target_note = self._fold_to_range(adjusted_note)
         
         if target_note in mapping:
             return mapping[target_note]
-        if target_note in self.midi_to_key_full:
-            return self.midi_to_key_full[target_note]
+        if target_note in full_map:
+            return full_map[target_note]
         
         return None
     
     def needs_shift(self, midi_note: int) -> Optional[bool]:
         """
+        判断一个MIDI音符是否需要SHIFT模式（向后兼容）
+        """
+        pmin, pmax = self.get_playable_range()
+        if midi_note < pmin or midi_note > pmax:
+            midi_note = self._fold_to_range(midi_note)
+        
+        if midi_note < 48:
+            return False  # 低音区：不需要SHIFT
+        elif midi_note > 83:
+            return True   # 高音区：需要SHIFT(classic)或>(extended)
+        else:
+            return None   # 中音区：多种模式均可
+    
+    def needs_mode(self, midi_note: int) -> Optional[str]:
+        """
         判断一个MIDI音符需要哪种模式
         
         Returns:
-            True = 必须SHIFT模式, False = 必须普通模式, None = 两种都行
+            'ctrl'/'shift'/'lt'/'gt' = 必须特定模式, None = 普通模式可选
         """
-        if midi_note < 48 or midi_note > 95:
-            # 超出完整范围，折叠后再判断
+        pmin, pmax = self.get_playable_range()
+        if midi_note < pmin or midi_note > pmax:
             midi_note = self._fold_to_range(midi_note)
         
-        if midi_note < 60:
-            return False  # C3-B3: 仅普通模式
-        elif midi_note > 83:
-            return True   # C6-B6: 仅SHIFT模式
+        if self.mode_system == 'extended':
+            if midi_note < 48:
+                return 'lt'     # A0-B2: 仅<模式
+            elif midi_note > 83:
+                return 'gt'     # C6-C8: 仅>模式
+            else:
+                return None     # C3-B5: 普通模式
         else:
-            return None   # C4-B5: 两种模式均可
+            # classic 模式
+            if midi_note < 48:
+                return 'ctrl'   # C2-B2: 仅CTRL模式
+            elif midi_note > 83:
+                return 'shift'  # C6-B6: 仅SHIFT模式
+            else:
+                return None     # C3-B5: 多种模式可选
     
     def _fold_to_range(self, midi_note: int) -> int:
-        """将超出范围的音符折叠到支持范围 (48-95)"""
-        if self.MIN_SUPPORTED_NOTE <= midi_note <= self.MAX_SUPPORTED_NOTE:
+        """将超出范围的音符折叠到可弹奏范围"""
+        pmin, pmax = self.get_playable_range()
+        
+        if pmin <= midi_note <= pmax:
             return midi_note
         
-        # 保留音名（pitch class），折叠到范围内
-        while midi_note < self.MIN_SUPPORTED_NOTE:
+        # 保留音名（pitch class），折叠到可弹奏范围内
+        while midi_note < pmin:
             midi_note += 12
-        while midi_note > self.MAX_SUPPORTED_NOTE:
+        while midi_note > pmax:
             midi_note -= 12
         
         return midi_note
@@ -182,7 +264,7 @@ class KeyboardMapper:
     
     def get_supported_range(self) -> tuple:
         """获取支持的音符范围"""
-        return (self.MIN_SUPPORTED_NOTE, self.MAX_SUPPORTED_NOTE)
+        return self.get_playable_range()
     
     def analyze_coverage(self, midi_notes: List[int]) -> dict:
         """分析音符覆盖率"""
@@ -199,42 +281,32 @@ class KeyboardMapper:
     
     def suggest_transpose(self, midi_notes: List[int]) -> int:
         """
-        智能移调算法 - 优化音域覆盖率
-
-        36键全音阶电子琴可以弹所有半音，不再需要移调到C大调。
-        优化目标: 完整4八度范围 (C3-B6, MIDI 48-95)，充分利用SHIFT扩展音域。
-        偏向中高音区，避免歌曲被不必要地拉低。
-        
-        Args:
-            midi_notes: MIDI音符列表
-            
-        Returns:
-            建议的移调半音数（12的倍数，即纯八度移动）
+        智能移调算法 - 优化音域覆盖率（对称评分，不偏向任何音区）
         """
         if not midi_notes:
             return 0
         
-        # 优化目标: 完整4八度范围 (48-95)
-        TARGET_MIN = 48
-        TARGET_MAX = 95
-        # 偏向中高音区的中心
-        PREFERRED_CENTER = 73.0
+        # 根据模式系统选择目标范围
+        pmin, pmax = self.get_playable_range()
+        TARGET_MIN = pmin
+        TARGET_MAX = pmax
+        # 使用可弹奏范围的真实中心（对称，不偏向任何音区）
+        PREFERRED_CENTER = (pmin + pmax) / 2.0
         
         note_min = min(midi_notes)
         note_max = max(midi_notes)
         note_center = (note_min + note_max) / 2
         
-        # 计算需要的八度调整，偏向中高音区
+        # 计算需要的八度调整
         octave_adjust = round((PREFERRED_CENTER - note_center) / 12) * 12
         
         # 限制范围
         octave_adjust = max(-36, min(36, octave_adjust))
         
-        # 如果偏移为负（降低音高），检查是否真的需要
-        if octave_adjust < 0:
-            hits_no_shift = sum(1 for n in midi_notes if TARGET_MIN <= n <= TARGET_MAX)
-            if hits_no_shift / len(midi_notes) >= 0.8:
-                octave_adjust = 0
+        # 如果不偏移时命中率已经很高，优先保持原始音高
+        hits_no_shift = sum(1 for n in midi_notes if TARGET_MIN <= n <= TARGET_MAX)
+        if hits_no_shift / len(midi_notes) >= 0.8:
+            octave_adjust = 0
         
         # 保存分析信息
         self._last_key_transpose = 0
@@ -255,7 +327,8 @@ class KeyboardMapper:
         elif target_octave == 'low':
             target_center = 53.5
         else:
-            target_center = 71.5
+            pmin, pmax = self.get_playable_range()
+            target_center = (pmin + pmax) / 2.0
         
         suggested = round((target_center - note_avg) / 12) * 12
         
@@ -286,9 +359,24 @@ class KeyboardMapper:
         octave = midi_note // 12 - 1
         return f"{note_names[midi_note % 12]}{octave}"
     
-    def get_key_for_display(self, key: str, shift_mode: bool = False) -> str:
-        """获取按键的显示名称"""
-        if shift_mode:
+    def get_key_for_display(self, key: str, shift_mode: bool = False, ctrl_mode: bool = False) -> str:
+        """获取按键的显示名称（支持三模式）"""
+        if ctrl_mode:
+            key_display = {
+                # CTRL高音区白键 (C4-B4)
+                'q': '1', 'w': '2', 'e': '3', 'r': '4', 't': '5', 'y': '6', 'u': '7',
+                # CTRL中音区白键 (C3-B3)
+                'a': '1̣', 's': '2̣', 'd': '3̣', 'f': '4̣', 'g': '5̣', 'h': '6̣', 'j': '7̣',
+                # CTRL低音区白键 (C2-B2)
+                'z': '1̤', 'x': '2̤', 'c': '3̤', 'v': '4̤', 'b': '5̤', 'n': '6̤', 'm': '7̤',
+                # CTRL低音区黑键 (C#2-A#2)
+                '1': '#1̤', '2': '#2̤', '3': '#4̤', '4': '#5̤', '5': '#6̤',
+                # CTRL中音区黑键 (C#3-A#3)
+                '6': '#1̣', '7': '#2̣', '8': '#4̣', '9': '#5̣', '0': '#6̣',
+                # CTRL高音区黑键 (C#4-A#4)
+                'i': '#1', 'o': '#2', 'p': '#4', '[': '#5', ']': '#6',
+            }
+        elif shift_mode:
             key_display = {
                 # SHIFT高音区白键 (C6-B6)
                 'q': '1̈', 'w': '2̈', 'e': '3̈', 'r': '4̈', 't': '5̈', 'y': '6̈', 'u': '7̈',

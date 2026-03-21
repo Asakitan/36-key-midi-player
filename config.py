@@ -1,22 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-配置模块 - 36键电子琴配置（含黑键/半音，支持SHIFT切换）
+配置模块 - 60键电子琴配置（含黑键/半音，支持SHIFT/CTRL三模式切换）
 
-游戏实际布局（36键全音阶 × 2模式 = 48音域）：
-  普通模式（无SHIFT）：C3-B5 (MIDI 48-83)
-  SHIFT模式（按SHIFT切换）：C4-B6 (MIDI 60-95)
+游戏实际布局（36物理键 × 3模式 = 60唯一音位，C2-B6 完整5八度）：
+  普通模式（无修饰键）：C3-B5 (MIDI 48-83)
+  SHIFT模式（按L Shift切换高八度）：C4-B6 (MIDI 60-95)
+  CTRL模式（按L Ctrl切换低八度）：C2-B4 (MIDI 36-71)
 
-物理按键不变（36键），SHIFT只改变音高映射：
-- Z-M = 低音区白键  普通:C3-B3(48-59)  SHIFT:C4-B4(60-71)
-- A-J = 中音区白键  普通:C4-B4(60-71)  SHIFT:C5-B5(72-83)
-- Q-U = 高音区白键  普通:C5-B5(72-83)  SHIFT:C6-B6(84-95)
-- 1-5 = 低音区黑键  普通:C#3-A#3       SHIFT:C#4-A#4
-- 6-0 = 中音区黑键  普通:C#4-A#4       SHIFT:C#5-A#5
-- I,O,P,[,] = 高音区黑键  普通:C#5-A#5  SHIFT:C#6-A#6
+物理按键不变（36键），修饰键改变八度映射：
+             CTRL模式(-12)   普通模式        SHIFT模式(+12)
+- Z-M白键:   C2-B2(36-47)   C3-B3(48-59)   C4-B4(60-71)
+- A-J白键:   C3-B3(48-59)   C4-B4(60-71)   C5-B5(72-83)
+- Q-U白键:   C4-B4(60-71)   C5-B5(72-83)   C6-B6(84-95)
+- 1-5黑键:   C#2-A#2        C#3-A#3        C#4-A#4
+- 6-0黑键:   C#3-A#3        C#4-A#4        C#5-A#5
+- I,O,P,[,]黑键: C#4-A#4    C#5-A#5        C#6-A#6
 
-总音域：C3-B6 (MIDI 48-95, 4个八度, 48个半音)
-  MIDI 48-59: 仅普通模式可达 (C3-B3)
-  MIDI 60-83: 两种模式均可达 (重叠区)
+总音域：C2-B6 (MIDI 36-95, 5个八度, 60个半音)
+  MIDI 36-47: C2-B2 仅CTRL模式可达
+  MIDI 48-59: CTRL或普通模式可达 (C3-B3)
+  MIDI 60-71: 三种模式均可达 (C4-B4)
+  MIDI 72-83: 普通或SHIFT模式可达 (C5-B5)
   MIDI 84-95: 仅SHIFT模式可达 (C6-B6)
 """
 
@@ -92,11 +96,42 @@ MIDI_TO_KEY_SHIFT = {midi + 12: key for midi, key in MIDI_TO_KEY.items()}
 
 KEY_TO_MIDI_SHIFT = {v: k for k, v in MIDI_TO_KEY_SHIFT.items()}
 
-# SHIFT切换设置
-SHIFT_TOGGLE_DELAY_MS = 50   # SHIFT按下后等待游戏响应的延迟(毫秒)
+# CTRL模式映射（每个键-12 MIDI，物理按键不变）
+# CTRL模式音域: C2-B4 (MIDI 36-71, 3个八度, 36个键)
+#   低音区 C2-B2 (36-47) -> Z-M (白键) + 1-5 (黑键)
+#   中音区 C3-B3 (48-59) -> A-J (白键) + 6-0 (黑键)
+#   高音区 C4-B4 (60-71) -> Q-U (白键) + I,O,P,[,] (黑键)
+MIDI_TO_KEY_CTRL = {midi - 12: key for midi, key in MIDI_TO_KEY.items()}
 
-# 黑键集合（完整4八度: C3-B6, MIDI 48-95）
+KEY_TO_MIDI_CTRL = {v: k for k, v in MIDI_TO_KEY_CTRL.items()}
+
+# === 扩展模式 </>  (全钢琴88键) ===
+# <模式：每个键 -27 半音，覆盖 A0-B2 (MIDI 21-47)
+# 物理键不变，音符下移27半音，只取落在21-47范围内的映射
+MIDI_TO_KEY_LT = {midi - 27: key for midi, key in MIDI_TO_KEY.items()
+                  if 21 <= midi - 27 <= 47}
+
+KEY_TO_MIDI_LT = {v: k for k, v in MIDI_TO_KEY_LT.items()}
+
+# >模式：每个键 +36 半音，覆盖 C6-C8 (MIDI 84-108)
+MIDI_TO_KEY_GT = {midi + 36: key for midi, key in MIDI_TO_KEY.items()
+                  if 84 <= midi + 36 <= 108}
+
+KEY_TO_MIDI_GT = {v: k for k, v in MIDI_TO_KEY_GT.items()}
+
+# 模式系统选择: 'classic' = L Shift/L Ctrl, 'extended' = </>
+# classic: C2-B6 (MIDI 36-95, 60键)
+# extended: A0-C8 (MIDI 21-108, 88键/全钢琴)
+DEFAULT_MODE_SYSTEM = 'classic'
+
+# 模式切换设置
+MODE_SWITCH_DELAY_MS = 200    # 切换模式后必须等待的延迟(毫秒)，确保游戏响应
+MODE_KEY_PRESS_MS = 50        # 模式切换按键按下时长(毫秒)
+
+# 黑键集合（完整5八度: C2-B6, MIDI 36-95）
 BLACK_KEY_NOTES = {
+    # CTRL独占区 C2-B2
+    37, 39, 42, 44, 46,   # C#2, D#2, F#2, G#2, A#2
     # 普通模式 C3-B5
     49, 51, 54, 56, 58,   # C#3, D#3, F#3, G#3, A#3
     61, 63, 66, 68, 70,   # C#4, D#4, F#4, G#4, A#4
@@ -134,7 +169,7 @@ CHORD_PRESERVE_BASS = True   # 保留低音根音（和弦基础）
 CHORD_PRESERVE_TOP = True    # 保留高音旋律（最重要）
 
 # GUI设置
-WINDOW_TITLE = "咲Midiplayer v2.0.2+2002 36键位"
+WINDOW_TITLE = "咲Midiplayer v2.2.0 60/88键位"
 WINDOW_SIZE = "900x980"
 BUTTON_WIDTH = 60
 BUTTON_HEIGHT = 60

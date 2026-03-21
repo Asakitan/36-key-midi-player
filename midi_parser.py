@@ -7,7 +7,7 @@ import mido
 import mido.midifiles.meta as _mido_meta
 import mido.midifiles.midifiles as _mido_files
 import re
-from typing import List, Tuple, Optional, Set, Dict
+from typing import List, Tuple, Optional, Set, Dict, Any
 from dataclasses import dataclass, field
 
 # === 修复 mido 无法处理损坏的 meta 事件（如空 key_signature）===
@@ -78,7 +78,7 @@ class PlayEvent:
     is_glissando: bool = False  # 是否是滑奏
     key: str = ''           # 要按的键
     midi_notes: List[int] = field(default_factory=list)   # 相关的MIDI音符
-    original_event: any = None    # 原始事件 (NoteEvent, ChordEvent 或 GlissandoEvent)
+    original_event: Any = None    # 原始事件 (NoteEvent, ChordEvent 或 GlissandoEvent)
 
 
 class ChordDetector:
@@ -438,13 +438,20 @@ class MidiParser:
             # 智能精简：过密的曲子自动重新编曲
             self._smart_rearrange()
             
+            # 智能编曲：清理杂乱无章的歌曲
+            self._intelligent_arrange()
+            
+            # 极速段检测与时间拉伸
+            self._humanize_speed()
+            
             # 智能分析通道
             self._analyze_channels()
             
-            # 按音高分析高/低音部
+            # 按音高智能分析高/低音部（多因子分析）
             self._analyze_pitch_parts()
             
             self._detect_chords()
+            self._detect_glissandos()  # 滑奏检测
             self._build_play_events()
             return True
         except Exception as e:
@@ -614,14 +621,379 @@ class MidiParser:
         
         self.notes = kept_notes
     
-    def _analyze_pitch_parts(self):
+    def _intelligent_arrange(self):
         """
-        按音高分析高/低音部（智能分割）
+        智能编曲算法 - 清理杂乱无章的歌曲，保留主旋律
+        
+        借鉴专业编曲软件的思路（如MuseScore的音符简化、Band-in-a-Box的智能编曲）：
+        
+        核心原则：
+        1. 主旋律神圣不可侵犯 - 只清理伴奏，不改变旋律走向
+        2. 保留和声骨架 - 每个和弦保留根音、三度、五度
+        3. 删除装饰性噪音 - 快速经过音、无规律的伴奏碎片
+        4. 保持节奏脉搏 - 保留强拍低音和规律节奏型
+        5. 动态密度控制 - 安静段落保留更多细节，密集段适当简化
+        
+        目标：让杂乱的曲子弹起来更干净好听，同时不失去原曲特色
+        
+        触发条件：
+        - 音符密度 > 8 notes/sec 的段落占比 > 40%
+        - 或同时发声音符经常 > 6个
+        """
+        if not self.notes or self.total_time <= 0:
+            return
+        
+        sorted_notes = sorted(self.notes, key=lambda n: n.time)
+        density = len(sorted_notes) / self.total_time
+        
+        # === 分析歌曲是否需要智能编曲 ===
+        # 统计"杂乱"段落占比
+        WINDOW = 0.5  # 500ms分析窗口
+        DENSITY_THRESHOLD = 8  # 每秒8个音符以上视为密集
+        SIMULTANEOUS_THRESHOLD = 6  # 同时6个音符以上视为过密
+        
+        dense_windows = 0
+        total_windows = 0
+        thick_chords = 0
+        
+        t = 0
+        while t < self.total_time:
+            window_notes = [n for n in sorted_notes if t <= n.time < t + WINDOW]
+            total_windows += 1
+            
+            if len(window_notes) / WINDOW > DENSITY_THRESHOLD:
+                dense_windows += 1
+            
+            # 检查同时发声数
+            if window_notes:
+                sub_window = 0.05  # 50ms
+                for sub_t in [t + i * sub_window for i in range(int(WINDOW / sub_window))]:
+                    simultaneous = sum(1 for n in window_notes if sub_t <= n.time < sub_t + sub_window)
+                    if simultaneous > SIMULTANEOUS_THRESHOLD:
+                        thick_chords += 1
+            
+            t += WINDOW
+        
+        dense_ratio = dense_windows / max(total_windows, 1)
+        
+        if dense_ratio < 0.30 and thick_chords < 10 and density <= 10:
+            return  # 歌曲不杂乱，不需要处理
+        
+        print(f"[智能编曲] 检测到杂乱段落: 密集段{dense_ratio:.0%}, 厚重和弦{thick_chords}处, "
+              f"平均密度{density:.1f}n/s")
+        
+        original_count = len(sorted_notes)
+        bpm = self.bpm if hasattr(self, 'bpm') and self.bpm else 120
+        beat_duration = 60.0 / bpm
+        
+        # === 第一步：提取主旋律线（Skyline算法）===
+        # Skyline算法：在每个时间点取最高音作为旋律
+        melody_line = self._extract_skyline_melody(sorted_notes, beat_duration)
+        melody_set = set(id(n) for n in melody_line)
+        
+        # === 第二步：提取低音根音线 ===
+        bass_line = self._extract_bass_line(sorted_notes, beat_duration)
+        bass_set = set(id(n) for n in bass_line)
+        
+        # === 第三步：评估每个音符的重要性 ===
+        note_importance = {}  # id(note) -> importance_score (0-1)
+        
+        for note in sorted_notes:
+            score = 0.0
+            nid = id(note)
+            
+            # 1. 旋律音 = 最高优先级
+            if nid in melody_set:
+                score += 0.8
+            
+            # 2. 低音根音 = 高优先级
+            if nid in bass_set:
+                score += 0.6
+            
+            # 3. 力度贡献（强音更重要）
+            score += (note.velocity / 127.0) * 0.15
+            
+            # 4. 时值贡献（长音符更重要）
+            if note.duration > beat_duration:
+                score += 0.15
+            elif note.duration > beat_duration * 0.5:
+                score += 0.08
+            
+            # 5. 节拍位置（强拍上的音符更重要）
+            beat_pos = (note.time % beat_duration) / beat_duration
+            if beat_pos < 0.1 or abs(beat_pos - 0.5) < 0.1:  # 第1拍或第3拍
+                score += 0.1
+            
+            # 6. 和弦音（与旋律同时的和声支撑）
+            is_chord_tone = False
+            for mn in melody_line:
+                if abs(note.time - mn.time) < 0.05 and note.note != mn.note:
+                    interval = abs(note.note - mn.note) % 12
+                    if interval in (0, 3, 4, 5, 7, 8, 9):  # 和弦音程
+                        is_chord_tone = True
+                        score += 0.12
+                        break
+            
+            note_importance[nid] = min(1.0, score)
+        
+        # === 第四步：基于密度的动态筛选 ===
+        # 密集段落降低阈值（删更多），稀疏段落保留更多
+        kept_notes = []
+        
+        t = 0
+        while t < self.total_time:
+            window_notes = [n for n in sorted_notes if t <= n.time < t + WINDOW]
+            window_density = len(window_notes) / WINDOW
+            
+            if window_density <= 6:
+                # 稀疏段：保留所有
+                kept_notes.extend(window_notes)
+            else:
+                # 密集段：根据重要性筛选
+                # 目标密度：6-8 notes/sec
+                target_count = max(3, int(6 * WINDOW))
+                
+                # 按重要性排序
+                scored = [(n, note_importance.get(id(n), 0)) for n in window_notes]
+                scored.sort(key=lambda x: x[1], reverse=True)
+                
+                # 保留最重要的音符
+                for n, score in scored[:target_count]:
+                    kept_notes.append(n)
+                
+                # 额外保留所有旋律音和低音根音（即使超出配额）
+                for n, score in scored[target_count:]:
+                    nid = id(n)
+                    if nid in melody_set or nid in bass_set:
+                        kept_notes.append(n)
+            
+            t += WINDOW
+        
+        # 去重并按时间排序
+        seen = set()
+        unique_kept = []
+        for n in kept_notes:
+            nid = id(n)
+            if nid not in seen:
+                seen.add(nid)
+                unique_kept.append(n)
+        
+        unique_kept.sort(key=lambda x: x.time)
+        
+        final_count = len(unique_kept)
+        if final_count < original_count * 0.95:  # 只在实际减少5%以上时才应用
+            self.notes = unique_kept
+            reduction = (1 - final_count / original_count) * 100
+            new_density = final_count / self.total_time if self.total_time > 0 else 0
+            print(f"[智能编曲] 清理完成: {original_count} → {final_count}音符 "
+                  f"(减少{reduction:.0f}%, 新密度={new_density:.1f}notes/s)")
+        else:
+            print(f"[智能编曲] 歌曲结构良好，保持原样")
+    
+    def _extract_skyline_melody(self, sorted_notes: list, beat_duration: float) -> list:
+        """
+        Skyline算法提取主旋律线
+        
+        原理：在每个时间窗口取最高音，然后用声部追踪(voice leading)
+        确保旋律线连贯。避免把伴奏中偶尔出现的高音当作旋律。
+        
+        改进：
+        1. 连续性检查：旋律跳跃不应过大（>12半音可疑）
+        2. 力度检查：旋律通常力度较强
+        3. 通道一致性：同一通道的音符更可能是同一声部
+        """
+        if not sorted_notes:
+            return []
+        
+        melody = []
+        WINDOW = 0.08  # 80ms窗口（比50ms稍大，更好捕捉旋律）
+        last_melody_note = None
+        last_melody_channel = None
+        
+        t = sorted_notes[0].time
+        end_time = sorted_notes[-1].time + 0.1
+        
+        while t < end_time:
+            window_notes = [n for n in sorted_notes if t <= n.time < t + WINDOW]
+            
+            if not window_notes:
+                t += WINDOW
+                continue
+            
+            # 候选：窗口内最高音
+            candidates = sorted(window_notes, key=lambda n: n.note, reverse=True)
+            
+            best = None
+            best_score = -1
+            
+            for candidate in candidates[:3]:  # 检查前3个最高音
+                score = candidate.note / 127.0 * 0.4  # 高音优先
+                score += candidate.velocity / 127.0 * 0.25  # 力度
+                score += min(candidate.duration / beat_duration, 1.0) * 0.15  # 时值
+                
+                # 连续性奖励：与上一个旋律音距离近
+                if last_melody_note is not None:
+                    interval = abs(candidate.note - last_melody_note.note)
+                    if interval <= 7:  # 五度以内 = 旋律连贯
+                        score += 0.15
+                    elif interval <= 12:  # 八度以内
+                        score += 0.05
+                    else:  # 超过八度 = 可能不是旋律
+                        score -= 0.1
+                
+                # 通道一致性奖励
+                if last_melody_channel is not None and candidate.channel == last_melody_channel:
+                    score += 0.05
+                
+                if score > best_score:
+                    best_score = score
+                    best = candidate
+            
+            if best:
+                melody.append(best)
+                last_melody_note = best
+                last_melody_channel = best.channel
+            
+            t += WINDOW
+        
+        return melody
+    
+    def _extract_bass_line(self, sorted_notes: list, beat_duration: float) -> list:
+        """
+        提取低音根音线
         
         策略：
-        1. 用音高分布的75%分位数作为分割点参考
-        2. 分割点不能高于G5(79)，避免把正常旋律都丢掉
-        3. 如果高低音差距不大，不做分割
+        1. 每个小节的强拍（第1拍、第3拍）保留最低音
+        2. 连续的低音线条保留（行进低音）
+        3. 力度强的低音保留（和弦根音）
+        """
+        if not sorted_notes:
+            return []
+        
+        bass_notes = []
+        measure_duration = beat_duration * 4  # 假设4/4拍
+        
+        # 按小节分组
+        t = 0
+        while t < self.total_time:
+            # 强拍位置（第1拍和第3拍）
+            for beat_offset in [0, beat_duration * 2]:
+                beat_time = t + beat_offset
+                beat_end = beat_time + beat_duration
+                
+                beat_notes = [n for n in sorted_notes if beat_time <= n.time < beat_end]
+                if beat_notes:
+                    # 取最低音
+                    lowest = min(beat_notes, key=lambda n: n.note)
+                    bass_notes.append(lowest)
+            
+            t += measure_duration
+        
+        return bass_notes
+    
+    def _humanize_speed(self):
+        """
+        极速段检测与时间拉伸 - 让超人速度的段落变得人类可弹
+        
+        检测逻辑：
+        1. 滑动窗口扫描，找出音符密度 > 15 notes/sec 的段落
+        2. 在这些段落中，将音符时间微调（拉伸），使密度降到 ~12 notes/sec
+        3. 不改变整体时长，只对局部极速段做时间扩展
+        4. 保持音符间的相对时序关系
+        
+        核心原则：
+        - 只处理真正不可能弹奏的速度（>15n/s）
+        - 拉伸幅度最小化，尽量不影响听感
+        - 不删除音符，只调整时间
+        """
+        if not self.notes or self.total_time <= 0:
+            return
+        
+        sorted_notes = sorted(self.notes, key=lambda n: n.time)
+        
+        # === 检测极速段落 ===
+        WINDOW = 0.3  # 300ms窗口
+        HUMAN_MAX_DENSITY = 14  # 人类极限约14notes/sec（考虑和弦）
+        TARGET_DENSITY = 11     # 目标密度
+        
+        fast_segments = []  # [(start_time, end_time, current_density)]
+        
+        t = 0
+        while t < self.total_time:
+            window_notes = [n for n in sorted_notes if t <= n.time < t + WINDOW]
+            window_density = len(window_notes) / WINDOW
+            
+            if window_density > HUMAN_MAX_DENSITY:
+                fast_segments.append((t, t + WINDOW, window_density))
+            
+            t += WINDOW * 0.5  # 50%重叠
+        
+        if not fast_segments:
+            return
+        
+        # 合并相邻的极速段
+        merged_segments = []
+        if fast_segments:
+            current = list(fast_segments[0])
+            for start, end, density in fast_segments[1:]:
+                if start <= current[1] + WINDOW:
+                    current[1] = end
+                    current[2] = max(current[2], density)
+                else:
+                    merged_segments.append(tuple(current))
+                    current = [start, end, density]
+            merged_segments.append(tuple(current))
+        
+        total_fast_time = sum(e - s for s, e, _ in merged_segments)
+        print(f"[速度优化] 检测到 {len(merged_segments)} 个极速段落 "
+              f"(合计{total_fast_time:.1f}秒, 最高密度{max(d for _,_,d in merged_segments):.0f}n/s)")
+        
+        # === 对极速段落进行时间微拉伸 ===
+        # 策略：将极速段内的音符时间等比拉伸，使密度降到目标值
+        # 后续音符的时间向后推移
+        
+        time_shift = 0.0  # 累积时间偏移
+        notes_adjusted = 0
+        
+        for seg_start, seg_end, seg_density in merged_segments:
+            if seg_density <= HUMAN_MAX_DENSITY:
+                continue
+            
+            # 拉伸系数：当前密度/目标密度
+            stretch_ratio = min(seg_density / TARGET_DENSITY, 1.8)  # 最多拉伸1.8倍
+            
+            seg_duration = seg_end - seg_start
+            new_duration = seg_duration * stretch_ratio
+            time_added = new_duration - seg_duration
+            
+            # 调整该段内的音符时间
+            for note in sorted_notes:
+                if seg_start + time_shift <= note.time < seg_end + time_shift:
+                    # 段内音符：按比例拉伸
+                    relative_pos = (note.time - seg_start - time_shift) / seg_duration
+                    note.time = seg_start + time_shift + relative_pos * new_duration
+                    notes_adjusted += 1
+                elif note.time >= seg_end + time_shift:
+                    # 段后音符：整体后移
+                    note.time += time_added
+            
+            time_shift += time_added
+        
+        if time_shift > 0:
+            self.total_time += time_shift
+            print(f"[速度优化] 已拉伸 {notes_adjusted} 个音符, "
+                  f"总时长增加 {time_shift:.2f}秒 ({time_shift/self.total_time*100:.1f}%)")
+    
+    def _analyze_pitch_parts(self):
+        """
+        智能音部分析 - 多因子分割（不只按音高）
+        
+        改进策略（解决低音太多扰乱主旋律的问题）：
+        1. Skyline旋律追踪：用声部追踪算法识别真正的旋律线
+        2. 通道分析：MIDI通道信息辅助判断（不同通道通常是不同声部）
+        3. 节奏角色分析：持续低音 vs 旋律性低音
+        4. 密度感知：某段时间只有低音时，那是旋律不是伴奏
+        5. 力度模式：旋律通常力度更强且有变化
         """
         if not self.notes:
             return
@@ -631,12 +1003,18 @@ class MidiParser:
         pitch_max = max(all_pitches)
         total_range = pitch_max - pitch_min
         
-        # === 找出每个时间窗口的最高音（真正的旋律线）===
         sorted_notes = sorted(self.notes, key=lambda n: n.time)
-        window_size = 0.1  # 100ms
+        bpm = self.bpm if hasattr(self, 'bpm') and self.bpm else 120
+        beat_duration = 60.0 / bpm
         
+        # === 第一步：Skyline旋律线追踪 ===
+        window_size = 0.08  # 80ms
         melody_line_pitches = []
+        melody_line_notes = []  # 保存实际的NoteEvent
+        
         i = 0
+        last_melody_pitch = None
+        
         while i < len(sorted_notes):
             window_start = sorted_notes[i].time
             window_end = window_start + window_size
@@ -648,35 +1026,159 @@ class MidiParser:
                 j += 1
             
             if window_notes:
-                highest = max(n.note for n in window_notes)
-                melody_line_pitches.append(highest)
+                # 智能选择旋律音（不一定是最高音）
+                best_note = None
+                best_score = -1
+                
+                for n in window_notes:
+                    score = n.note / 127.0 * 0.35  # 高音倾向
+                    score += n.velocity / 127.0 * 0.25  # 力度
+                    score += min(n.duration / beat_duration, 1.0) * 0.15  # 时值
+                    
+                    # 连续性：与上一个旋律音距离近
+                    if last_melody_pitch is not None:
+                        interval = abs(n.note - last_melody_pitch)
+                        if interval <= 5:
+                            score += 0.2
+                        elif interval <= 12:
+                            score += 0.1
+                        elif interval > 24:
+                            score -= 0.15  # 超过2个八度跳跃，可能不是旋律
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_note = n
+                
+                if best_note:
+                    melody_line_pitches.append(best_note.note)
+                    melody_line_notes.append(best_note)
+                    last_melody_pitch = best_note.note
             
             i = j if j > i else i + 1
         
-        # === 计算分割点 ===
+        # === 第二步：通道分析辅助 ===
+        # 统计每个通道的平均音高，确定哪些通道是低音声部
+        channel_stats = {}
+        for note in self.notes:
+            ch = note.channel
+            if ch not in channel_stats:
+                channel_stats[ch] = {'pitches': [], 'velocities': [], 'count': 0}
+            channel_stats[ch]['pitches'].append(note.note)
+            channel_stats[ch]['velocities'].append(note.velocity)
+            channel_stats[ch]['count'] += 1
+        
+        bass_channels = set()
+        melody_channels = set()
+        for ch, stats in channel_stats.items():
+            avg_pitch = sum(stats['pitches']) / len(stats['pitches'])
+            if avg_pitch < 55:  # 平均音高低于G3，大概率是低音声部
+                bass_channels.add(ch)
+            elif avg_pitch > 65:  # 平均音高高于F4，大概率是旋律声部
+                melody_channels.add(ch)
+        
+        # === 第三步：计算智能分割点 ===
         if melody_line_pitches:
             melody_sorted = sorted(melody_line_pitches)
             melody_median = melody_sorted[len(melody_sorted) // 2]
-            # 用10%分位数作为分割点（保留更多旋律到主旋律区域）
+            # 分割点 = 旋律线的10%分位数，但不高于C4(60)
             melody_10th = melody_sorted[max(0, len(melody_sorted) // 10)]
             self.pitch_split_point = melody_10th
         else:
             melody_median = (pitch_min + pitch_max) // 2
             self.pitch_split_point = pitch_min + total_range // 4
         
-        # === 分割点范围 ===
-        # 上限：不能高于C4(60)，C4及以上的音必须归入主旋律
-        # 下限：不能低于C3(48)，只分离真正的低音贝斯
-        MAX_SPLIT_POINT = 60  # C4（硬性上限：C4以上永远是主旋律）
+        MAX_SPLIT_POINT = 60  # C4
         MIN_SPLIT_POINT = 48  # C3
         self.pitch_split_point = max(MIN_SPLIT_POINT, min(MAX_SPLIT_POINT, self.pitch_split_point))
-        
-        # 确保合理：分割点在音域范围内
         self.pitch_split_point = max(pitch_min, min(pitch_max - 5, self.pitch_split_point))
         
-        # 分割
-        self.melody_notes = [n for n in self.notes if n.note >= self.pitch_split_point]
-        self.bass_notes = [n for n in self.notes if n.note < self.pitch_split_point]
+        # === 第四步：智能分割（多因子，不只看音高）===
+        self.melody_notes = []
+        self.bass_notes = []
+        
+        # 对每个音符进行智能分类
+        melody_note_set = set(id(n) for n in melody_line_notes)
+        
+        for note in self.notes:
+            is_melody = False
+            
+            # 规则1：被Skyline算法识别为旋律的音符 → 旋律
+            if id(note) in melody_note_set:
+                is_melody = True
+            # 规则2：音高高于分割点 → 旋律
+            elif note.note >= self.pitch_split_point:
+                is_melody = True
+            # 规则3：虽然低音高，但属于旋律通道 → 旋律
+            elif note.channel in melody_channels and note.note >= self.pitch_split_point - 5:
+                is_melody = True
+            # 规则4：低音但是时值很长（旋律性低音） → 旋律
+            elif note.duration > beat_duration * 2 and note.velocity > 80:
+                is_melody = True
+            # 规则5：低音段落中的唯一声部（低音独奏） → 旋律
+            # (在该时间窗口内没有高音，低音就是旋律)
+            elif note.note < self.pitch_split_point:
+                # 检查附近是否有高音
+                has_nearby_melody = False
+                for mn in melody_line_notes:
+                    if abs(mn.time - note.time) < beat_duration and mn.note >= self.pitch_split_point:
+                        has_nearby_melody = True
+                        break
+                if not has_nearby_melody:
+                    is_melody = True  # 没有高音伴随，低音就是旋律
+            
+            if is_melody:
+                self.melody_notes.append(note)
+            else:
+                # 额外过滤：低音中的重复模式（持续低音伴奏）
+                # 如果同一个低音在短时间内重复出现多次，标记为伴奏型低音
+                self.bass_notes.append(note)
+        
+        # === 第五步：低音部去重复模式（减少扰乱） ===
+        # 检测低音中的重复伴奏模式，标记为可减持
+        if self.bass_notes:
+            bass_sorted = sorted(self.bass_notes, key=lambda n: n.time)
+            pattern_bass = []  # 有规律的伴奏低音
+            non_pattern_bass = []  # 非规律低音（保留更多）
+            
+            # 检测连续重复音（同一个音高反复出现）
+            repeat_count = {}  # pitch -> [(time, note)]
+            for note in bass_sorted:
+                pc = note.note % 12  # 音名
+                if pc not in repeat_count:
+                    repeat_count[pc] = []
+                repeat_count[pc].append(note)
+            
+            # 标记高重复度的低音（同一音名出现次数占低音总数的30%以上）
+            heavy_repeat_pitches = set()
+            for pc, notes_list in repeat_count.items():
+                if len(notes_list) > len(bass_sorted) * 0.25:
+                    heavy_repeat_pitches.add(pc)
+            
+            # 对重复度高的低音进行稀疏化：每拍只保留一个
+            for note in bass_sorted:
+                pc = note.note % 12
+                if pc in heavy_repeat_pitches:
+                    pattern_bass.append(note)
+                else:
+                    non_pattern_bass.append(note)
+            
+            # 稀疏化重复低音：每2拍保留一个
+            if pattern_bass:
+                sparse_pattern = []
+                last_kept_time = {}
+                for note in pattern_bass:
+                    pc = note.note % 12
+                    last_t = last_kept_time.get(pc, -beat_duration * 3)
+                    if note.time - last_t >= beat_duration * 2:
+                        sparse_pattern.append(note)
+                        last_kept_time[pc] = note.time
+                
+                self.bass_notes = non_pattern_bass + sparse_pattern
+                self.bass_notes.sort(key=lambda n: n.time)
+                
+                removed = len(pattern_bass) - len(sparse_pattern)
+                if removed > 0:
+                    print(f"[音部分析] 低音去重复: 移除 {removed} 个重复伴奏低音")
         
         # 空隙
         if self.bass_notes and self.melody_notes:
@@ -684,8 +1186,7 @@ class MidiParser:
         else:
             self.pitch_gap = 0
         
-        # 推荐只播放旋律（撕裂阈值：放宽到2.5个八度=30半音）
-        # 原来24半音太严格，很多正常有低音伴奏的歌曲被误判为撕裂
+        # 推荐只播放旋律
         if self.melody_notes and self.bass_notes:
             melody_avg = sum(n.note for n in self.melody_notes) / len(self.melody_notes)
             bass_avg = sum(n.note for n in self.bass_notes) / len(self.bass_notes)
@@ -693,10 +1194,6 @@ class MidiParser:
             bass_ratio = len(self.bass_notes) / len(self.notes)
             melody_ratio = len(self.melody_notes) / len(self.notes)
             
-            # 条件更宽松：
-            # 1. 音程距离 > 30半音（2.5个八度，之前是24太严了）
-            # 2. 低音占比 > 30%（之前20%太低，有少量低音伴奏很正常）
-            # 3. 同时旋律占比不能太少（否则可能是低音为主的曲子）
             self.recommend_melody_only = (
                 part_distance > 30 and 
                 bass_ratio > 0.3 and 
@@ -718,6 +1215,8 @@ class MidiParser:
         print(f"[音部分析] 旋律线: {midi_to_name(melody_min)}-{midi_to_name(melody_max)} (中位{midi_to_name(melody_median)})")
         print(f"[音部分析] 分割点: {midi_to_name(self.pitch_split_point)}, 空隙: {self.pitch_gap}半音")
         print(f"[音部分析] 主旋律: {len(self.melody_notes)}音符, 低音部: {len(self.bass_notes)}音符")
+        if bass_channels:
+            print(f"[音部分析] 低音通道: {bass_channels}, 旋律通道: {melody_channels}")
         if self.recommend_melody_only:
             print(f"[音部分析] ! 高低音撕裂严重，推荐只播放主旋律")
     
@@ -1770,6 +2269,41 @@ class JSParser:
         self.chord_detection_enabled = False
         self.chord_detector = ChordDetector()  # 添加和弦检测器以兼容播放器
         
+        # 音部分析兼容属性
+        self.melody_notes: List[NoteEvent] = []
+        self.bass_notes: List[NoteEvent] = []
+        self.pitch_split_point: int = 60
+        self.pitch_gap: int = 0
+        self.recommend_melody_only: bool = False
+        
+        # 延音踏板兼容
+        self.sustain_events: list = []
+        self.has_sustain_pedal: bool = False
+        
+        # 调号信息兼容
+        self.key_signatures: list = []
+        self.primary_key = None
+        self.primary_mode = None
+        
+        # 乐器/通道信息兼容
+        self.channel_instruments: Dict[int, int] = {}
+        self.channel_categories: Dict[int, str] = {}
+        self.track_names: List[str] = []
+        self.melody_channels: List[int] = []
+        self.harmony_channels: List[int] = []
+        self.bass_channels: List[int] = []
+        self.recommended_transpose: Dict[int, int] = {}
+        
+        # tempo兼容
+        self.tempo_changes: list = []
+        self.ticks_per_beat: int = 480
+        self.midi_file = None
+        self.tempo: int = 500000
+        
+        # 滑奏兼容
+        self.glissandos: list = []
+        self.glissando_detection_enabled: bool = False
+        
     def load_file(self, filepath: str) -> bool:
         """加载JS谱面文件"""
         try:
@@ -1964,6 +2498,25 @@ class JSParser:
     def get_play_events(self) -> List[PlayEvent]:
         """获取播放事件列表"""
         return self.play_events
+    
+    def get_pitch_analysis(self) -> dict:
+        """获取音高分析结果（JS文件兼容stub）"""
+        result = {
+            'melody_count': len(self.melody_notes),
+            'bass_count': len(self.bass_notes),
+            'split_point': self.pitch_split_point,
+            'split_point_name': 'C4',
+            'pitch_gap': self.pitch_gap,
+            'recommend_melody_only': self.recommend_melody_only,
+        }
+        if self.notes:
+            pitches = [n.note for n in self.notes]
+            result['melody_range'] = (min(pitches), max(pitches))
+        return result
+    
+    def get_instrument_info(self) -> dict:
+        """获取乐器信息（JS文件无乐器概念）"""
+        return {}
 
 
 def analyze_midi(filepath: str) -> dict:

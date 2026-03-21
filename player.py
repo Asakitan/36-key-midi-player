@@ -22,13 +22,13 @@ try:
 except ImportError:
     PYNPUT_AVAILABLE = False
 
-from midi_parser import MidiParser, JSParser, NoteEvent, ChordEvent, PlayEvent, SustainPedalEvent
+from midi_parser import MidiParser, JSParser, NoteEvent, ChordEvent, PlayEvent
 from keyboard_mapper import KeyboardMapper
 from config import (KEY_PRESS_DURATION, MIN_NOTE_INTERVAL, KEY_DURATION_MAX, KEY_DURATION_MIN,
                     VELOCITY_MIN, VELOCITY_SCALE, VELOCITY_DURATION_MIN, VELOCITY_DURATION_MAX,
                     MAX_SIMULTANEOUS_KEYS, TRACK_PRIORITY_MODE, MELODY_PRIORITY,
                     CHORD_PRESERVE_BASS, CHORD_PRESERVE_TOP,
-                    MIDI_TO_KEY_SHIFT, SHIFT_TOGGLE_DELAY_MS)
+                    MIDI_TO_KEY_SHIFT, MODE_SWITCH_DELAY_MS, MODE_KEY_PRESS_MS, DEFAULT_MODE_SYSTEM)
 
 
 # 人性化设置 - 模拟真人弹奏的微小不确定性
@@ -89,7 +89,7 @@ class PlaybackState:
 
 
 class KeyboardSimulator:
-    """键盘模拟器（支持SHIFT切换扩展音域）"""
+    """键盘模拟器（支持SHIFT/CTRL三模式切换扩展音域）"""
     
     def __init__(self):
         self.use_keyboard = KEYBOARD_AVAILABLE
@@ -98,7 +98,12 @@ class KeyboardSimulator:
         self._release_timers = []  # 延迟释放定时器
         self._key_press_gen = {}   # 每个键的按下代数，防止旧的释放线程杀死新的按下
         self._last_press_time = {}  # 每个键上次按下的时间戳，用于速率限制
-        self._shift_active = False  # SHIFT模式状态（普通模式=False）
+        self._timer_cleanup_counter = 0  # 定时器清理计数
+        self._current_mode = 'normal'  # 当前演奏模式: 'normal', 'shift', 'ctrl'
+        self._mode_toggle_count = 0    # 模式总切换次数
+        self._mode_last_toggle_time = 0.0  # 上次模式切换时间
+        self._mode_cooldown_ms = MODE_SWITCH_DELAY_MS   # 模式切换最小间隔(ms)，防止过快切换导致游戏漏识别
+        self._mode_max_toggles_before_reset = 40  # 累积N次切换后强制重置，防止状态漂移
         
         if not KEYBOARD_AVAILABLE and PYNPUT_AVAILABLE:
             self.controller = Controller()
@@ -169,6 +174,20 @@ class KeyboardSimulator:
         timer_thread = threading.Thread(target=release_keys, daemon=True)
         timer_thread.start()
         self._release_timers.append(timer_thread)
+        
+        # 定期清理已完成的定时器线程，防止内存泄漏
+        self._timer_cleanup_counter += 1
+        if self._timer_cleanup_counter >= 50:
+            self._cleanup_timers()
+            self._timer_cleanup_counter = 0
+    
+    def _cleanup_timers(self):
+        """清理已完成的释放定时器线程，防止内存泄漏"""
+        before = len(self._release_timers)
+        self._release_timers = [t for t in self._release_timers if t.is_alive()]
+        cleaned = before - len(self._release_timers)
+        if cleaned > 20:
+            print(f"[内存] 清理了 {cleaned} 个已完成的定时器线程")
             
     def press_key(self, key: str, duration: float = KEY_PRESS_DURATION):
         """模拟单个按键（阻塞模式）"""
@@ -237,33 +256,189 @@ class KeyboardSimulator:
         for key in list(self._active_keys):
             self._do_release(key)
         self._last_press_time.clear()  # 重置速率限制状态
+        # 清理所有定时器线程
+        self._cleanup_timers()
     
-    def toggle_shift(self):
-        """切换SHIFT模式（游戏内八度切换）"""
+    def _toggle_modifier_key(self, key_name: str):
+        """按下并释放一个修饰键带冷却
+        
+        key_name 支持: 'left shift', 'left ctrl', ',', '.'
+        """
+        now = time.monotonic()
+        elapsed_ms = (now - self._mode_last_toggle_time) * 1000.0
+        
+        # 冷却：防止过快切换导致游戏漏识别
+        if elapsed_ms < self._mode_cooldown_ms:
+            remaining = self._mode_cooldown_ms - elapsed_ms
+            time.sleep(remaining / 1000.0)
+        
         try:
+            key_press_sec = MODE_KEY_PRESS_MS / 1000.0  # 按键按下时长
             if self.use_keyboard and KEYBOARD_AVAILABLE:
-                keyboard.press('shift')
-                time.sleep(0.03)
-                keyboard.release('shift')
+                keyboard.press(key_name)
+                time.sleep(key_press_sec)
+                keyboard.release(key_name)
             elif self.controller:
-                self.controller.press(Key.shift)
-                time.sleep(0.03)
-                self.controller.release(Key.shift)
+                # pynput 按键映射
+                pynput_map = {
+                    'left shift': Key.shift,
+                    'left ctrl': Key.ctrl_l,
+                }
+                if key_name in pynput_map:
+                    pynput_key = pynput_map[key_name]
+                    self.controller.press(pynput_key)
+                    time.sleep(key_press_sec)
+                    self.controller.release(pynput_key)
+                else:
+                    # 普通字符键 (<, >等)
+                    self.controller.press(key_name)
+                    time.sleep(key_press_sec)
+                    self.controller.release(key_name)
             
-            self._shift_active = not self._shift_active
-            time.sleep(SHIFT_TOGGLE_DELAY_MS / 1000.0)
+            self._mode_toggle_count += 1
+            self._mode_last_toggle_time = time.monotonic()
+            time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)  # 200ms强制等待，确保游戏完成模式切换
         except Exception as e:
-            print(f"[SHIFT] 切换失败: {e}")
+            print(f"[MODE] {key_name} 切换失败: {e}")
+
+    def toggle_shift(self):
+        """切换SHIFT模式（向后兼容）"""
+        self._toggle_modifier_key('left shift')
+        if self._current_mode == 'shift':
+            self._current_mode = 'normal'
+        else:
+            self._current_mode = 'shift'
+
+    def toggle_ctrl(self):
+        """切换CTRL模式"""
+        self._toggle_modifier_key('left ctrl')
+        if self._current_mode == 'ctrl':
+            self._current_mode = 'normal'
+        else:
+            self._current_mode = 'ctrl'
     
+    def toggle_lt(self):
+        """切换<模式"""
+        self._toggle_modifier_key(',')
+        if self._current_mode == 'lt':
+            self._current_mode = 'normal'
+        else:
+            self._current_mode = 'lt'
+    
+    def toggle_gt(self):
+        """切换>模式"""
+        self._toggle_modifier_key('.')
+        if self._current_mode == 'gt':
+            self._current_mode = 'normal'
+        else:
+            self._current_mode = 'gt'
+    
+    def ensure_mode(self, target_mode: str):
+        """确保当前处于指定模式
+        
+        classic 模式: 'normal', 'shift', 'ctrl'
+        extended 模式: 'normal', 'lt', 'gt'
+        
+        状态机（两个系统共享同一逻辑）：
+        - normal ↔ X: 按对应切换键
+        - X → Y: 先按X键(→normal) + 再按Y键(→Y)
+        """
+        if self._current_mode == target_mode:
+            return
+        
+        # 模式→切换键 映射
+        mode_key_map = {
+            'shift': 'left shift',
+            'ctrl': 'left ctrl',
+            'lt': ',',
+            'gt': '.',
+        }
+        
+        # 先回到 normal（按当前模式的键）
+        if self._current_mode in mode_key_map:
+            self._toggle_modifier_key(mode_key_map[self._current_mode])
+        
+        # 再去目标模式（按目标模式的键）
+        if target_mode in mode_key_map:
+            self._toggle_modifier_key(mode_key_map[target_mode])
+        
+        self._current_mode = target_mode
+        
+        # 累积过多切换后强制重置，防止状态漂移
+        if self._mode_toggle_count >= self._mode_max_toggles_before_reset:
+            self._force_reset_mode(target=target_mode)
+
     def ensure_shift_state(self, need_shift: bool):
-        """确保SHIFT处于指定状态"""
-        if self._shift_active != need_shift:
-            self.toggle_shift()
+        """确保SHIFT处于指定状态（向后兼容）"""
+        self.ensure_mode('shift' if need_shift else 'normal')
+
+    def _force_reset_mode(self, target: str = 'normal'):
+        """强制重置到已知模式状态，用于防漂移
+        
+        策略：根据当前模式系统，把各修饰键各按1次（当前模式键→normal），
+        然后计数归零。比盲目按多次更可靠。
+        """
+        print(f"[MODE] 累积{self._mode_toggle_count}次切换，执行防漂移重置")
+        time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)
+        
+        mode_system = getattr(self, '_mode_system', 'classic')
+        
+        # 根据模式系统选择要重置的键
+        if mode_system == 'extended':
+            reset_keys = [',', '.']  # <和>模式
+        else:
+            reset_keys = ['left shift', 'left ctrl']
+        
+        # 当前如果不在normal，先按当前模式键回到normal
+        key_press_sec = MODE_KEY_PRESS_MS / 1000.0
+        mode_key_map = {
+            'shift': 'left shift', 'ctrl': 'left ctrl',
+            'lt': ',', 'gt': '.',
+        }
+        if self._current_mode in mode_key_map:
+            try:
+                kn = mode_key_map[self._current_mode]
+                if self.use_keyboard and KEYBOARD_AVAILABLE:
+                    keyboard.press(kn)
+                    time.sleep(key_press_sec)
+                    keyboard.release(kn)
+                elif self.controller:
+                    pynput_map = {'left shift': Key.shift, 'left ctrl': Key.ctrl_l}
+                    pk = pynput_map.get(kn, kn)
+                    self.controller.press(pk)
+                    time.sleep(key_press_sec)
+                    self.controller.release(pk)
+                time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)
+            except Exception as e:
+                print(f"[MODE] 重置单键失败: {e}")
+        
+        self._current_mode = 'normal'
+        self._mode_toggle_count = 0
+        self._mode_last_toggle_time = time.monotonic()
+        
+        # 如果目标不是normal，再切换过去
+        if target != 'normal':
+            time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)
+            self.ensure_mode(target)
+
+    def _force_reset_shift(self, target: bool = False):
+        """强制重置SHIFT状态（向后兼容）"""
+        self._force_reset_mode(target='shift' if target else 'normal')
     
     def reset_shift(self):
-        """重置为普通模式（如果当前在SHIFT模式则切换回来）"""
-        if self._shift_active:
-            self.toggle_shift()
+        """重置为普通模式（向后兼容）"""
+        self.reset_mode()
+    
+    def reset_mode(self):
+        """重置为普通模式 - 可靠版本"""
+        if self._current_mode != 'normal':
+            self.ensure_mode('normal')
+            # 安全验证：如果切换次数很多，做强制重置
+            if self._mode_toggle_count > 10:
+                time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)
+                if self._current_mode != 'normal':
+                    self.ensure_mode('normal')
+        self._mode_toggle_count = 0
     
     # 延音踏板已移除（不再按空格键），改用按键时长模拟延音
 
@@ -333,8 +508,11 @@ class MidiPlayer:
         self.on_note_play: Optional[Callable[[str, NoteEvent, bool], None]] = None
         self.on_progress: Optional[Callable[[float, float], None]] = None
         self.on_playback_end: Optional[Callable[[], None]] = None
-        self.on_shift_change: Optional[Callable[[bool], None]] = None    # SHIFT模式变化回调
+        self.on_shift_change: Optional[Callable[[str], None]] = None    # 演奏模式变化回调 ('normal'/'shift'/'ctrl'/'lt'/'gt')
         self.on_sustain_change: Optional[Callable[[bool], None]] = None  # 延音状态变化回调（显示当前是否在踏板加成区）
+        
+        # 模式系统: 'classic' (L Shift/L Ctrl) 或 'extended' (</>)
+        self._mode_system = DEFAULT_MODE_SYSTEM
         
         # 文件类型标识
         self._is_js_file = False
@@ -359,7 +537,7 @@ class MidiPlayer:
                 self._song_play_counts = data.get('song_play_counts', {})
                 # 加载C调直转模式设置
                 self._direct_c_mode = data.get('direct_c_mode', False)
-        except:
+        except Exception:
             self._song_play_counts = {}
             self._direct_c_mode = False
     
@@ -521,8 +699,8 @@ class MidiPlayer:
         
     def load_midi(self, filepath: str) -> bool:
         """加载MIDI或JS文件"""
-        # 加载前先重置SHIFT状态，防止上一首残留导致后续曲目映射错乱
-        self.simulator.reset_shift()
+        # 加载前先重置模式状态，防止上一首残留导致后续曲目映射错乱
+        self.simulator.reset_mode()
         # 判断文件类型
         if filepath.lower().endswith('.js'):
             return self._load_js(filepath)
@@ -576,14 +754,15 @@ class MidiPlayer:
         self.mapper.set_transpose(0)
         self._note_remap = {}
         
+        pmin, pmax = self.mapper.get_playable_range()
         bass_count = 0
         for note in self.parser.notes:
             midi_note = note.note
             
-            if midi_note < 48:
-                self._note_remap[midi_note] = 48 + (midi_note % 12)
+            if midi_note < pmin:
+                self._note_remap[midi_note] = pmin + (midi_note % 12)
                 bass_count += 1
-            elif midi_note > 95:
+            elif midi_note > pmax:
                 self._note_remap[midi_note] = midi_note - 12
             else:
                 self._note_remap[midi_note] = midi_note
@@ -601,8 +780,8 @@ class MidiPlayer:
         检测歌曲调性并返回最优移调值
         
         36键全音阶电子琴可以弹所有半音，不再需要移调到C大调。
-        只需要做八度移动让音域尽量落在48-95范围内（支持SHIFT扩展4八度）。
-        偏向中高音区，避免歌曲被拉太低。
+        只需要做八度移动让音域尽量落在可弹奏范围内。
+        使用对称评分，不偏向任何音区，保留原始音高特征。
         
         Args:
             notes: MIDI音符列表
@@ -613,40 +792,38 @@ class MidiPlayer:
         if not notes:
             return 0
         
-        # 优化目标: 完整4八度范围 C3-B6 (MIDI 48-95)
-        TARGET_MIN = 48
-        TARGET_MAX = 95
-        # 偏向中高音区的目标中心
-        PREFERRED_CENTER = 73.0
+        # 优化目标: 根据模式系统选择范围
+        if self._mode_system == 'extended':
+            TARGET_MIN = 21     # A0
+            TARGET_MAX = 108    # C8
+        else:
+            TARGET_MIN = 36     # C2 (classic含CTRL)
+            TARGET_MAX = 95     # B6
+        # 使用可弹奏范围的真实中心（不偏向任何音区）
+        PREFERRED_CENTER = (TARGET_MIN + TARGET_MAX) / 2.0
         
         note_center = (min(notes) + max(notes)) / 2
         
-        # 计算最佳八度偏移，偏向保持或提升音高
+        # 计算最佳八度偏移
         octave_adjust = round((PREFERRED_CENTER - note_center) / 12) * 12
         octave_adjust = max(-36, min(36, octave_adjust))
         
-        # 如果偏移为负（降低音高），检查是否真的需要
-        if octave_adjust < 0:
-            # 检查不偏移时的命中率
-            hits_no_shift = sum(1 for n in notes if TARGET_MIN <= n <= TARGET_MAX)
-            hits_with_shift = sum(1 for n in notes if TARGET_MIN <= n + octave_adjust <= TARGET_MAX)
-            # 如果不偏移也有80%以上命中率，就不要降调
-            if hits_no_shift / len(notes) >= 0.8:
-                octave_adjust = 0
+        # 如果不偏移时命中率已经很高，优先保持原始音高
+        hits_no_shift = sum(1 for n in notes if TARGET_MIN <= n <= TARGET_MAX)
+        if hits_no_shift / len(notes) >= 0.8:
+            octave_adjust = 0
         
         return octave_adjust
     
     def _analyze_and_setup_mapping(self):
         """
-        分析音域并建立智能映射方案（36键全音阶版本）
+        分析音域并建立智能映射方案（根据模式系统选择范围）
         
-        36键电子琴支持全部半音，不需要白键吸附。
-        策略：
-        1. 计算音域中心，做八度平移使音域落在48-95范围内
-        2. 超出范围的音符折叠到最近的八度
-        3. 直接使用MIDI音符映射，保留所有半音信息
+        classic 模式: C2-B6 (MIDI 36-95, 5八度, CTRL/SHIFT)
+        extended 模式: A0-C8 (MIDI 21-108, 88键, </>)
         
-        游戏键盘：36键全音阶 + SHIFT (MIDI 48-95, C3-B6, 4个八度)
+        使用对称评分算法：以可弹奏范围的真实中心为目标，
+        不偏向任何音区，优先保持原始音高。
         """
         # 如果启用了C调直转模式，跳过
         if self._direct_c_mode:
@@ -655,7 +832,8 @@ class MidiPlayer:
         
         # 根据音部设置过滤音符
         if self.play_melody and self.play_bass:
-            notes = [n.note for n in self.parser.melody_notes] if self.parser.melody_notes and len(self.parser.melody_notes) >= 8 else [n.note for n in self.parser.notes]
+            # 同时播放旋律和低音时，使用全部音符计算音域范围
+            notes = [n.note for n in self.parser.notes]
         elif self.play_melody:
             notes = [n.note for n in self.parser.melody_notes] if self.parser.melody_notes and len(self.parser.melody_notes) >= 8 else [n.note for n in self.parser.notes]
         elif self.play_bass:
@@ -672,19 +850,23 @@ class MidiPlayer:
         def midi_to_name(m):
             return f"{note_names[m % 12]}{m // 12 - 1}"
         
-        # === 完整4八度范围 C3-B6 (MIDI 48-95) ===
-        GAME_MIN = 48   # C3
-        GAME_MAX = 95   # B6
-        GAME_CENTER = (GAME_MIN + GAME_MAX) / 2  # 71.5
+        # === 根据模式系统确定可用范围 ===
+        if self._mode_system == 'extended':
+            GAME_MIN = 21    # A0 (扩展模式最低)
+            GAME_MAX = 108   # C8 (扩展模式最高)
+        else:
+            GAME_MIN = 36    # C2 (classic模式CTRL最低)
+            GAME_MAX = 95    # B6 (classic模式SHIFT最高)
+        GAME_CENTER = (GAME_MIN + GAME_MAX) / 2
         
         original_min = min(notes)
         original_max = max(notes)
         original_range = original_max - original_min
         
-        # === 计算最佳八度偏移（充分利用4八度音域） ===
-        # 改进：偏向中高音区，避免歌曲被拉太低导致不好听
-        # 目标中心偏向C5(72)而非数学中心(71.5)，因为旋律在中高音区更好听
-        PREFERRED_CENTER = 73.0  # 略偏向中高音区
+        # === 计算最佳八度偏移 ===
+        # 使用可弹奏范围的真实中心（对称，不偏向任何音区）
+        PREFERRED_CENTER = (GAME_MIN + GAME_MAX) / 2.0
+        game_span = GAME_MAX - GAME_MIN
         
         best_offset = 0
         best_hit_rate = 0
@@ -692,37 +874,35 @@ class MidiPlayer:
         
         for octave_shift in range(-5, 6):
             offset = octave_shift * 12
-            # 命中率：落在完整4八度范围(48-95)的比例
             hits = sum(1 for n in notes if GAME_MIN <= n + offset <= GAME_MAX)
             hit_rate = hits / len(notes)
             
-            # 居中评分：偏向中高音区，旋律在中高音更自然
             shifted = [max(GAME_MIN, min(GAME_MAX, n + offset)) for n in notes]
             actual_center = sum(shifted) / len(shifted)
-            center_dist = abs(actual_center - PREFERRED_CENTER) / 24.0  # 归一化
+            center_dist = abs(actual_center - PREFERRED_CENTER) / 24.0
             center_score = max(0, 1.0 - center_dist)
             
-            # 音域覆盖评分：鼓励使用更宽的音域（保留原曲音域跨度）
             in_range = [n + offset for n in notes if GAME_MIN <= n + offset <= GAME_MAX]
             if len(in_range) >= 2:
-                spread = (max(in_range) - min(in_range)) / 47.0  # 47 = 95-48
+                spread = (max(in_range) - min(in_range)) / max(game_span, 1)
             else:
                 spread = 0
             
-            # 低音惩罚：如果大量音符落在低音区(48-59)，降低评分
-            # 低音区太多音符会让歌曲变得沉闷不好听
-            low_ratio = sum(1 for n in in_range if n <= 59) / max(len(in_range), 1)
-            low_penalty = max(0, low_ratio - 0.25) * 0.5  # 超过25%低音开始扣分
+            # 对称惩罚：同时惩罚过低和过高的音符
+            low_ratio = sum(1 for n in in_range if n <= GAME_MIN + 11) / max(len(in_range), 1)
+            high_ratio = sum(1 for n in in_range if n >= GAME_MAX - 11) / max(len(in_range), 1)
+            extreme_penalty = max(0, low_ratio - 0.25) * 0.3 + max(0, high_ratio - 0.25) * 0.3
             
-            # 向下移调惩罚：偏移量为负（降低音高）时轻微扣分
-            # 避免不必要地把歌曲拉低
-            down_penalty = 0.03 * max(0, -offset / 12)  # 每降一个八度扣3%
+            # 对称偏移惩罚：任何方向的大偏移都扣分
+            shift_penalty = 0.03 * abs(offset / 12)
             
-            score = hit_rate * 0.45 + center_score * 0.3 + spread * 0.15 - low_penalty - down_penalty
+            score = hit_rate * 0.45 + center_score * 0.3 + spread * 0.15 - extreme_penalty - shift_penalty
             
-            # 额外：如果命中率100%且偏移为0，给奖励（原始音域已经完美）
+            # 额外：如果命中率100%且偏移为0，给较大奖励（优先保持原始音高）
             if hit_rate >= 1.0 and offset == 0:
-                score += 0.1
+                score += 0.2
+            elif offset == 0:
+                score += 0.05  # 即使命中率不满也给小奖励
             
             # 同分时优先选择更小的偏移量（减少不必要的移调）
             if score > best_score or (score == best_score and abs(offset) < abs(best_offset)):
@@ -757,15 +937,22 @@ class MidiPlayer:
         mapped_min = min(mapped_notes)
         mapped_max = max(mapped_notes)
         
+        ctrl_count = sum(1 for n in mapped_notes if 36 <= n <= 47)
         low_count = sum(1 for n in mapped_notes if 48 <= n <= 59)
         mid_count = sum(1 for n in mapped_notes if 60 <= n <= 71)
         high_count = sum(1 for n in mapped_notes if 72 <= n <= 83)
         shift_count = sum(1 for n in mapped_notes if 84 <= n <= 95)
+        ext_low = sum(1 for n in mapped_notes if n < 36)
+        ext_high = sum(1 for n in mapped_notes if n > 95)
         
         print(f"[智能映射] 映射后: {midi_to_name(mapped_min)}-{midi_to_name(mapped_max)}")
         print(f"[智能映射] 分布: 低音(Z-M){low_count} + 中音(A-J){mid_count} + 高音(Q-U){high_count}")
+        if ctrl_count > 0:
+            print(f"[智能映射] CTRL区(C2-B2): {ctrl_count}个音符需要CTRL模式")
         if shift_count > 0:
             print(f"[智能映射] SHIFT区(C6-B6): {shift_count}个音符需要SHIFT模式")
+        if ext_low > 0 or ext_high > 0:
+            print(f"[智能映射] 扩展区: <区{ext_low}个 + >区{ext_high}个")
     
     def _analyze_song_sustain_profile(self):
         """
@@ -1014,6 +1201,24 @@ class MidiPlayer:
         """
         self._user_transpose = semitones
         print(f"[用户移调] 设置额外移调: {semitones:+d} 半音")
+    
+    def set_mode_system(self, system: str):
+        """设置模式系统: 'classic' (L Shift/L Ctrl) 或 'extended' (</>)
+        
+        classic模式: C2-B6 (MIDI 36-95, 60键)
+        extended模式: A0-C8 (MIDI 21-108, 88键/全钢琴)
+        """
+        self._mode_system = system
+        self.mapper.set_mode_system(system)
+        self.simulator._mode_system = system
+        # 重置为普通模式
+        if self.simulator._current_mode != 'normal':
+            self.simulator.reset_mode()
+        print(f"[模式系统] 切换为: {system} ({'CTRL/SHIFT' if system == 'classic' else '</>全键盘'})")
+        
+    def get_mode_system(self) -> str:
+        """获取当前模式系统"""
+        return self._mode_system
         
     def set_speed(self, speed: float):
         """设置播放速度"""
@@ -1399,10 +1604,11 @@ class MidiPlayer:
             base_midi = OCTAVE_BASES[target_octave]
             target_midi = base_midi + target_pitch
             
-            # 确保在范围内 (4八度: 48-95)
-            while target_midi < 48:
+            # 确保在可弹奏范围内
+            pmin, pmax = self.mapper.get_playable_range()
+            while target_midi < pmin:
                 target_midi += 12
-            while target_midi > 95:
+            while target_midi > pmax:
                 target_midi -= 12
             
             self._direct_c_note_map[orig_note] = {
@@ -1516,7 +1722,7 @@ class MidiPlayer:
         self.state.is_paused = False
         
     def stop(self):
-        """停止播放"""
+        """停止播放 - 增强版，确保模式状态完全重置"""
         self._stop_event.set()
         self.state.is_paused = False
         
@@ -1530,13 +1736,12 @@ class MidiPlayer:
         self.state.current_event_index = 0
         
         self.simulator.release_all()
-        # 只需重置SHIFT，踏板已不使用空格键
-        if self.simulator._shift_active:
-            self.simulator.ensure_shift_state(False)
+        # 可靠重置模式状态，强制回到普通模式
+        self.simulator.reset_mode()
         
         # 通知GUI重置状态指示器
         if self.on_shift_change:
-            self.on_shift_change(False)
+            self.on_shift_change('normal')
         if self.on_sustain_change:
             self.on_sustain_change(False)
             
@@ -1555,10 +1760,10 @@ class MidiPlayer:
         playback_start_time = time.perf_counter()
         music_start_time = self.state.current_time
         
-        # 每次播放开始先强制重置SHIFT到普通模式，防止长时间播放后累积偏移
-        self.simulator.reset_shift()
+        # 每次播放开始先强制重置到普通模式，防止长时间播放后累积偏移
+        self.simulator.reset_mode()
         if self.on_shift_change:
-            self.on_shift_change(False)
+            self.on_shift_change('normal')
         
         # 重置MIDI踏板索引，确定初始踏板状态（用于按键时长加成）
         self._sustain_event_index = 0
@@ -1657,10 +1862,10 @@ class MidiPlayer:
         
         # 仅自然结束时由播放线程负责重置，stop()走自己的清理路径
         if not self._stop_event.is_set():
-            self.simulator.reset_shift()
+            self.simulator.reset_mode()
             # 通知GUI重置状态指示器
             if self.on_shift_change:
-                self.on_shift_change(False)
+                self.on_shift_change('normal')
             if self.on_sustain_change:
                 self.on_sustain_change(False)
             if self.on_playback_end:
@@ -2002,10 +2207,11 @@ class MidiPlayer:
                 mapped = remap[midi_note]
             else:
                 mapped = midi_note
-            # 确保在范围内
-            while mapped < 48:
+            # 确保在可弹奏范围内
+            pmin, pmax = self.mapper.get_playable_range()
+            while mapped < pmin:
                 mapped += 12
-            while mapped > 95:
+            while mapped > pmax:
                 mapped -= 12
             extended_phrase.append(mapped)
         
@@ -2996,12 +3202,12 @@ class MidiPlayer:
     
     def _play_events(self, events: List[PlayEvent], next_event_time: Optional[float] = None):
         """
-        播放一组事件 - 单音直接映射 + 按键时长延音 + SHIFT切换
+        播放一组事件 - 单音直接映射 + 按键时长延音 + SHIFT/CTRL三模式切换
         
         策略：
         1. 收集所有同时发声的MIDI音符
-        2. 映射到目标MIDI值（48-95范围）
-        3. 判断SHIFT模式（48-59仅普通，84-95仅SHIFT，60-83两者皆可）
+        2. 映射到目标MIDI值（36-95范围）
+        3. 判断演奏模式（36-47仅CTRL，48-59 CTRL或普通，60-71三模式，72-83普通或SHIFT，84-95仅SHIFT）
         4. 按键时长 = MIDI音符时长 × 各种缩放（踏板加成/力度/音区/rubato）
         5. 钢琴家模拟：力度/音区/rubato/乐句呼吸 细化表情
         """
@@ -3077,11 +3283,11 @@ class MidiPlayer:
         if not all_midi_notes:
             return
         
-        # === 构建要按的键（支持SHIFT切换） ===
+        # === 构建要按的键（支持SHIFT/CTRL三模式切换） ===
         keys_to_press = {}
         remap = getattr(self, '_note_remap', {})
         
-        # 第一遍：映射所有音符到目标MIDI值（48-95范围）
+        # 第一遍：映射所有音符到目标MIDI值（36-95范围）
         mapped_notes_list = []  # [(original_note, mapped_note, event, velocity, press_duration)]
         
         for original_note in all_midi_notes:
@@ -3103,9 +3309,10 @@ class MidiPlayer:
                     user_transpose = getattr(self, '_user_transpose', 0)
                     if user_transpose != 0:
                         mapped_note += user_transpose
-                        while mapped_note < 48:
+                        pmin, pmax = self.mapper.get_playable_range()
+                        while mapped_note < pmin:
                             mapped_note += 12
-                        while mapped_note > 95:
+                        while mapped_note > pmax:
                             mapped_note -= 12
                     mapped_notes_list.append((original_note, mapped_note, event, velocity, press_duration))
                     continue
@@ -3127,10 +3334,11 @@ class MidiPlayer:
                 if ch_trans != 0:
                     mapped_note += ch_trans
             
-            # 确保在4八度范围内 (48-95)
-            while mapped_note < 48:
+            # 确保在可弹奏范围内
+            pmin, pmax = self.mapper.get_playable_range()
+            while mapped_note < pmin:
                 mapped_note += 12
-            while mapped_note > 95:
+            while mapped_note > pmax:
                 mapped_note -= 12
             
             mapped_notes_list.append((original_note, mapped_note, event, velocity, press_duration))
@@ -3138,12 +3346,22 @@ class MidiPlayer:
         if not mapped_notes_list:
             return
         
-        # === 低音区(C3-B3, MIDI 48-59)力度/时长衰减，避免低音抢戏 ===
-        # 在映射完成后基于实际mapped_note判断
+        # === 低音区力度/时长衰减，避免低音抢戏 ===
         def _apply_bass_dampen(entries):
             result = []
             for orig, mn, ev, vel, dur in entries:
-                if 48 <= mn <= 59:
+                if mn <= 35:
+                    # 超低音区 (extended模式 A0-B1)
+                    bass_vel_scale = 0.45 + 0.10 * (1.0 - vel / 127.0)
+                    vel = int(vel * bass_vel_scale)
+                    dur = dur * 0.6
+                elif 36 <= mn <= 47:
+                    # 低音区 C2-B2
+                    bass_vel_scale = 0.50 + 0.10 * (1.0 - vel / 127.0)
+                    vel = int(vel * bass_vel_scale)
+                    dur = dur * 0.7
+                elif 48 <= mn <= 59:
+                    # 中低音区 C3-B3
                     bass_vel_scale = 0.65 + 0.15 * (1.0 - vel / 127.0)
                     vel = int(vel * bass_vel_scale)
                     dur = dur * 0.8
@@ -3151,48 +3369,132 @@ class MidiPlayer:
             return result
         mapped_notes_list = _apply_bass_dampen(mapped_notes_list)
         
-        # === 第二步：决定SHIFT模式（带防抖） ===
-        # 分析这批音符理想需要哪种模式
-        needs_normal = any(48 <= mn <= 59 for _, mn, _, _, _ in mapped_notes_list)  # 只能普通模式
-        needs_shift = any(84 <= mn <= 95 for _, mn, _, _, _ in mapped_notes_list)   # 只能SHIFT模式
+        # === 第二步：决定演奏模式 ===
+        mode_system = self._mode_system
+        current_mode = self.simulator._current_mode
         
-        if needs_shift and not needs_normal:
-            target_shift = True
-        elif needs_normal and not needs_shift:
-            target_shift = False
-        elif needs_shift and needs_normal:
-            # 同时有 48-59 和 84-95 → 冲突，按数量选然后折叠少数方
-            low_exclusive = [(o, m, e, v, d) for o, m, e, v, d in mapped_notes_list if m < 60]
-            high_exclusive = [(o, m, e, v, d) for o, m, e, v, d in mapped_notes_list if m > 83]
-            if len(high_exclusive) >= len(low_exclusive):
-                target_shift = True
+        if mode_system == 'extended':
+            # === extended 模式 (</>): normal / lt / gt ===
+            has_lt_only = any(mn < 48 for _, mn, _, _, _ in mapped_notes_list)
+            has_gt_only = any(mn > 83 for _, mn, _, _, _ in mapped_notes_list)
+            has_normal = any(48 <= mn <= 83 for _, mn, _, _, _ in mapped_notes_list)
+            
+            valid_modes = set()
+            if has_lt_only and not has_gt_only and not has_normal:
+                valid_modes = {'lt'}
+            elif has_gt_only and not has_lt_only and not has_normal:
+                valid_modes = {'gt'}
+            elif has_lt_only and has_normal and not has_gt_only:
+                # 混合lt+normal → 优先normal折叠少量低音
+                valid_modes = {'normal', 'lt'}
+            elif has_gt_only and has_normal and not has_lt_only:
+                valid_modes = {'normal', 'gt'}
+            elif has_lt_only and has_gt_only:
+                # 同时有极低和极高 → 只能选normal折叠
+                valid_modes = {'normal'}
             else:
-                target_shift = False
-        else:
-            # 所有音符都在重叠区 (60-83) → 维持当前模式
-            target_shift = self.simulator._shift_active
+                valid_modes = {'normal'}
+            
+            if len(valid_modes) == 1:
+                target_mode = next(iter(valid_modes))
+            elif current_mode in valid_modes:
+                target_mode = current_mode
+            elif 'normal' in valid_modes:
+                target_mode = 'normal'
+            else:
+                target_mode = next(iter(valid_modes))
+            
+            # 模式切换滞后优化
+            if target_mode != current_mode:
+                mode_ranges_ext = {'lt': (21, 47), 'normal': (48, 83), 'gt': (84, 108)}
+                if current_mode in mode_ranges_ext:
+                    stay_min, stay_max = mode_ranges_ext[current_mode]
+                    stay_victims = sum(1 for _, m, _, _, _ in mapped_notes_list if m < stay_min or m > stay_max)
+                    total = len(mapped_notes_list)
+                    if stay_victims <= 1 and total > 1:
+                        target_mode = current_mode
+            
+            # 折叠不在当前模式范围的音符
+            mode_ranges_ext = {'lt': (21, 47), 'normal': (48, 83), 'gt': (84, 108)}
+            mode_min, mode_max = mode_ranges_ext.get(target_mode, (48, 83))
         
-        # === 模式适配：确保所有音符在当前模式可用范围内 ===
-        if target_shift:
-            # SHIFT模式可用范围60-95，48-59的音符折叠到60-71
-            mapped_notes_list = [
-                (o, m + 12, e, v, d) if m < 60 else (o, m, e, v, d)
-                for o, m, e, v, d in mapped_notes_list
-            ]
         else:
-            # 普通模式可用范围48-83，84-95的音符折叠到72-83
-            mapped_notes_list = [
-                (o, m - 12, e, v, d) if m > 83 else (o, m, e, v, d)
-                for o, m, e, v, d in mapped_notes_list
-            ]
+            # === classic 模式 (CTRL/SHIFT): normal / shift / ctrl ===
+            has_ctrl_only = any(36 <= mn <= 47 for _, mn, _, _, _ in mapped_notes_list)
+            has_low_flex = any(48 <= mn <= 59 for _, mn, _, _, _ in mapped_notes_list)
+            has_high_flex = any(72 <= mn <= 83 for _, mn, _, _, _ in mapped_notes_list)
+            has_shift_only = any(84 <= mn <= 95 for _, mn, _, _, _ in mapped_notes_list)
+            
+            valid_modes = {'ctrl', 'normal', 'shift'}
+            if has_ctrl_only:
+                valid_modes &= {'ctrl'}
+            if has_low_flex:
+                valid_modes &= {'ctrl', 'normal'}
+            if has_high_flex:
+                valid_modes &= {'normal', 'shift'}
+            if has_shift_only:
+                valid_modes &= {'shift'}
+            
+            if len(valid_modes) == 0:
+                ctrl_need = sum(1 for _, m, _, _, _ in mapped_notes_list if m < 48)
+                shift_need = sum(1 for _, m, _, _, _ in mapped_notes_list if m > 83)
+                normal_need = len(mapped_notes_list) - ctrl_need - shift_need
+                if ctrl_need >= shift_need and ctrl_need >= normal_need:
+                    target_mode = 'ctrl'
+                elif shift_need >= ctrl_need and shift_need >= normal_need:
+                    target_mode = 'shift'
+                else:
+                    target_mode = 'normal'
+            elif len(valid_modes) == 1:
+                target_mode = next(iter(valid_modes))
+            else:
+                if current_mode in valid_modes:
+                    target_mode = current_mode
+                elif 'normal' in valid_modes:
+                    target_mode = 'normal'
+                else:
+                    target_mode = next(iter(valid_modes))
+            
+            # 模式切换滞后优化
+            if target_mode != current_mode:
+                mode_ranges_cls = {'ctrl': (36, 71), 'normal': (48, 83), 'shift': (60, 95)}
+                if current_mode in mode_ranges_cls:
+                    stay_min, stay_max = mode_ranges_cls[current_mode]
+                    stay_victims = sum(1 for _, m, _, _, _ in mapped_notes_list if m < stay_min or m > stay_max)
+                    total = len(mapped_notes_list)
+                    if stay_victims <= 1 and total > 1:
+                        target_mode = current_mode
+            
+            mode_ranges_cls = {'ctrl': (36, 71), 'normal': (48, 83), 'shift': (60, 95)}
+            mode_min, mode_max = mode_ranges_cls.get(target_mode, (48, 83))
         
-        # 切换SHIFT（如果需要）
-        self.simulator.ensure_shift_state(target_shift)
+        # === 模式适配：折叠不在当前模式范围内的音符 ===
+        adapted = []
+        for o, m, e, v, d in mapped_notes_list:
+            while m < mode_min:
+                m += 12
+            while m > mode_max:
+                m -= 12
+            adapted.append((o, m, e, v, d))
+        mapped_notes_list = adapted
+        
+        # 切换模式（如果需要）
+        self.simulator.ensure_mode(target_mode)
         if self.on_shift_change:
-            self.on_shift_change(self.simulator._shift_active)
+            self.on_shift_change(self.simulator._current_mode)
         
-        # 选择映射表
-        midi_to_key = self.mapper.midi_to_key_shift if self.simulator._shift_active else self.mapper.midi_to_key
+        # 选择映射表（根据当前模式）
+        cur_mode = self.simulator._current_mode
+        if cur_mode == 'shift':
+            midi_to_key = self.mapper.midi_to_key_shift
+        elif cur_mode == 'ctrl':
+            midi_to_key = self.mapper.midi_to_key_ctrl
+        elif cur_mode == 'lt':
+            midi_to_key = self.mapper.midi_to_key_lt
+        elif cur_mode == 'gt':
+            midi_to_key = self.mapper.midi_to_key_gt
+        else:
+            midi_to_key = self.mapper.midi_to_key
         
         # === 第三步：查找按键 ===
         for original_note, mapped_note, event, velocity, press_duration in mapped_notes_list:

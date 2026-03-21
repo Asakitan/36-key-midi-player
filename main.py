@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-36键电子琴 MIDI播放器
+60键电子琴 MIDI播放器
 主程序入口
 
 使用方法:
@@ -55,7 +55,7 @@ def check_dependencies():
 def main():
     """主函数"""
     print("=" * 50)
-    print("  36键电子琴 MIDI播放器")
+    print("  60键电子琴 MIDI播放器")
     print("=" * 50)
     
     # 检查依赖

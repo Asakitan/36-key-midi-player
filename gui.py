@@ -2,11 +2,11 @@
 """
 GUI模块 - Apple 风格深色主题 + 自定义无边框窗口
 支持自定义快捷键、窗口置顶、MIDI可视化柱状图、透明度控制
-波纹按钮、辉光按键、48键钢琴可视化
+波纹按钮、辉光按键、60键钢琴可视化
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk
 import threading
 import os
 import sys
@@ -308,7 +308,7 @@ def get_icon_path():
 class CustomTitleBar(tk.Frame):
     """自定义无边框窗口标题栏 - 扁平暗色设计"""
 
-    def __init__(self, parent, root, title="咲 Midi Player", version="v2.0.1+2001",
+    def __init__(self, parent, root, title="咲 Midi Player", version="v2.1.0+2100",
                  on_close=None, **kwargs):
         super().__init__(parent, bg=ModernColors.TITLEBAR, height=36, **kwargs)
         self.root = root
@@ -785,6 +785,17 @@ class PianoKey(tk.Canvas):
         self.configure(bg=ModernColors.BG_CARD)
         self._draw()
 
+    def _parse_note_name(self, name: str):
+        """解析音符名：拆分基础字符和点位置 (1=上方, -1=下方, 0=无)"""
+        DOT_ABOVE = '\u0307'   # 组合·上点
+        DOT_BELOW = '\u0323'   # 组合·下点
+        base = name.replace(DOT_ABOVE, '').replace(DOT_BELOW, '')
+        if DOT_ABOVE in name:
+            return base, 1
+        elif DOT_BELOW in name:
+            return base, -1
+        return base, 0
+
     def _draw(self):
         """绘制按键 - 渐变填充 + 多层柔和辉光"""
         self.delete("all")
@@ -830,9 +841,14 @@ class PianoKey(tk.Canvas):
                 self._draw_rounded_rect_outline(0, 0, bx2, by2, r, ModernColors.KEY_BORDER)
             tfg = ModernColors.TEXT_BRIGHT if is_active else ModernColors.TEXT_PRIMARY
             kfg = ModernColors.ACCENT_CYAN if is_active else ModernColors.TEXT_DIM
-            self.create_text(24, 14, text=self.note_name, fill=tfg,
+            base_name, dot_pos = self._parse_note_name(self.note_name)
+            self.create_text(24, 16, text=base_name, fill=tfg,
                              font=('Microsoft YaHei UI', 10))
-            self.create_text(24, 32, text=f"[{self.key_char.upper()}]", fill=kfg,
+            if dot_pos == 1:   # 高音，点在上方
+                self.create_oval(22, 5, 26, 9, fill=tfg, outline='')
+            elif dot_pos == -1:  # 低音，点在下方
+                self.create_oval(22, 25, 26, 29, fill=tfg, outline='')
+            self.create_text(24, 34, text=f"[{self.key_char.upper()}]", fill=kfg,
                              font=('Microsoft YaHei UI', 8))
         else:
             w, h = 72, 68
@@ -871,9 +887,14 @@ class PianoKey(tk.Canvas):
                 self._draw_rounded_rect_outline(0, 0, bx2, by2, r, ModernColors.KEY_BORDER)
             tfg = ModernColors.TEXT_BRIGHT if is_active else ModernColors.TEXT_PRIMARY
             kfg = ModernColors.ACCENT_CYAN if is_active else ModernColors.TEXT_DIM
-            self.create_text(34, 24, text=self.note_name, fill=tfg,
+            base_name, dot_pos = self._parse_note_name(self.note_name)
+            self.create_text(34, 26, text=base_name, fill=tfg,
                              font=('Microsoft YaHei UI', 13))
-            self.create_text(34, 48, text=f"[{self.key_char.upper()}]", fill=kfg,
+            if dot_pos == 1:   # 高音，点在上方
+                self.create_oval(32, 12, 36, 16, fill=tfg, outline='')
+            elif dot_pos == -1:  # 低音，点在下方
+                self.create_oval(32, 38, 36, 42, fill=tfg, outline='')
+            self.create_text(34, 50, text=f"[{self.key_char.upper()}]", fill=kfg,
                              font=('Microsoft YaHei UI', 9))
 
     def _draw_rounded_rect(self, x, y, w, h, r, color):
@@ -1001,7 +1022,7 @@ class PianoKeyboard(tk.Frame):
             k.reset_theme()
 
 
-# ==================== MiniPianoBar 48键可视化钢琴 ====================
+# ==================== MiniPianoBar 60键可视化钢琴 ======================================
 class MiniPianoBar(tk.Frame):
     """60键可视化钢琴键盘 C2-B6 - 实时显示音符"""
     MIDI_START = 36   # C2
@@ -1775,6 +1796,36 @@ class ControlPanel(tk.Frame):
                                            font=('Microsoft YaHei UI', 9, 'bold'))
         self.detected_key_label.pack(side=tk.RIGHT)
 
+        # === 第5.6行：模式系统选择 ===
+        row5_6 = tk.Frame(self, bg=ModernColors.BG_CARD)
+        row5_6.pack(fill=tk.X, padx=12, pady=2)
+        mode_sys_label = tk.Label(row5_6, text="键位模式:",
+                                  bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_PRIMARY,
+                                  font=('Microsoft YaHei UI', 10, 'bold'))
+        mode_sys_label.pack(side=tk.LEFT)
+        
+        self._mode_system_var = tk.StringVar(value=self.settings.get('mode_system', 'classic'))
+        mode_classic_rb = tk.Radiobutton(row5_6, text="CTRL/SHIFT (60键)",
+                                         variable=self._mode_system_var, value='classic',
+                                         bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_PRIMARY,
+                                         selectcolor=ModernColors.BG_INPUT,
+                                         activebackground=ModernColors.BG_CARD,
+                                         font=('Microsoft YaHei UI', 9),
+                                         command=self._on_mode_system_change)
+        mode_classic_rb.pack(side=tk.LEFT, padx=(8, 4))
+        mode_ext_rb = tk.Radiobutton(row5_6, text="</> 全键盘 (88键)",
+                                     variable=self._mode_system_var, value='extended',
+                                     bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_PRIMARY,
+                                     selectcolor=ModernColors.BG_INPUT,
+                                     activebackground=ModernColors.BG_CARD,
+                                     font=('Microsoft YaHei UI', 9),
+                                     command=self._on_mode_system_change)
+        mode_ext_rb.pack(side=tk.LEFT, padx=4)
+        self._mode_system_info = tk.Label(row5_6, text="",
+                                          bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_SECONDARY,
+                                          font=('Microsoft YaHei UI', 8))
+        self._mode_system_info.pack(side=tk.RIGHT)
+
         # === 第六行：通道 + 选项 ===
         row6 = tk.Frame(self, bg=ModernColors.BG_CARD)
         row6.pack(fill=tk.X, padx=12, pady=(0, 6))
@@ -2200,6 +2251,22 @@ class ControlPanel(tk.Frame):
         else:
             self._update_octave_offset_label()
 
+    def _on_mode_system_change(self):
+        """模式系统切换回调"""
+        system = self._mode_system_var.get()
+        self.player.set_mode_system(system)
+        self.settings.set('mode_system', system)
+        if system == 'classic':
+            self._mode_system_info.configure(text="C2-B6 | L Shift/L Ctrl切换",
+                                             fg=ModernColors.TEXT_SECONDARY)
+        else:
+            self._mode_system_info.configure(text="A0-C8 | </> 切换 (需后期解锁)",
+                                             fg=ModernColors.ACCENT_ORANGE)
+        # 如果已加载文件，重新分析映射
+        if self.player.parser.notes:
+            self.player._analyze_and_setup_mapping()
+            self._update_octave_offset_label()
+
     def _update_direct_c_display(self):
         if self.player.is_direct_c_mode():
             info = self.player.get_direct_c_info()
@@ -2331,10 +2398,20 @@ class ControlPanel(tk.Frame):
         key_transpose = getattr(self.player, '_key_transpose', 0)
         self.octave_offset_label.configure(text=f"自动:调{key_transpose:+d} 8度{octave_offset:+d}")
 
-    def update_shift_state(self, is_shift: bool):
+    def update_shift_state(self, mode: str):
         if self.shift_pill:
-            if is_shift:
-                self.shift_pill.set_active(True, "SHIFT 模式")
+            if mode == 'shift':
+                self.shift_pill._active_color = ModernColors.ACCENT_BLUE
+                self.shift_pill.set_active(True, "SHIFT 高八度")
+            elif mode == 'ctrl':
+                self.shift_pill._active_color = ModernColors.ACCENT_ORANGE
+                self.shift_pill.set_active(True, "CTRL 低八度")
+            elif mode == 'lt':
+                self.shift_pill._active_color = '#E67E22'  # 深橙色
+                self.shift_pill.set_active(True, "< 极低音")
+            elif mode == 'gt':
+                self.shift_pill._active_color = '#9B59B6'  # 紫色
+                self.shift_pill.set_active(True, "> 极高音")
             else:
                 self.shift_pill.set_active(False, "普通模式")
 
@@ -2356,7 +2433,7 @@ class ControlPanel(tk.Frame):
         self.play_btn.set_text("播放")
         self.progress_bar.set(0)
         self.status_label.configure(text="播放完成")
-        self.update_shift_state(False)
+        self.update_shift_state('normal')
         self.update_sustain_state(False)
 
     def speed_up(self):
@@ -3047,6 +3124,9 @@ class MidiPlayerGUI:
         self.is_topmost = False
         self.settings = SettingsManager()
         self.player = MidiPlayer()
+        # 从设置中恢复模式系统
+        saved_mode_system = self.settings.get('mode_system', 'classic')
+        self.player.set_mode_system(saved_mode_system)
         self._set_icon()
         self._create_ui()
         self._bind_callbacks()
@@ -3112,7 +3192,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                                        title="咲 Midi Player", version="v2.0.2+2002",
+                                        title="咲 Midi Player", version="v2.1.0+2100",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 
@@ -3284,8 +3364,8 @@ class MidiPlayerGUI:
         self.player.on_progress = on_progress
         self.player.on_playback_end = on_end
 
-        def on_shift(is_shift):
-            self.root.after(0, lambda: self.control.update_shift_state(is_shift))
+        def on_shift(mode):
+            self.root.after(0, lambda: self.control.update_shift_state(mode))
 
         def on_sustain(is_on):
             self.root.after(0, lambda: self.control.update_sustain_state(is_on))
@@ -3367,6 +3447,15 @@ class MidiPlayerGUI:
                     bg = str(w.cget('bg')).lower()
                     if bg in bg_map:
                         w.configure(bg=bg_map[bg], selectcolor=bg_map.get(bg, C.BG_INPUT))
+                    fg = str(w.cget('fg')).lower()
+                    if fg in fg_map:
+                        w.configure(fg=fg_map[fg])
+                elif cls_name == 'Radiobutton':
+                    bg = str(w.cget('bg')).lower()
+                    if bg in bg_map:
+                        w.configure(bg=bg_map[bg],
+                                    activebackground=bg_map[bg],
+                                    selectcolor=C.BG_INPUT)
                     fg = str(w.cget('fg')).lower()
                     if fg in fg_map:
                         w.configure(fg=fg_map[fg])
