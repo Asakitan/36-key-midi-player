@@ -24,6 +24,14 @@ from config import (
     NOTE_NAMES_EXTENDED, BLACK_KEY_NAMES_EXTENDED,
     DEFAULT_HOTKEYS, CONFIG_FILE
 )
+try:
+    from sao_theme import (
+        SAOColors, SAOButton, SAOProgressBar, SAOTitleBar, SAODialog,
+        SAOStatusPill, SAOResizeGrip, SAOFilePicker, SAOSeparator
+    )
+    _SAO_THEME_AVAILABLE = True
+except ImportError:
+    _SAO_THEME_AVAILABLE = False
 
 # 检查是否有管理员权限（Windows）
 def is_admin():
@@ -98,6 +106,24 @@ _THEMES = {
         'TITLEBAR': '#EBEBF0', 'VIZ_BG': '#F8F8FA',
         'PIANO_WHITE': '#FFFFFF', 'PIANO_BLACK': '#3A3A3C', 'PIANO_BG': '#E8E8ED',
     },
+    'sao': {
+        'BG_DARK': '#0a0e14', 'BG_CARD': '#111820', 'BG_HOVER': '#1a2535',
+        'BG_INPUT': '#0d1219', 'BG_PANEL': '#0e1520',
+        'ACCENT_BLUE': '#2196f3', 'ACCENT_GREEN': '#4caf50', 'ACCENT_RED': '#ff4444',
+        'ACCENT_ORANGE': '#ff9800', 'ACCENT_PURPLE': '#7c4dff', 'ACCENT_CYAN': '#4de8f4',
+        'ACCENT_PINK': '#ff4081',
+        'TEXT_PRIMARY': '#e8f4f8', 'TEXT_SECONDARY': '#7eb8c9',
+        'TEXT_BRIGHT': '#ffffff', 'TEXT_DIM': '#3d6070',
+        'ROW_HIGH': '#0f1d2a', 'ROW_MID_HIGH': '#0d1a25',
+        'ROW_MID': '#10182a', 'ROW_CHORD': '#1a1420',
+        'KEY_NORMAL': '#1a2535', 'KEY_PRESSED': '#2196f3', 'KEY_BORDER': '#2a4a5e',
+        'VIZ_LOW': '#4caf50', 'VIZ_MID': '#4de8f4', 'VIZ_HIGH': '#2196f3', 'VIZ_TOP': '#7c4dff',
+        'BTN_PRIMARY': '#1a6a8e', 'BTN_SECONDARY': '#1a2535', 'BTN_DANGER': '#cc3333',
+        'BORDER': '#1a3a4e', 'BORDER_BRIGHT': '#2a6a7e',
+        'GLOW_BLUE': '#1a5aff', 'GLOW_CYAN': '#4de8f4',
+        'TITLEBAR': '#080c12', 'VIZ_BG': '#060a10',
+        'PIANO_WHITE': '#c8d8e0', 'PIANO_BLACK': '#1a2535', 'PIANO_BG': '#0a0e14',
+    },
 }
 
 _current_theme = 'dark'
@@ -159,25 +185,39 @@ class ModernColors:
 
     @classmethod
     def toggle_theme(cls):
-        new = 'light' if _current_theme == 'dark' else 'dark'
+        cycle = {'dark': 'light', 'light': 'sao', 'sao': 'dark'}
+        new = cycle.get(_current_theme, 'dark')
         cls.apply_theme(new)
         return new
+
+    @classmethod
+    def is_sao(cls):
+        return _current_theme == 'sao' and _SAO_THEME_AVAILABLE
 
 
 # ==================== 主题对话框 ====================
 class ThemedDialog(tk.Toplevel):
-    """与主题一致的自定义消息框"""
+    """与主题一致的自定义消息框 - SAO模式自动委托"""
     @staticmethod
     def showinfo(parent, title, message):
-        ThemedDialog._show(parent, title, message, 'info')
+        if ModernColors.is_sao() and _SAO_THEME_AVAILABLE:
+            SAODialog.showinfo(parent, title, message)
+        else:
+            ThemedDialog._show(parent, title, message, 'info')
 
     @staticmethod
     def showwarning(parent, title, message):
-        ThemedDialog._show(parent, title, message, 'warning')
+        if ModernColors.is_sao() and _SAO_THEME_AVAILABLE:
+            SAODialog.showwarning(parent, title, message)
+        else:
+            ThemedDialog._show(parent, title, message, 'warning')
 
     @staticmethod
     def showerror(parent, title, message):
-        ThemedDialog._show(parent, title, message, 'error')
+        if ModernColors.is_sao() and _SAO_THEME_AVAILABLE:
+            SAODialog.showerror(parent, title, message)
+        else:
+            ThemedDialog._show(parent, title, message, 'error')
 
     @staticmethod
     def _show(parent, title, message, level='info'):
@@ -309,7 +349,7 @@ def get_icon_path():
 class CustomTitleBar(tk.Frame):
     """自定义无边框窗口标题栏 - 扁平暗色设计"""
 
-    def __init__(self, parent, root, title="咲 Midi Player", version="v2.2.0+2200",
+    def __init__(self, parent, root, title="咲 Midi Player", version="v3.0.0+3000",
                  on_close=None, **kwargs):
         super().__init__(parent, bg=ModernColors.TITLEBAR, height=36, **kwargs)
         self.root = root
@@ -1952,9 +1992,18 @@ class ControlPanel(tk.Frame):
             self.channel_info_label.configure(text=f"已启用 {enabled}/{total} 个通道")
 
     def _ask_open_file(self):
-        """内置主题文件选择器"""
+        """内置主题文件选择器 - SAO模式使用SAO风格"""
         last = self.settings.get('last_file', '')
         initialdir = os.path.dirname(last) if last and os.path.exists(os.path.dirname(last)) else os.path.expanduser('~')
+        if ModernColors.is_sao():
+            picker = SAOFilePicker(
+                parent=self.winfo_toplevel(),
+                title="选择 MIDI / JS 文件",
+                mode="file",
+                initial_dir=initialdir,
+                file_types=[('.mid', '.midi', '.js')]
+            )
+            return picker.get_result()
         picker = ThemedFilePicker(
             parent=self.winfo_toplevel(),
             title="选择 MIDI / JS 文件",
@@ -1966,12 +2015,22 @@ class ControlPanel(tk.Frame):
         return picker.get_result()
 
     def _ask_directory(self):
-        """内置主题文件夹选择器"""
+        """内置主题文件夹选择器 - SAO模式使用SAO风格"""
         last_folder = self.settings.get('last_folder', '')
         initialdir = last_folder if last_folder and os.path.isdir(last_folder) else os.path.expanduser('~')
         pinned_dirs = self.settings.get('pinned_folders', [])
         def save_pins(new_pins):
             self.settings.set('pinned_folders', new_pins)
+        if ModernColors.is_sao():
+            picker = SAOFilePicker(
+                parent=self.winfo_toplevel(),
+                title="选择循环播放的文件夹",
+                mode="dir",
+                initial_dir=initialdir,
+                pinned_folders=pinned_dirs,
+                on_pin_change=save_pins
+            )
+            return picker.get_result()
         picker = ThemedFilePicker(
             parent=self.winfo_toplevel(),
             title="选择循环播放的文件夹",
@@ -3171,7 +3230,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                                        title="咲 Midi Player", version="v2.2.0+2200",
+                                        title="咲 Midi Player", version="v3.0.0+3000",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 
@@ -3182,7 +3241,8 @@ class MidiPlayerGUI:
 
         tk.Label(toolbar, text="透明度", bg=ModernColors.BG_DARK,
                  fg=ModernColors.TEXT_DIM, font=('Microsoft YaHei UI', 8)).pack(side=tk.LEFT, padx=(0, 3))
-        self.opacity_var = tk.DoubleVar(value=1.0)
+        _saved_opacity = self.settings.get('opacity', 1.0)
+        self.opacity_var = tk.DoubleVar(value=_saved_opacity)
         self.opacity_scale = tk.Scale(toolbar, from_=0.3, to=1.0, resolution=0.05,
                                       orient=tk.HORIZONTAL, variable=self.opacity_var,
                                       bg=ModernColors.BG_DARK, fg=ModernColors.TEXT_DIM,
@@ -3190,16 +3250,26 @@ class MidiPlayerGUI:
                                       length=60, sliderlength=12, width=10,
                                       showvalue=False, command=self._on_opacity_change)
         self.opacity_scale.pack(side=tk.LEFT, padx=(0, 4))
-        self.opacity_label = tk.Label(toolbar, text="100%", bg=ModernColors.BG_DARK,
+        self.opacity_label = tk.Label(toolbar, text=f"{int(_saved_opacity * 100)}%", bg=ModernColors.BG_DARK,
                                       fg=ModernColors.TEXT_DIM, font=('Microsoft YaHei UI', 8), width=4)
         self.opacity_label.pack(side=tk.LEFT, padx=(0, 12))
+        # 恢复保存的透明度
+        try:
+            self.root.attributes('-alpha', _saved_opacity)
+        except:
+            pass
         self.topmost_btn = SmoothButton(toolbar, text="置顶", command=self._toggle_topmost,
                                         width=55, height=22, bg=ModernColors.BTN_SECONDARY, font_size=8)
         self.topmost_btn.pack(side=tk.RIGHT)
 
-        self.theme_btn = SmoothButton(toolbar, text="Dark SE" if _current_theme == 'light' else "Light SE",
+        self.sao_ui_btn = SmoothButton(toolbar, text="◆ SAO UI", command=self._switch_to_sao_ui,
+                                       width=72, height=22, bg=ModernColors.BTN_SECONDARY, font_size=8)
+        self.sao_ui_btn.pack(side=tk.RIGHT, padx=(0, 6))
+
+        _theme_labels = {'dark': 'Light SE', 'light': 'SAO Mode', 'sao': 'Dark SE'}
+        self.theme_btn = SmoothButton(toolbar, text=_theme_labels.get(_current_theme, 'Light SE'),
                                       command=self._toggle_theme,
-                                      width=70, height=22, bg=ModernColors.BTN_SECONDARY, font_size=8)
+                                      width=80, height=22, bg=ModernColors.BTN_SECONDARY, font_size=8)
         self.theme_btn.pack(side=tk.RIGHT, padx=(0, 6))
 
         # ===== 分隔线 =====
@@ -3296,6 +3366,7 @@ class MidiPlayerGUI:
             self.root.attributes('-alpha', opacity)
         except:
             pass
+        self.settings.set('opacity', opacity)
 
     def _toggle_topmost(self):
         self.is_topmost = not self.is_topmost
@@ -3313,6 +3384,7 @@ class MidiPlayerGUI:
             self.opacity_var.set(1.0)
             self.root.attributes('-alpha', 1.0)
             self.opacity_label.configure(text="100%")
+            self.settings.set('opacity', 1.0)
 
     def _bind_callbacks(self):
         def on_note(key, note, is_chord=False):
@@ -3375,32 +3447,42 @@ class MidiPlayerGUI:
             print(f"恢复状态失败: {e}")
 
     def _toggle_theme(self):
-        """切换 Dark SE / Light SE 主题"""
+        """切换 Dark SE / Light SE / SAO Mode 主题"""
         new_theme = ModernColors.toggle_theme()
-        label = "Dark SE" if new_theme == 'light' else "Light SE"
+        _labels = {'dark': 'Light SE', 'light': 'SAO Mode', 'sao': 'Dark SE'}
+        label = _labels.get(new_theme, 'Light SE')
         self.theme_btn.set_text(label)
         self.settings.set('theme', new_theme)
         self._refresh_all_colors()
 
+    def _switch_to_sao_ui(self):
+        """切换到 SAO Edition UI (需要重启)"""
+        self.settings.set('ui_mode', 'sao')
+        import tkinter.messagebox as mb
+        mb.showinfo("切换 SAO UI",
+                    "已切换到 SAO Edition 模式。\n\n请重新启动程序生效。",
+                    parent=self.root)
+
     def _refresh_all_colors(self):
         """刷新全部控件颜色 (主题切换后)"""
         C = ModernColors
-        # 旧→新 背景映射 (dark 全部值 + light 全部值)
+        # 旧→新 背景映射 (dark + light + sao 全部值)
         bg_map = {
-            '#1c1c1e': C.BG_DARK, '#f2f2f7': C.BG_DARK,
-            '#2c2c2e': C.BG_CARD, '#ffffff': C.BG_CARD,
-            '#3a3a3c': C.BG_HOVER, '#e5e5ea': C.BG_HOVER,
-            '#161618': C.TITLEBAR, '#ebebf0': C.TITLEBAR,
-            '#38383a': C.BORDER, '#d1d1d6': C.BORDER,
-            '#48484a': C.BORDER_BRIGHT, '#c7c7cc': C.BORDER_BRIGHT,
-            '#131315': C.VIZ_BG, '#f8f8fa': C.VIZ_BG,
+            '#1c1c1e': C.BG_DARK, '#f2f2f7': C.BG_DARK, '#0a0e14': C.BG_DARK,
+            '#2c2c2e': C.BG_CARD, '#ffffff': C.BG_CARD, '#111820': C.BG_CARD,
+            '#3a3a3c': C.BG_HOVER, '#e5e5ea': C.BG_HOVER, '#1a2535': C.BG_HOVER,
+            '#161618': C.TITLEBAR, '#ebebf0': C.TITLEBAR, '#080c12': C.TITLEBAR,
+            '#38383a': C.BORDER, '#d1d1d6': C.BORDER, '#1a3a4e': C.BORDER,
+            '#48484a': C.BORDER_BRIGHT, '#c7c7cc': C.BORDER_BRIGHT, '#2a6a7e': C.BORDER_BRIGHT,
+            '#131315': C.VIZ_BG, '#f8f8fa': C.VIZ_BG, '#060a10': C.VIZ_BG,
             '#1a1a1c': C.PIANO_BG, '#e8e8ed': C.PIANO_BG,
             '#252528': C.BG_HOVER,
+            '#0d1219': C.BG_INPUT, '#0e1520': C.BG_PANEL,
         }
         fg_map = {
-            '#f5f5f7': C.TEXT_PRIMARY, '#1c1c1e': C.TEXT_PRIMARY,
-            '#98989d': C.TEXT_SECONDARY, '#8e8e93': C.TEXT_SECONDARY,
-            '#636366': C.TEXT_DIM, '#aeaeb2': C.TEXT_DIM,
+            '#f5f5f7': C.TEXT_PRIMARY, '#1c1c1e': C.TEXT_PRIMARY, '#e8f4f8': C.TEXT_PRIMARY,
+            '#98989d': C.TEXT_SECONDARY, '#8e8e93': C.TEXT_SECONDARY, '#7eb8c9': C.TEXT_SECONDARY,
+            '#636366': C.TEXT_DIM, '#aeaeb2': C.TEXT_DIM, '#3d6070': C.TEXT_DIM,
             '#48484a': C.TEXT_DIM, '#e5e5e7': C.TEXT_PRIMARY,
             '#6e6e73': C.TEXT_DIM,
         }
@@ -3472,9 +3554,12 @@ class MidiPlayerGUI:
                         # 更新按钮底色随主题
                         _btn_bg_map = {
                             '#0a84ff': C.BTN_PRIMARY,  '#007aff': C.BTN_PRIMARY,
+                            '#1a6a8e': C.BTN_PRIMARY,  # SAO primary
                             '#48484a': C.BTN_SECONDARY, '#e5e5ea': C.BTN_SECONDARY,
+                            '#1a2535': C.BTN_SECONDARY, # SAO secondary
                             '#3a3a3c': C.BG_HOVER,      '#d1d1d6': C.BG_HOVER,
                             '#ff453a': C.BTN_DANGER,   '#ff3b30': C.BTN_DANGER,
+                            '#cc3333': C.BTN_DANGER,   # SAO danger
                         }
                         old_base = w.base_bg.lower()
                         if old_base in _btn_bg_map:
@@ -3508,6 +3593,19 @@ class MidiPlayerGUI:
             for child in w.winfo_children():
                 refresh_widget(child)
         refresh_widget(self.root)
+        # SAO 模式: 外框辉光边框
+        try:
+            for child in self.root.winfo_children():
+                if isinstance(child, tk.Frame):
+                    old_bg = str(child.cget('bg')).lower()
+                    if old_bg in bg_map or old_bg in ('#4de8f4', '#38383a', '#d1d1d6', '#1a3a4e'):
+                        if ModernColors.is_sao():
+                            child.configure(bg='#1a3a4e')
+                        else:
+                            child.configure(bg=C.BORDER)
+                    break
+        except:
+            pass
         # 特殊控件直接刷新
         try:
             self.visualizer.canvas.configure(bg=C.VIZ_BG)
@@ -3532,15 +3630,26 @@ class MidiPlayerGUI:
                 cv.configure(bg=C.TITLEBAR)
                 self.title_bar._draw_ctrl_btn(cv, txt, C.TITLEBAR, C.TEXT_DIM)
             self.title_bar.configure(bg=C.TITLEBAR)
-            self.title_bar._title_lbl.configure(bg=C.TITLEBAR, fg=C.TEXT_PRIMARY)
+            # SAO 模式: 标题用青蓝色
+            title_fg = C.ACCENT_CYAN if ModernColors.is_sao() else C.TEXT_PRIMARY
+            self.title_bar._title_lbl.configure(bg=C.TITLEBAR, fg=title_fg)
             self.title_bar._version_lbl.configure(bg=C.TITLEBAR, fg=C.TEXT_DIM)
-            # 标题栏图标 canvas
+            # SAO 模式: 重绘标题栏图标为菱形
             for child in self.title_bar.winfo_children():
                 if isinstance(child, tk.Canvas) and child not in [cv for cv, _ in self.title_bar._ctrl_btns]:
                     child.configure(bg=C.TITLEBAR)
+                    if ModernColors.is_sao():
+                        child.delete('all')
+                        # 菱形图标
+                        child.create_polygon(6, 1, 11, 6, 6, 11, 1, 6,
+                                             fill=C.ACCENT_CYAN, outline='')
+                    else:
+                        child.delete('all')
+                        child.create_oval(2, 2, 10, 10, fill=C.ACCENT_BLUE, outline='')
             # 工具栏按钮
             self.topmost_btn._draw()
             self.theme_btn._draw()
+            self.sao_ui_btn._draw()
         except Exception:
             pass
 

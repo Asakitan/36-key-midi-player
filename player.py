@@ -1696,7 +1696,7 @@ class MidiPlayer:
         # 根据熟练度自动调整速度：不熟练减速30%，熟练后恢复
         if self._proficiency_enabled:
             # 速度 = 0.85 + 0.3 * 熟练度（0%熟练=0.85倍速，100%熟练=1.15倍速）
-            proficiency_speed = 0.85 + 0.3 * self._current_proficiency
+            proficiency_speed = 0.95 + 0.3 * self._current_proficiency
             self.state.speed = proficiency_speed
             print(f"[熟练度] 自动调速: {proficiency_speed:.0%}")
         

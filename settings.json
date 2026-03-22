@@ -6,17 +6,19 @@
     "speed_down": "F8",
     "toggle_topmost": "F9"
   },
-  "last_file": "E:/弹琴/自选\\01801-千本樱-初音未来.mid",
+  "last_file": "E:\\弹琴\\自选\\Magia.mid",
   "speed": 1.0,
   "transpose": -6,
   "chord_mode": true,
+  "ui_mode": "sao",
   "bass_density": 1.0,
   "song_play_counts": {
     "6d6224e565ec": 1,
     "e17f071612b5": 2,
     "40cfef3f1772": 1,
     "d56685d31798": 1,
-    "5da44f1dbbb5": 1
+    "5da44f1dbbb5": 1,
+    "478d6876cf5f": 2
   },
   "direct_c_mode": false,
   "proficiency_enabled": false,
@@ -28,5 +30,17 @@
     }
   },
   "theme": "light",
-  "soundfont_path": "E:\\VC\\28midi\\soundfonts\\GeneralUser-GS.sf2"
+  "soundfont_path": "E:\\VC\\28midi\\soundfonts\\GeneralUser-GS.sf2",
+  "float_x": 408,
+  "float_y": 812,
+  "show_viz": true,
+  "show_piano": true,
+  "show_status": true,
+  "viz_mode": "bar",
+  "piano_x": 599,
+  "piano_y": 130,
+  "status_x": 1109,
+  "status_y": 132,
+  "viz_x": 384,
+  "viz_y": 131
 }

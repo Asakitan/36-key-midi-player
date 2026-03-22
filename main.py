@@ -52,8 +52,33 @@ def check_dependencies():
     return True
 
 
+def _load_ui_mode():
+    """从 settings.json 读取 ui_mode"""
+    import json
+    try:
+        cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings.json')
+        if os.path.exists(cfg):
+            with open(cfg, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('ui_mode', 'sao')
+    except Exception:
+        pass
+    return 'sao'  # 默认 SAO 模式
+
+
 def main():
     """主函数"""
+    # 设置 DPI 感知 — 减少 Tkinter 控件模糊 / 锯齿
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            import ctypes
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
     print("=" * 50)
     print("  60键电子琴 MIDI播放器")
     print("=" * 50)
@@ -63,16 +88,24 @@ def main():
         import time
         time.sleep(3)  # 显示3秒后自动退出
         return
-        
+
+    ui_mode = _load_ui_mode()
+    print(f"\nUI 模式: {ui_mode}")
+
     # 导入并运行GUI
     try:
-        from gui import MidiPlayerGUI
-        
-        print("\n启动GUI...")
-        print("提示: 播放MIDI时请切换到游戏窗口")
-        print("提示: 需要管理员权限才能模拟按键")
-        
-        app = MidiPlayerGUI()
+        if ui_mode == 'sao':
+            from sao_gui import SAOPlayerGUI
+            print("\n启动 SAO Edition GUI...")
+            print("提示: Alt+A 打开 SAO 菜单")
+            app = SAOPlayerGUI()
+        else:
+            from gui import MidiPlayerGUI
+            print("\n启动经典 GUI...")
+            print("提示: 播放MIDI时请切换到游戏窗口")
+            print("提示: 需要管理员权限才能模拟按键")
+            app = MidiPlayerGUI()
+
         app.run()
         
     except Exception as e:

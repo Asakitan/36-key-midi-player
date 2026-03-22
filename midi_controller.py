@@ -130,6 +130,35 @@ def _get_colors():
     return _ModernColors
 
 
+class _SAOWhiteColors:
+    """SAO 对话框白色主题 (与截图匹配)"""
+    BG_DARK     = '#f0f0f5'
+    BG_CARD     = '#ffffff'
+    BG_HOVER    = '#eaeaef'
+    BG_INPUT    = '#f5f5f7'
+    BG_PANEL    = '#f5f5f7'
+    ACCENT_BLUE   = '#0A84FF'
+    ACCENT_GREEN  = '#28a745'
+    ACCENT_RED    = '#dc3545'
+    ACCENT_ORANGE = '#FF9F0A'
+    ACCENT_PURPLE = '#7c4dff'
+    ACCENT_CYAN   = '#0078d7'
+    TEXT_PRIMARY   = '#1c1c1e'
+    TEXT_SECONDARY = '#636366'
+    TEXT_BRIGHT    = '#000000'
+    TEXT_DIM       = '#8e8e93'
+    BTN_PRIMARY    = '#0A84FF'
+    BTN_SECONDARY  = '#d1d1d6'
+    BTN_DANGER     = '#dc3545'
+    BORDER         = '#d1d1d6'
+    BORDER_BRIGHT  = '#aeaeb2'
+    PIANO_WHITE    = '#ffffff'
+    PIANO_BLACK    = '#1a1a1e'
+    PIANO_BG       = '#e0e0e8'
+    KEY_NORMAL     = '#c8c8cc'
+    VIZ_BG         = '#e8e8ed'
+
+
 # ==================== MIDI 预览播放器 ====================
 
 class MIDIPreviewPlayer:
@@ -809,11 +838,11 @@ class PianoKeyboardWidget(tk.Canvas):
     RANGE_88 = (21, 108)   # A0 – C8
 
     def __init__(self, parent, mode='classic', width=860, height=110,
-                 on_transpose_change=None, **kw):
+                 on_transpose_change=None, colors=None, **kw):
         super().__init__(parent, width=width, height=height,
                          highlightthickness=0, bd=0, **kw)
 
-        self.C = _get_colors()
+        self.C = colors if colors is not None else _get_colors()
         self.mode = mode
         self._canvas_w = width
         self._canvas_h = height
@@ -1756,7 +1785,7 @@ class MIDIControllerDialog(tk.Toplevel):
                  on_apply=None):
         super().__init__(parent)
 
-        self.C = _get_colors()
+        self.C = _SAOWhiteColors()
         self.player = player
         self.settings = settings
         self.midi_path = midi_path
@@ -1792,6 +1821,21 @@ class MIDIControllerDialog(tk.Toplevel):
         self.resizable(True, True)        # 允许全屏/resize
         self.configure(bg=self.C.BG_DARK)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # ttk Notebook 白色主题
+        try:
+            style = ttk.Style(self)
+            style.theme_use('clam')
+            style.configure('TNotebook', background=self.C.BG_DARK, borderwidth=0)
+            style.configure('TNotebook.Tab', background=self.C.BG_CARD,
+                            foreground=self.C.TEXT_PRIMARY,
+                            padding=[10, 4], font=('Microsoft YaHei UI', 9))
+            style.map('TNotebook.Tab',
+                      background=[('selected', self.C.ACCENT_CYAN), ('active', self.C.BG_HOVER)],
+                      foreground=[('selected', '#ffffff')])
+            style.configure('TPanedwindow', background=self.C.BG_DARK)
+        except Exception:
+            pass
 
         self._build_ui()
         self._load_state()
@@ -2537,7 +2581,8 @@ class MIDIControllerDialog(tk.Toplevel):
         self.piano = PianoKeyboardWidget(
             parent, mode=mode, width=900, height=130,
             on_transpose_change=self._on_piano_transpose,
-            bg=_get_colors().PIANO_BG)
+            colors=self.C,
+            bg=self.C.PIANO_BG)
         self.piano.pack(fill=tk.X, padx=4, pady=4)
 
         # 统计行
