@@ -9,6 +9,10 @@ keyboard>=0.13.5
 
 # GUI (Python自带tkinter，通常不需要安装)
 
+# === Link Start OpenGL 3D 动画 (可选, 提供真3D圆柱体渲染) ===
+moderngl>=5.8
+numpy>=1.20
+
 # === MIDI 预览播放器 (可选，提供更好的音色) ===
 # FluidSynth Python 绑定 (需要系统安装 FluidSynth)
 # pip install pyfluidsynth

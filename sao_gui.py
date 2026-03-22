@@ -9,7 +9,6 @@ LINK START 入场动画, SAO 风格文件选择器
 
 import tkinter as tk
 from tkinter import ttk
-import threading
 import os
 import sys
 import json
@@ -34,6 +33,10 @@ from sao_theme import (
     Animator, lerp, lerp_color, ease_out
 )
 from gui import MidiVisualizer, ModernColors, SmoothButton
+
+# pyglet Link Start 渲染器 (已弃用, 保留文件但不再使用)
+# OpenGL 上下文要求主线程, 与 tkinter 冲突, 改用 Canvas SAO-UI 隧道模型
+HAS_PYGLET = False
 
 # ── 全局快捷键检测 (复用 gui.py 逻辑) ──
 def _is_admin():
@@ -486,14 +489,33 @@ class SAOPlayerPanel(tk.Frame):
         if w < 40 or h < 40:
             return
 
+        # ── 底部柔和阴影 ──
+        for i in range(5):
+            av = int(18 * (1 - i / 5))
+            sc = f'#{av:02x}{av:02x}{av:02x}'
+            self._top.create_line(2, h - i, w - 2, h - i, fill=sc)
+
         # 右三角指示器 (白色)
         self._top.create_polygon(w, h * 0.75, w + 16, h * 0.75 + 7, w, h * 0.75 + 14,
                                  fill='#ffffff', outline='')
 
-        # 分隔线 (SAO 白色主题)
-        self._top.create_line(10, 35, w - 10, 35, fill='#d1d1d6', width=1)
-        # 金色发光分隔线
-        self._top.create_line(10, 34, int(w * 0.5), 34, fill='#f3af12', width=1)
+        # ── 标题区域背景微层次 ──
+        for i in range(3):
+            gv = 252 - i * 3
+            self._top.create_rectangle(0, 0, w, 36,
+                                       fill=f'#{gv:02x}{gv:02x}{gv:02x}', outline='')
+
+        # 分隔线 (双层: 暗线 + 金色高光)
+        self._top.create_line(10, 36, w - 10, 36, fill='#d1d1d6', width=1)
+        self._top.create_line(10, 35, int(w * 0.5), 35, fill='#f3af12', width=1)
+        # 右侧渐淡
+        for i in range(20):
+            xp = int(w * 0.5) + i * 3
+            if xp > w - 10:
+                break
+            av = max(0, int(243 * (1 - i / 20)))
+            gc = f'#{av:02x}{int(av * 0.71):02x}{int(av * 0.07):02x}'
+            self._top.create_line(xp, 35, xp + 3, 35, fill=gc, width=1)
 
         # 文件名
         display_name = self._file_name
@@ -509,24 +531,32 @@ class SAOPlayerPanel(tk.Frame):
         bar_x, bar_w = 15, w - 30
         bar_y, bar_h = 46, 16
 
-        # 边框 (polygon 风格)
+        # 边框 (polygon 风格) + 内阴影
         pts = [bar_x, bar_y,
                bar_x + bar_w, bar_y,
                bar_x + bar_w - 3, bar_y + bar_h,
                bar_x, bar_y + bar_h]
-        self._top.create_polygon(pts, outline='#d1d1d6', fill='#f0f0f0', width=1)
+        self._top.create_polygon(pts, outline='#c8c8c8', fill='#ececec', width=1)
+        # 内侧上方阴影 (1px)
+        self._top.create_line(bar_x + 1, bar_y + 1, bar_x + bar_w - 1, bar_y + 1,
+                              fill='#d8d8d8', width=1)
 
         fill_w = int(bar_w * self._hp_percent)
         if fill_w > 0:
             if self._hp_percent > 0.5:
-                fc = '#9ad334'
+                fc1, fc2 = '#b8e86c', '#7cc828'  # 绿色渐变
             elif self._hp_percent > 0.25:
-                fc = '#f4fa49'
+                fc1, fc2 = '#f0f060', '#e8d820'  # 黄色
             else:
-                fc = '#ef684e'
+                fc1, fc2 = '#f88c7a', '#e85040'  # 红色
             self._top.create_rectangle(bar_x + 1, bar_y + 1,
                                        bar_x + 1 + fill_w, bar_y + bar_h - 1,
-                                       fill=fc, outline='')
+                                       fill=fc2, outline='')
+            # 顶部高光条 (1px)
+            hl_w = min(fill_w, bar_w - 2)
+            self._top.create_line(bar_x + 2, bar_y + 2,
+                                  bar_x + 2 + hl_w, bar_y + 2,
+                                  fill=fc1, width=1)
 
         # 百分比
         self._top.create_text(bar_x + bar_w // 2, bar_y + bar_h // 2,
@@ -573,12 +603,24 @@ class SAOPlayerPanel(tk.Frame):
         self._bottom.create_polygon(30, 0, 37, -10, 44, 0,
                                     fill='#f5f5f7', outline='')
 
-        # 小分隔线
-        self._bottom.create_line(0, 1, w, 1, fill='#d1d1d6', width=1)
+        # 顶部阴影渐变 (向下淡出)
+        for i in range(4):
+            av = int(210 + i * 10)
+            self._bottom.create_line(0, i, w, i,
+                                     fill=f'#{av:02x}{av:02x}{av:02x}', width=1)
 
-        # 状态指示灯
+        # 状态指示灯 (带辉光)
         dot_color = '#3ad86c' if self._is_playing else '#d1d1d6'
+        if self._is_playing:
+            for gr in range(6, 0, -2):
+                ga = int(25 * (1 - gr / 6))
+                gc = f'#{int(ga * 0.5):02x}{int(ga * 2):02x}{int(ga * 0.8):02x}'
+                self._bottom.create_oval(18 - gr, 21 - gr, 18 + gr, 21 + gr,
+                                         fill=gc, outline='')
         self._bottom.create_oval(14, 17, 23, 26, fill=dot_color, outline='')
+        # 灯光高光点
+        if self._is_playing:
+            self._bottom.create_oval(16, 19, 19, 22, fill='#90ffb0', outline='')
 
         status_color = '#333333' if self._is_playing else '#999999'
         self._bottom.create_text(29, 22, text=self._status,
@@ -649,6 +691,8 @@ class SAOPlayerGUI:
         self._viz_panel = None     # 浮动可视化面板
         self._status_panel = None  # 浮动状态面板
         self._control_panel = None # 浮动控制面板
+        self._fisheye_ov = None    # 菜单开启时的持久鱼眼叠加层
+        self._ctx_menu_open = False  # 右键菜单弹出中, 暂停 z-order 置顶
         self._mini_piano = None
         self._visualizer = None
         self._lift_loop_active = False
@@ -859,7 +903,13 @@ class SAOPlayerGUI:
         self._float_ctx.add_separator()
         self._float_ctx.add_command(label='↺ 切换到 Old UI', command=self._switch_to_old_ui)
         self._float_ctx.add_command(label='✕ 退出', command=self._on_close)
-        cv.bind('<Button-3>', lambda e: self._float_ctx.tk_popup(e.x_root, e.y_root))
+        def _show_ctx_menu(e):
+            self._ctx_menu_open = True
+            try:
+                self._float_ctx.tk_popup(e.x_root, e.y_root)
+            finally:
+                self._ctx_menu_open = False
+        cv.bind('<Button-3>', _show_ctx_menu)
 
         # 初始隐藏 — LinkStart 完成后才显示
         self._float.withdraw()
@@ -883,25 +933,19 @@ class SAOPlayerGUI:
         if not self._breath_active:
             return
         if self._drag.get('dragging', False):
-            self.root.after(80, self._breath_step)
+            self.root.after(16, self._breath_step)
             return
         try:
             if not self._float.winfo_exists():
                 return
             elapsed = time.time() - self._breath_t0
-            # SAO Utils 呼吸: 8s 周期, 4 waypoints (0,0)→(0,4)→(-4,0)→(-4,4)→(0,0)
-            phase = (elapsed % 8.0) / 8.0
-            waypoints = [(0, 0), (0, 4), (-4, 0), (-4, 4), (0, 0)]
-            idx = min(int(phase * 4), 3)
-            local_t = (phase * 4) - idx
-            x0, y0 = waypoints[idx]
-            x1, y1 = waypoints[idx + 1]
-            dx = int(x0 + (x1 - x0) * local_t)
-            dy = int(y0 + (y1 - y0) * local_t)
+            # 双正弦 Lissajous 浮动 — 2px 振幅, 60fps 光滑
+            dx = int(2 * math.sin(elapsed * 0.52) + 1 * math.sin(elapsed * 1.13))
+            dy = int(2 * math.sin(elapsed * 0.38 + 1.0) + 1 * math.sin(elapsed * 0.91))
             self._float.geometry(f'+{self._breath_base_x + dx}+{self._breath_base_y + dy}')
         except Exception:
             pass
-        self.root.after(50, self._breath_step)
+        self.root.after(16, self._breath_step)
 
     def _stop_float_breath(self):
         self._breath_active = False
@@ -911,6 +955,42 @@ class SAOPlayerGUI:
                 self._float.geometry(f'+{self._breath_base_x}+{self._breath_base_y}')
         except Exception:
             pass
+
+    def _attach_panel_float(self, panel, phase: float = 0.0, amp: float = 2.5):
+        """为任意浮动面板附加 Lissajous微飘动 (拖拽天然兼容: delta方式).
+
+        每帧只施加“连续 sin 偏移的变化量”, 不重置基准位置.
+        用户拖动面板后, 浮动会从新位置继续, 无需修改拖拽处理器.
+        """
+        t0 = time.time()
+
+        def _step():
+            try:
+                if not panel.winfo_exists():
+                    return
+            except Exception:
+                return
+            now = time.time() - t0
+            # 双频 Lissajous (xy 频率不同 → 革花形细基轨迹)
+            new_dx = int(amp * math.sin(now * 0.82 + phase))
+            new_dy = int(amp * math.sin(now * 0.61 + phase + 1.2))
+            old_dx = getattr(panel, '_fdx', 0)
+            old_dy = getattr(panel, '_fdy', 0)
+            dd_x, dd_y = new_dx - old_dx, new_dy - old_dy
+            if dd_x != 0 or dd_y != 0:
+                try:
+                    cx = panel.winfo_x()
+                    cy = panel.winfo_y()
+                    panel.geometry(f'+{cx + dd_x}+{cy + dd_y}')
+                except Exception:
+                    pass
+            panel._fdx = new_dx
+            panel._fdy = new_dy
+            self.root.after(16, _step)
+
+        panel._fdx = 0
+        panel._fdy = 0
+        _step()
 
     def _float_click(self, e):
         self._drag['x'] = e.x_root
@@ -1163,15 +1243,18 @@ class SAOPlayerGUI:
             self._float.lift()
 
     def _on_sao_menu_open(self):
-        """SAO 菜单打开时 — 停止呼吸, 启动 float 保持最顶循环"""
+        """SAO 菜单打开时 — 停止呼吸, 启动 float 保持最顶循环, 并启动持久鱼眼"""
         self._stop_float_breath()
         self._lift_loop_active = True
         self._lift_float_loop()
+        # 延迟启动鱼眼叠加 (等菜单渲染完再截图)
+        self.root.after(160, self._start_fisheye_overlay)
 
     def _on_sao_menu_close(self):
-        """SAO 菜单关闭时 — 重启呼吸动画"""
+        """SAO 菜单关闭时 — 重启呼吸动画, 销毁鱼眼叠加层"""
         self._lift_loop_active = False
         self._player_panel = None
+        self._stop_fisheye_overlay()
         self._restore_focus()
         self.root.after(400, self._start_float_breath)
 
@@ -1248,6 +1331,7 @@ class SAOPlayerGUI:
         self._mini_piano = SAOMiniPiano(inner, octaves=5)
         self._mini_piano.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         self._fade_panel_in(self._piano_panel, target=0.90)
+        self._attach_panel_float(self._piano_panel, phase=0.0)
         self.settings.set('show_piano', True)
         self.settings.save()
 
@@ -1372,6 +1456,7 @@ class SAOPlayerGUI:
         hdr.bind('<B1-Motion>', sdmove)
 
         self._fade_panel_in(self._status_panel, target=0.92)
+        self._attach_panel_float(self._status_panel, phase=2.0)
         self._update_status_panel()
         self.settings.set('show_status', True)
         self.settings.save()
@@ -1470,6 +1555,7 @@ class SAOPlayerGUI:
         if self._playing:
             self._visualizer.start()
         self._fade_panel_in(self._viz_panel, target=0.90)
+        self._attach_panel_float(self._viz_panel, phase=1.0)
         self.settings.set('show_viz', True)
         self.settings.save()
 
@@ -1654,6 +1740,7 @@ class SAOPlayerGUI:
         self._control_panel._gl_lbl = gl_lbl
 
         self._fade_panel_in(self._control_panel, target=0.95)
+        self._attach_panel_float(self._control_panel, phase=3.0)
         self.settings.set('show_control', True)
         self.settings.save()
 
@@ -1725,6 +1812,375 @@ class SAOPlayerGUI:
             if not (self._control_panel and self._control_panel.winfo_exists()):
                 self._toggle_control_panel()
 
+    # ══════════════════════════════════════════════════════════════
+    #  持久鱼眼叠加层 (菜单开启时常驻, 关闭时销毁)
+    # ══════════════════════════════════════════════════════════════
+    def _start_fisheye_overlay(self):
+        """
+        SAO 菜单开启期间的持久鱼眼叠加层.
+
+        工作方式:
+          1. 截取全屏 → 1/4分辨率 → 桶形畸变 (numpy 向量化双线性重映射)
+          2. -topmost=True 覆盖全屏 (含子菜单面板), alpha~28%
+          3. Win32 WS_EX_LAYERED + WS_EX_TRANSPARENT: 鼠标事件穿透
+          4. 每 50ms 截图+更新; 独立 z-order ticker 保证始终覆盖所有面板
+          5. 首帧就绪后才启动渐显动画 (避免黑屏→畸变图闪现)
+          6. 菜单关闭时由 _stop_fisheye_overlay 销毁
+        """
+        self._stop_fisheye_overlay()
+        if not self._sao_menu.visible:
+            return
+
+        # 停止 tkinter .lift() 循环 — 由 Win32 SetWindowPos 接管 (无闪烁)
+        self._lift_loop_active = False
+
+        try:
+            from PIL import ImageGrab, Image, ImageTk
+            import numpy as _np
+        except ImportError:
+            return
+
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        qw, qh = sw // 4, sh // 4
+
+        # ── 预计算 numpy 双线性重映射查找表 (仅一次) ──
+        cx_, cy_ = qw / 2.0, qh / 2.0
+        strength = 0.32
+        _yy, _xx = _np.mgrid[0:qh, 0:qw].astype(_np.float32)
+        _nx = (_xx - cx_) / cx_
+        _ny = (_yy - cy_) / cy_
+        _r2 = _nx * _nx + _ny * _ny
+        _f  = 1.0 + strength * _r2
+        _sx  = _np.clip(cx_ + _nx * _f * cx_, 0.0, qw - 1.0001)
+        _sy  = _np.clip(cy_ + _ny * _f * cy_, 0.0, qh - 1.0001)
+        _x0  = _sx.astype(_np.int32);  _x1 = _x0 + 1
+        _y0  = _sy.astype(_np.int32);  _y1 = _y0 + 1
+        _wfx = (_sx - _x0).astype(_np.float32)[..., _np.newaxis]
+        _wfy = (_sy - _y0).astype(_np.float32)[..., _np.newaxis]
+
+        def _numpy_remap(tiny_img):
+            arr = _np.array(tiny_img, dtype=_np.float32)
+            top = arr[_y0, _x0] * (1 - _wfx) + arr[_y0, _x1] * _wfx
+            bot = arr[_y1, _x0] * (1 - _wfx) + arr[_y1, _x1] * _wfx
+            return Image.fromarray(
+                (top * (1 - _wfy) + bot * _wfy).clip(0, 255).astype(_np.uint8))
+
+        # ── 创建叠加层窗口 ──
+        try:
+            ov = tk.Toplevel(self.root)
+            ov.overrideredirect(True)
+            ov.attributes('-topmost', True)
+            ov.attributes('-alpha', 0.0)   # tk 设好 WS_EX_LAYERED; 此后不再调用
+            ov.geometry(f'{sw}x{sh}+0+0')
+            cv_ov = tk.Canvas(ov, width=sw, height=sh,
+                              highlightthickness=0, bg='black')
+            cv_ov.pack(fill=tk.BOTH, expand=True)
+            ov._cv = cv_ov
+            self._fisheye_ov = ov
+        except Exception:
+            return
+
+        # ── Win32 API (64-bit 安全: 所有 HWND 参数/返回值用 c_void_p) ──
+        _hwnd_ref = [0]
+        try:
+            import ctypes as _ct
+            _u32 = _ct.windll.user32
+            _vp  = _ct.c_void_p
+            _u32.GetParent.argtypes                = [_vp]
+            _u32.GetParent.restype                 = _vp
+            _u32.GetWindowLongW.argtypes           = [_vp, _ct.c_int]
+            _u32.GetWindowLongW.restype            = _ct.c_long
+            _u32.SetWindowLongW.argtypes           = [_vp, _ct.c_int, _ct.c_long]
+            _u32.SetWindowLongW.restype            = _ct.c_long
+            _u32.SetLayeredWindowAttributes.argtypes = [_vp, _ct.c_uint,
+                                                        _ct.c_ubyte, _ct.c_uint]
+            _u32.SetLayeredWindowAttributes.restype = _ct.c_int
+            _u32.SetWindowPos.argtypes             = [_vp, _vp,
+                                                      _ct.c_int, _ct.c_int,
+                                                      _ct.c_int, _ct.c_int,
+                                                      _ct.c_uint]
+            _u32.SetWindowPos.restype              = _ct.c_int
+        except Exception:
+            _u32 = None
+
+        _GWL_EXSTYLE       = -20
+        _WS_EX_TRANSPARENT = 0x00000020
+        _LWA_ALPHA         = 0x00000002
+        _HWND_TOP          = 0       # 绝对 z-order 最顶层 (含 topmost 层内)
+        _SWP_FLAGS         = 0x0001 | 0x0002 | 0x0008 | 0x0010  # NOSIZE|NOMOVE|NOREDRAW|NOACTIVATE
+
+        def _set_alpha(byte_val):
+            if _hwnd_ref[0] and _u32:
+                try:
+                    _u32.SetLayeredWindowAttributes(
+                        _hwnd_ref[0], 0, byte_val, _LWA_ALPHA)
+                except Exception:
+                    pass
+
+        def _set_top():
+            """SetWindowPos(HWND_TOP) — 强制到 z-order 最顶, 含 topmost 层."""
+            if _hwnd_ref[0] and _u32:
+                try:
+                    _u32.SetWindowPos(
+                        _hwnd_ref[0], _HWND_TOP, 0, 0, 0, 0, _SWP_FLAGS)
+                except Exception:
+                    pass
+
+        _float_hwnd_ref = [0]   # 悬浮按钮 HWND (z-order 管理用)
+
+        def _init_layered():
+            """获取真实 HWND, 追加 WS_EX_TRANSPARENT, alpha 保持 0."""
+            if not _u32:
+                return
+            try:
+                ov.update_idletasks()
+                hwnd = _u32.GetParent(ov.winfo_id()) or ov.winfo_id()
+                _hwnd_ref[0] = hwnd
+                cur = _u32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+                _u32.SetWindowLongW(hwnd, _GWL_EXSTYLE,
+                                    cur | _WS_EX_TRANSPARENT)
+                _u32.SetLayeredWindowAttributes(hwnd, 0, 0, _LWA_ALPHA)
+            except Exception:
+                pass
+            # 获取悬浮按钮 HWND (用于同步 z-order, 替代 tkinter .lift())
+            try:
+                self._float.update_idletasks()
+                fh = _u32.GetParent(self._float.winfo_id()) or self._float.winfo_id()
+                _float_hwnd_ref[0] = fh
+            except Exception:
+                pass
+
+        # ── 渐显动画: 0→71 (≈28%), ~600ms ──
+        # 不在此处启动; 由 _apply 在首帧到达后触发
+        _ALPHA_TARGET  = 71
+        _alpha_cur     = [0.0]
+        _alpha_step    = _ALPHA_TARGET / 38   # 38帧 × 16ms ≈ 600ms
+        _fadein_started = [False]
+
+        def _fadein_tick():
+            if self._fisheye_ov is None:
+                return
+            _alpha_cur[0] = min(_ALPHA_TARGET, _alpha_cur[0] + _alpha_step)
+            _set_alpha(int(_alpha_cur[0]))
+            if _alpha_cur[0] < _ALPHA_TARGET:
+                try:
+                    ov.after(16, _fadein_tick)
+                except Exception:
+                    pass
+
+        ov.after(60, _init_layered)
+
+        # ── Z-order ticker: 每 100ms 强制置顶 ──
+        _running = [True]
+
+        def _zorder_tick():
+            if not _running[0] or self._fisheye_ov is None:
+                return
+            # 右键菜单弹出时跳过 (避免遮盖菜单)
+            if not self._ctx_menu_open:
+                _set_top()
+                # 悬浮按钮也置顶 (overlay 之上), Win32 无闪烁
+                if _float_hwnd_ref[0] and _u32:
+                    try:
+                        _u32.SetWindowPos(
+                            _float_hwnd_ref[0], _HWND_TOP,
+                            0, 0, 0, 0, _SWP_FLAGS)
+                    except Exception:
+                        pass
+            try:
+                ov.after(100, _zorder_tick)
+            except Exception:
+                pass
+
+        ov.after(120, _zorder_tick)
+
+        # ── 截图 + 畸变循环 (50ms, 后台线程) ──
+        def _do_capture():
+            if not _running[0]:
+                return
+            shot = None
+            for _grab in (
+                lambda: ImageGrab.grab(bbox=(0, 0, sw, sh), all_screens=True),
+                lambda: ImageGrab.grab(bbox=(0, 0, sw, sh)),
+                lambda: ImageGrab.grab(),
+            ):
+                try:
+                    shot = _grab()
+                    break
+                except Exception:
+                    continue
+            if shot is None:
+                if _running[0]:
+                    try:
+                        ov.after(800, lambda: _running[0] and
+                                 __import__('threading').Thread(
+                                     target=_do_capture, daemon=True).start())
+                    except Exception:
+                        pass
+                return
+            try:
+                tiny = shot.resize((qw, qh), Image.BILINEAR)
+                dist = _numpy_remap(tiny)
+                full = dist.resize((sw, sh), Image.BILINEAR)
+            except Exception:
+                return
+            if _running[0]:
+                try:
+                    ov.after(0, lambda img=full: _apply(img))
+                except Exception:
+                    pass
+
+        ov._img_id = None   # canvas 图元 ID, 首帧时创建后复用 (避免 delete+create)
+
+        def _apply(full_img):
+            if not _running[0]:
+                return
+            try:
+                photo = ImageTk.PhotoImage(full_img)
+                if ov._img_id is None:
+                    ov._img_id = cv_ov.create_image(0, 0, image=photo, anchor='nw')
+                else:
+                    cv_ov.itemconfig(ov._img_id, image=photo)
+                cv_ov._photo = photo   # 防止 GC
+            except Exception:
+                pass
+            # 首帧到达后再启动渐显 (避免黑色 canvas → 畸变图闪现)
+            if not _fadein_started[0]:
+                _fadein_started[0] = True
+                try:
+                    ov.after(0, _fadein_tick)
+                except Exception:
+                    pass
+            if _running[0] and self._fisheye_ov is not None:
+                try:
+                    ov.after(50, _schedule_next)
+                except Exception:
+                    pass
+
+        def _schedule_next():
+            if not _running[0] or self._fisheye_ov is None:
+                return
+            if not self._sao_menu.visible:
+                _running[0] = False
+                self._stop_fisheye_overlay()
+                return
+            import threading as _t
+            _t.Thread(target=_do_capture, daemon=True).start()
+
+        import threading as _th
+        _th.Thread(target=_do_capture, daemon=True).start()
+
+
+    def _stop_fisheye_overlay(self):
+        """销毁持久鱼眼叠加层."""
+        ov = self._fisheye_ov
+        self._fisheye_ov = None
+        if ov is not None:
+            try:
+                ov.destroy()
+            except Exception:
+                pass
+
+    # ══════════════════════════════════════════════
+    #  LinkStart 入场鱼眼镜头畅变
+    # ══════════════════════════════════════════════
+    def _run_fisheye_entry(self):
+        """
+        LinkStart 结束后短暂鱼眼镜头畟变过渡 — 屏幕从弯曲收缩至正常.
+
+        流程: 抓取当前屏幕 → 应用桶形型畟变 (MESH变换) →
+                全屏覆盖层显示畟变图 → 0.9s内渐隐 →
+                真实 UI 从底层透出 (SAO 镜头对焦效果).
+        """
+        try:
+            from PIL import ImageGrab, Image, ImageTk
+        except ImportError:
+            return
+
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        img = None
+        for _grab in (
+            lambda: ImageGrab.grab(bbox=(0, 0, sw, sh), all_screens=True),
+            lambda: ImageGrab.grab(bbox=(0, 0, sw, sh)),
+            lambda: ImageGrab.grab(),
+        ):
+            try:
+                img = _grab()
+                break
+            except Exception:
+                continue
+        if img is None:
+            return
+
+        # 半分辨率处理 (MESH 运算量 1/4)
+        half_w, half_h = sw // 2, sh // 2
+        small = img.resize((half_w, half_h), Image.BILINEAR)
+
+        def _barrel(src, strength):
+            cx_, cy_ = half_w / 2.0, half_h / 2.0
+            grid = 18
+            mesh_data = []
+            for gy in range(0, half_h, grid):
+                for gx in range(0, half_w, grid):
+                    x1, y1 = gx, gy
+                    x2, y2 = min(gx + grid, half_w), min(gy + grid, half_h)
+                    src_pts = []
+                    for px, py in [(x1, y1), (x1, y2), (x2, y2), (x2, y1)]:
+                        nx_ = (px - cx_) / cx_
+                        ny_ = (py - cy_) / cy_
+                        r2 = nx_ * nx_ + ny_ * ny_
+                        f = 1.0 + strength * r2
+                        sx = cx_ + nx_ * f * cx_
+                        sy = cy_ + ny_ * f * cy_
+                        src_pts.extend([
+                            max(0.0, min(half_w - 1.0, sx)),
+                            max(0.0, min(half_h - 1.0, sy)),
+                        ])
+                    mesh_data.append(((x1, y1, x2, y2), src_pts))
+            return src.transform(src.size, Image.MESH, mesh_data, Image.BILINEAR)
+
+        try:
+            dist_half = _barrel(small, 0.50)
+            distorted = dist_half.resize((sw, sh), Image.BILINEAR)
+        except Exception:
+            return
+
+        # 全屏 overlay
+        ov = tk.Toplevel(self.root)
+        ov.overrideredirect(True)
+        ov.attributes('-topmost', True)
+        ov.attributes('-alpha', 1.0)
+        ov.geometry(f'{sw}x{sh}+0+0')
+        cv_ov = tk.Canvas(ov, width=sw, height=sh,
+                          highlightthickness=0, bg='black')
+        cv_ov.pack(fill=tk.BOTH, expand=True)
+        photo = ImageTk.PhotoImage(distorted)
+        cv_ov.create_image(0, 0, image=photo, anchor='nw')
+        cv_ov._photo = photo  # 防止 GC
+
+        # ease-in 渐隐: 开始快, 收尾慢 (0.9s 内全透明)
+        t0 = time.time()
+        dur = 0.90
+
+        def _fade():
+            elapsed = time.time() - t0
+            if elapsed >= dur:
+                try:
+                    ov.destroy()
+                except Exception:
+                    pass
+                return
+            a = max(0.0, 1.0 - (elapsed / dur) ** 0.6)
+            try:
+                ov.attributes('-alpha', a)
+            except Exception:
+                pass
+            self.root.after(16, _fade)
+
+        _fade()
+
     def _play_link_start(self):
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
@@ -1742,19 +2198,50 @@ class SAOPlayerGUI:
         fy_start = sh // 2 + 80   # 略低于中心 (文字下方)
 
         def on_done():
-            # 定位到中央, 显示, 然后滑动到目标位置
+            # 主界面从屏幕中心弹出, 带缩放 + 渐显动画
             self._float.geometry(f'{self._fw}x{self._fh}+{fx_start}+{fy_start}')
+            self._float.attributes('-alpha', 0.0)
             self._float.deiconify()
             self._float.lift()
-            self._animate_float_to(fx_start, fy_start, fx_final, fy_final, ms=750)
-            # 滑动完成后启动呼吸, 再自动打开菜单
-            self._breath_base_x = fx_final
-            self._breath_base_y = fy_final
-            self.root.after(800, self._start_float_breath)
-            self.root.after(1150, self._toggle_sao_menu)
-            # 恢复上次打开的浮动面板
-            self.root.after(1600, self._restore_panels)
 
+            # 阶段1: 渐显 + 从小到大缩放 (0~400ms)
+            # 阶段2: 滑动到目标位置 (400~1100ms)
+            anim_start = time.time()
+
+            def entrance_tick():
+                if not self._float.winfo_exists():
+                    return
+                dt = time.time() - anim_start
+                if dt < 0.4:
+                    # 渐显
+                    t = ease_out(dt / 0.4)
+                    al = t * 0.95
+                    try:
+                        self._float.attributes('-alpha', al)
+                    except Exception:
+                        pass
+                    self.root.after(16, entrance_tick)
+                elif dt < 0.45:
+                    # 确保完全可见, 开始滑动
+                    try:
+                        self._float.attributes('-alpha', 0.95)
+                    except Exception:
+                        pass
+                    self._animate_float_to(fx_start, fy_start,
+                                           fx_final, fy_final, ms=700)
+                    # 后续动画
+                    self._breath_base_x = fx_final
+                    self._breath_base_y = fy_final
+                    self.root.after(750, self._start_float_breath)
+                    # 鱼眼叠加层由 _on_sao_menu_open 渐显启动, 不再使用 _run_fisheye_entry
+                    self.root.after(1100, self._toggle_sao_menu)
+                    self.root.after(1600, self._restore_panels)
+                    return
+                else:
+                    return
+            entrance_tick()
+
+        # Canvas 渲染 (SAO-UI 隧道模型)
         ls = SAOLinkStart(self.root, on_done=on_done)
         ls.play()
 
@@ -2138,7 +2625,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv2.2.0\n\n"
+            "咲 Midi Player  SAO Edition\nv3.1.0+3100\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
