@@ -309,7 +309,7 @@ def get_icon_path():
 class CustomTitleBar(tk.Frame):
     """自定义无边框窗口标题栏 - 扁平暗色设计"""
 
-    def __init__(self, parent, root, title="咲 Midi Player", version="v2.1.0+2100",
+    def __init__(self, parent, root, title="咲 Midi Player", version="v2.2.0+2200",
                  on_close=None, **kwargs):
         super().__init__(parent, bg=ModernColors.TITLEBAR, height=36, **kwargs)
         self.root = root
@@ -1879,8 +1879,8 @@ class ControlPanel(tk.Frame):
         # === 第六行：通道 + 选项 ===
         row6 = tk.Frame(self, bg=ModernColors.BG_CARD)
         row6.pack(fill=tk.X, padx=12, pady=(0, 6))
-        self.channel_btn = SmoothButton(row6, text="通道设置", command=self._show_channel_settings,
-                                        width=90, height=28, bg=ModernColors.BTN_SECONDARY, font_size=9)
+        self.channel_btn = SmoothButton(row6, text="MIDI控制", command=self._show_channel_settings,
+                                        width=90, height=28, bg=ModernColors.ACCENT_PURPLE, font_size=9)
         self.channel_btn.pack(side=tk.LEFT)
         self.channel_info_label = tk.Label(row6, text="加载文件后可设置",
                                            bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_SECONDARY,
@@ -1917,6 +1917,7 @@ class ControlPanel(tk.Frame):
         self.player.set_bass_density(saved_density)
 
     def _show_channel_settings(self):
+        """打开 MIDI 控制器界面（通道/乐器/音符控制 + 钢琴键盘 + 预览播放）"""
         if not self.player.parser.notes:
             ThemedDialog.showwarning(self.winfo_toplevel(), "提示", "请先加载MIDI文件")
             return
@@ -1924,120 +1925,31 @@ class ControlPanel(tk.Frame):
         if not channels_info:
             ThemedDialog.showinfo(self.winfo_toplevel(), "提示", "该MIDI文件没有音符数据")
             return
-        dialog = tk.Toplevel(self)
-        dialog.title("通道设置")
-        dialog.geometry("450x400")
-        dialog.configure(bg=ModernColors.BG_DARK)
-        dialog.transient(self.winfo_toplevel())
-        dialog.grab_set()
-        title = tk.Label(dialog, text="分通道移调设置", bg=ModernColors.BG_DARK,
-                         fg=ModernColors.TEXT_PRIMARY, font=('Microsoft YaHei UI', 14, 'bold'))
-        title.pack(pady=15)
-        hint = tk.Label(dialog, text="为每个MIDI通道单独设置移调值，可以禁用不需要的通道",
-                        bg=ModernColors.BG_DARK, fg=ModernColors.TEXT_SECONDARY,
-                        font=('Microsoft YaHei UI', 9))
-        hint.pack(pady=(0, 10))
-        canvas = tk.Canvas(dialog, bg=ModernColors.BG_DARK, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
-        scroll_frame = tk.Frame(canvas, bg=ModernColors.BG_DARK)
-        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        channel_vars = {}
-        for ch in sorted(channels_info.keys()):
-            info = channels_info[ch]
-            frame = tk.Frame(scroll_frame, bg=ModernColors.BG_CARD)
-            frame.pack(fill=tk.X, pady=5, padx=5)
-            enabled_var = tk.BooleanVar(value=self.player.mapper.is_channel_enabled(ch))
-            enabled_cb = tk.Checkbutton(frame, text=f"CH{ch}", variable=enabled_var,
-                                        bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_PRIMARY,
-                                        selectcolor=ModernColors.BG_INPUT,
-                                        font=('Microsoft YaHei UI', 10, 'bold'), width=5)
-            enabled_cb.pack(side=tk.LEFT, padx=5)
-            note_range = info['note_range']
-            info_text = f"音符: {info['note_count']}个  范围: {note_range[0]}-{note_range[1]}"
-            info_label = tk.Label(frame, text=info_text, bg=ModernColors.BG_CARD,
-                                  fg=ModernColors.TEXT_SECONDARY, font=('Microsoft YaHei UI', 9),
-                                  width=25, anchor='w')
-            info_label.pack(side=tk.LEFT, padx=5)
-            tk.Label(frame, text="移调:", bg=ModernColors.BG_CARD,
-                     fg=ModernColors.TEXT_PRIMARY, font=('Microsoft YaHei UI', 9)).pack(side=tk.LEFT)
-            transpose_var = tk.IntVar(value=self.player.mapper.get_channel_transpose(ch))
-            transpose_spin = tk.Spinbox(frame, from_=-48, to=48, width=4,
-                                        textvariable=transpose_var,
-                                        font=('Microsoft YaHei UI', 10),
-                                        bg=ModernColors.BG_INPUT, fg=ModernColors.TEXT_PRIMARY,
-                                        relief=tk.FLAT)
-            transpose_spin.pack(side=tk.LEFT, padx=5)
-            def auto_suggest(channel=ch, var=transpose_var, info=info):
-                notes = [n.note for n in self.player.parser.get_notes_by_channel(channel)]
-                if notes:
-                    avg_note = info['avg_note']
-                    if avg_note >= 72:
-                        target = 'high'
-                    elif avg_note >= 60:
-                        target = 'mid'
-                    else:
-                        target = 'low'
-                    suggested = self.player.mapper.suggest_channel_transpose(notes, target)
-                    var.set(suggested)
-            auto_btn = tk.Button(frame, text="自动", command=auto_suggest,
-                                 bg=ModernColors.BTN_SECONDARY, fg=ModernColors.TEXT_BRIGHT,
-                                 font=('Microsoft YaHei UI', 8), relief=tk.FLAT, padx=5, pady=2)
-            auto_btn.pack(side=tk.LEFT, padx=5)
-            def set_high(channel=ch, var=transpose_var):
-                notes = [n.note for n in self.player.parser.get_notes_by_channel(channel)]
-                if notes:
-                    var.set(self.player.mapper.suggest_channel_transpose(notes, 'high'))
-            def set_mid(channel=ch, var=transpose_var):
-                notes = [n.note for n in self.player.parser.get_notes_by_channel(channel)]
-                if notes:
-                    var.set(self.player.mapper.suggest_channel_transpose(notes, 'mid'))
-            def set_low(channel=ch, var=transpose_var):
-                notes = [n.note for n in self.player.parser.get_notes_by_channel(channel)]
-                if notes:
-                    var.set(self.player.mapper.suggest_channel_transpose(notes, 'low'))
-            tk.Button(frame, text="高", command=set_high, bg=ModernColors.ACCENT_RED,
-                      fg=ModernColors.TEXT_BRIGHT, font=('Microsoft YaHei UI', 7),
-                      relief=tk.FLAT, width=2).pack(side=tk.LEFT, padx=1)
-            tk.Button(frame, text="中", command=set_mid, bg=ModernColors.ACCENT_BLUE,
-                      fg=ModernColors.TEXT_BRIGHT, font=('Microsoft YaHei UI', 7),
-                      relief=tk.FLAT, width=2).pack(side=tk.LEFT, padx=1)
-            tk.Button(frame, text="低", command=set_low, bg=ModernColors.ACCENT_GREEN,
-                      fg=ModernColors.TEXT_BRIGHT, font=('Microsoft YaHei UI', 7),
-                      relief=tk.FLAT, width=2).pack(side=tk.LEFT, padx=1)
-            channel_vars[ch] = {'enabled': enabled_var, 'transpose': transpose_var}
-        btn_frame = tk.Frame(dialog, bg=ModernColors.BG_DARK)
-        btn_frame.pack(fill=tk.X, pady=15, padx=20)
-        def apply_settings():
-            for ch, vars in channel_vars.items():
-                self.player.mapper.set_channel_enabled(ch, vars['enabled'].get())
-                self.player.mapper.set_channel_transpose(ch, vars['transpose'].get())
-            ch_settings = {}
-            for ch, vars in channel_vars.items():
-                ch_settings[str(ch)] = {
-                    'enabled': vars['enabled'].get(),
-                    'transpose': vars['transpose'].get()
-                }
-            self.settings.set('channel_settings', ch_settings)
-            enabled_count = sum(1 for ch in channel_vars if channel_vars[ch]['enabled'].get())
-            total_count = len(channel_vars)
-            self.channel_info_label.configure(text=f"已启用 {enabled_count}/{total_count} 个通道")
-            dialog.destroy()
-            ThemedDialog.showinfo(self.winfo_toplevel(), "完成", "通道设置已应用并保存")
-        def reset_all():
-            self.player.mapper.clear_channel_settings()
-            for ch, vars in channel_vars.items():
-                vars['enabled'].set(True)
-                vars['transpose'].set(self.player.mapper.transpose)
-        apply_btn = SmoothButton(btn_frame, text="应用", command=apply_settings,
-                                 width=80, height=32, bg=ModernColors.BTN_PRIMARY, font_size=10)
-        apply_btn.pack(side=tk.RIGHT, padx=5)
-        reset_btn = SmoothButton(btn_frame, text="重置", command=reset_all,
-                                 width=80, height=32, bg=ModernColors.BTN_SECONDARY, font_size=10)
-        reset_btn.pack(side=tk.RIGHT, padx=5)
+
+        from midi_controller import MIDIControllerDialog
+        midi_path = getattr(self, '_current_file', '')
+        MIDIControllerDialog(
+            parent=self.winfo_toplevel(),
+            player=self.player,
+            settings=self.settings,
+            midi_path=midi_path,
+            on_apply=self._on_midi_controller_apply,
+        )
+
+    def _on_midi_controller_apply(self, result: dict):
+        """MIDI 控制器应用回调 — 同步 GUI 控件"""
+        # 同步移调
+        gt = result.get('global_transpose')
+        if gt is not None:
+            self.transpose_var.set(gt)
+            self.player.set_transpose(gt)
+
+        # 更新通道信息标签
+        ch_cfg = result.get('channel_config', {})
+        if ch_cfg:
+            enabled = sum(1 for v in ch_cfg.values() if v.get('enabled', True))
+            total = len(ch_cfg)
+            self.channel_info_label.configure(text=f"已启用 {enabled}/{total} 个通道")
 
     def _ask_open_file(self):
         """内置主题文件选择器"""
@@ -2360,7 +2272,7 @@ class ControlPanel(tk.Frame):
         self.settings.set('song_settings', all_song)
 
     def _restore_song_settings(self, filepath):
-        """加载歌曲时恢复已保存的音部/密度设置，返回是否有保存记录"""
+        """加载歌曲时恢复已保存的音部/密度/通道设置，返回是否有保存记录"""
         key = os.path.abspath(filepath)
         all_song = self.settings.get('song_settings', {})
         if key not in all_song:
@@ -2372,6 +2284,16 @@ class ControlPanel(tk.Frame):
         self.bass_density_var.set(density)
         self.bass_density_label.configure(text=f"{density:.0%}")
         self.player.set_bass_density(density)
+
+        # 恢复通道配置 (来自 MIDI 控制器的歌曲设置)
+        ch_cfg = saved.get('channel_config')
+        if ch_cfg:
+            from midi_controller import load_song_channel_settings
+            load_song_channel_settings(self.settings, self.player, filepath)
+            enabled = sum(1 for v in ch_cfg.values() if v.get('enabled', True))
+            total = len(ch_cfg)
+            self.channel_info_label.configure(text=f"已启用 {enabled}/{total} 个通道")
+
         return True
 
     def _on_part_toggle(self):
@@ -3177,6 +3099,9 @@ class MidiPlayerGUI:
 
         self.is_topmost = False
         self.settings = SettingsManager()
+        # 恢复主题 (在创建 UI 之前应用，使所有控件使用正确颜色)
+        _saved_theme = self.settings.get('theme', 'dark')
+        ModernColors.apply_theme(_saved_theme)
         self.player = MidiPlayer()
         # 从设置中恢复模式系统
         saved_mode_system = self.settings.get('mode_system', 'classic')
@@ -3246,7 +3171,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                                        title="咲 Midi Player", version="v2.1.0+2100",
+                                        title="咲 Midi Player", version="v2.2.0+2200",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 
@@ -3272,7 +3197,8 @@ class MidiPlayerGUI:
                                         width=55, height=22, bg=ModernColors.BTN_SECONDARY, font_size=8)
         self.topmost_btn.pack(side=tk.RIGHT)
 
-        self.theme_btn = SmoothButton(toolbar, text="Light SE", command=self._toggle_theme,
+        self.theme_btn = SmoothButton(toolbar, text="Dark SE" if _current_theme == 'light' else "Light SE",
+                                      command=self._toggle_theme,
                                       width=70, height=22, bg=ModernColors.BTN_SECONDARY, font_size=8)
         self.theme_btn.pack(side=tk.RIGHT, padx=(0, 6))
 
@@ -3453,6 +3379,7 @@ class MidiPlayerGUI:
         new_theme = ModernColors.toggle_theme()
         label = "Dark SE" if new_theme == 'light' else "Light SE"
         self.theme_btn.set_text(label)
+        self.settings.set('theme', new_theme)
         self._refresh_all_colors()
 
     def _refresh_all_colors(self):

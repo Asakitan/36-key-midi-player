@@ -8,3 +8,12 @@ keyboard>=0.13.5
 # pynput>=1.7.6  # 备选方案
 
 # GUI (Python自带tkinter，通常不需要安装)
+
+# === MIDI 预览播放器 (可选，提供更好的音色) ===
+# FluidSynth Python 绑定 (需要系统安装 FluidSynth)
+# pip install pyfluidsynth
+# 还需要一个 .sf2 SoundFont 文件放在程序目录下的 soundfont/ 文件夹中
+# 推荐: GeneralUser GS (https://schristiancollins.com/generaluser.php)
+
+# Pygame 回退方案 (使用系统MIDI合成器)
+# pip install pygame

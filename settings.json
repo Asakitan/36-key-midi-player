@@ -20,5 +20,13 @@
   },
   "direct_c_mode": false,
   "proficiency_enabled": false,
-  "mode_system": "classic"
+  "mode_system": "classic",
+  "channel_settings": {
+    "0": {
+      "enabled": true,
+      "transpose": 0
+    }
+  },
+  "theme": "light",
+  "soundfont_path": "E:\\VC\\28midi\\soundfonts\\GeneralUser-GS.sf2"
 }
