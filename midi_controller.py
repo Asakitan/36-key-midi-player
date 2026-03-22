@@ -1956,9 +1956,16 @@ class MIDIControllerDialog(tk.Toplevel):
         canvas.configure(yscrollcommand=sb.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.bind_all('<MouseWheel>',
-                        lambda e: canvas.yview_scroll(
-                            int(-1 * e.delta / 120), 'units'), add='+')
+
+        def _on_scroll(e):
+            try:
+                if canvas.winfo_exists():
+                    canvas.yview_scroll(int(-1 * e.delta / 120), 'units')
+            except Exception:
+                pass
+
+        canvas.bind_all('<MouseWheel>', _on_scroll, add='+')
+        canvas.bind('<Destroy>', lambda e: canvas.unbind_all('<MouseWheel>'))
 
         channels_info = {}
         instrument_info = {}

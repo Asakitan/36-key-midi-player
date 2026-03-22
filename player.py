@@ -799,8 +799,8 @@ class MidiPlayer:
         else:
             TARGET_MIN = 36     # C2 (classic含CTRL)
             TARGET_MAX = 95     # B6
-        # 使用可弹奏范围的真实中心（不偏向任何音区）
-        PREFERRED_CENTER = (TARGET_MIN + TARGET_MAX) / 2.0
+        # 固定目标中心为 F4 (MIDI 65) — 最适合人声/主旋律演奏区
+        PREFERRED_CENTER = 65.0
         
         note_center = (min(notes) + max(notes)) / 2
         
@@ -864,8 +864,8 @@ class MidiPlayer:
         original_range = original_max - original_min
         
         # === 计算最佳八度偏移 ===
-        # 使用可弹奏范围的真实中心（对称，不偏向任何音区）
-        PREFERRED_CENTER = (GAME_MIN + GAME_MAX) / 2.0
+        # 固定目标中心为 F4 (MIDI 65) — 人声/旋律演奏最佳区
+        PREFERRED_CENTER = 65.0
         game_span = GAME_MAX - GAME_MIN
         
         best_offset = 0

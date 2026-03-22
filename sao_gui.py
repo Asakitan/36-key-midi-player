@@ -648,6 +648,7 @@ class SAOPlayerGUI:
         self._piano_panel = None   # 浮动钢琴面板
         self._viz_panel = None     # 浮动可视化面板
         self._status_panel = None  # 浮动状态面板
+        self._control_panel = None # 浮动控制面板
         self._mini_piano = None
         self._visualizer = None
         self._lift_loop_active = False
@@ -854,6 +855,7 @@ class SAOPlayerGUI:
         self._float_ctx.add_command(label='⌨ 钢琴面板', command=self._toggle_piano_panel)
         self._float_ctx.add_command(label='≡ 可视化', command=self._toggle_viz_panel)
         self._float_ctx.add_command(label='◉ 状态面板', command=self._toggle_status_panel)
+        self._float_ctx.add_command(label='⚙ 控制面板', command=self._toggle_control_panel)
         self._float_ctx.add_separator()
         self._float_ctx.add_command(label='↺ 切换到 Old UI', command=self._switch_to_old_ui)
         self._float_ctx.add_command(label='✕ 退出', command=self._on_close)
@@ -1099,6 +1101,7 @@ class SAOPlayerGUI:
                 {'icon': '⌨', 'label': '钢琴面板', 'command': self._toggle_piano_panel},
                 {'icon': '≡', 'label': '可视化面板', 'command': self._toggle_viz_panel},
                 {'icon': '◉', 'label': '状态面板  (延音/模式)', 'command': self._toggle_status_panel},
+                {'icon': '⚙', 'label': '控制面板  (音部/速度/移调)', 'command': self._toggle_control_panel},
                 {'icon': '⊤', 'label': '滑音: ' + ('ON' if self._glissando else 'OFF'), 'command': self._toggle_glissando},
             ],
             '关于': [
@@ -1179,6 +1182,7 @@ class SAOPlayerGUI:
             for name, items in children.items():
                 self._sao_menu.refresh_child_menu(name, items)
         self._update_float_status()
+        self._update_control_panel()
 
     # ══════════════════════════════════════════════
     #  浮动面板: 钢琴 / 可视化
@@ -1472,6 +1476,240 @@ class SAOPlayerGUI:
     # ══════════════════════════════════════════════
     #  LINK START 入场
     # ══════════════════════════════════════════════
+    def _toggle_control_panel(self):
+        """浮动控制面板 — 音部/速度/移调/选项全览"""
+        if self._control_panel and self._control_panel.winfo_exists():
+            self._control_panel.destroy()
+            self._control_panel = None
+            self.settings.set('show_control', False)
+            self.settings.save()
+            return
+
+        PW, PH = 295, 305
+        _dfx = self._float.winfo_x() - PW - 10
+        _dfy = self._float.winfo_y()
+        fx = int(self.settings.get('ctrl_x', _dfx))
+        fy = int(self.settings.get('ctrl_y', _dfy))
+        sw2, sh2 = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        fx = max(0, min(fx, sw2 - PW))
+        fy = max(0, min(fy, sh2 - PH))
+
+        self._control_panel = tk.Toplevel(self.root)
+        self._control_panel.overrideredirect(True)
+        self._control_panel.attributes('-topmost', True)
+        self._control_panel.attributes('-alpha', 0.0)
+        self._control_panel.geometry(f'{PW}x{PH}+{fx}+{fy}')
+        self._control_panel.configure(bg='#ffffff')
+        _apply_panel_style(self._control_panel)
+
+        border = tk.Frame(self._control_panel, bg='#d1d1d6', padx=1, pady=1)
+        border.pack(fill=tk.BOTH, expand=True)
+        inner = tk.Frame(border, bg='#ffffff')
+        inner.pack(fill=tk.BOTH, expand=True)
+
+        # 标题栏
+        hdr = tk.Frame(inner, bg='#f5f5f7', height=24)
+        hdr.pack(fill=tk.X)
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text='⚙ 控制面板', bg='#f5f5f7', fg='#646364',
+                 font=('Segoe UI', 8, 'bold')).pack(side=tk.LEFT, padx=8)
+        close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
+                              font=('Consolas', 11), cursor='hand2')
+        close_lbl.pack(side=tk.RIGHT, padx=6)
+        close_lbl.bind('<Button-1>', lambda e: self._toggle_control_panel())
+        _cd = {'x': 0, 'y': 0}
+        def cdstart(e): _cd['x'], _cd['y'] = e.x_root, e.y_root
+        def cdmove(e):
+            dx, dy = e.x_root - _cd['x'], e.y_root - _cd['y']
+            nx, ny = self._control_panel.winfo_x()+dx, self._control_panel.winfo_y()+dy
+            self._control_panel.geometry(f'+{nx}+{ny}')
+            _cd['x'], _cd['y'] = e.x_root, e.y_root
+            self.settings.set('ctrl_x', nx); self.settings.set('ctrl_y', ny)
+        hdr.bind('<Button-1>', cdstart); hdr.bind('<B1-Motion>', cdmove)
+
+        tk.Frame(inner, bg='#e0e0e0', height=1).pack(fill=tk.X)
+        body = tk.Frame(inner, bg='#ffffff')
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+
+        # ── pill 切换按钮辅助 ──
+        def pill(parent, text, active, command):
+            lbl = tk.Label(parent, text=text,
+                           bg='#f3af12' if active else '#eeeeee',
+                           fg='#ffffff' if active else '#999999',
+                           font=('Microsoft YaHei UI', 8, 'bold'),
+                           padx=8, pady=2, cursor='hand2', relief=tk.FLAT)
+            lbl.bind('<Button-1>', lambda e: command())
+            return lbl
+
+        # ── 键位模式 ──
+        row_mode = tk.Frame(body, bg='#ffffff')
+        row_mode.pack(fill=tk.X, pady=(2, 3))
+        tk.Label(row_mode, text='键位', bg='#ffffff', fg='#999999',
+                 font=('Segoe UI', 8), width=5, anchor='w').pack(side=tk.LEFT)
+        cur_mode = self.settings.get('mode_system', 'classic')
+        p60 = pill(row_mode, '60键 CTRL/SHIFT', cur_mode == 'classic',  lambda: self._set_mode('classic'))
+        p60.pack(side=tk.LEFT, padx=(0, 4))
+        p88 = pill(row_mode, '88键 </>',        cur_mode == 'extended', lambda: self._set_mode('extended'))
+        p88.pack(side=tk.LEFT)
+        self._control_panel._mode_pills = (p60, p88)
+
+        tk.Frame(body, bg='#eeeeee', height=1).pack(fill=tk.X, pady=4)
+
+        # ── 音部控制 ──
+        row_part = tk.Frame(body, bg='#ffffff')
+        row_part.pack(fill=tk.X, pady=2)
+        tk.Label(row_part, text='音部', bg='#ffffff', fg='#999999',
+                 font=('Segoe UI', 8), width=5, anchor='w').pack(side=tk.LEFT)
+        pm = pill(row_part, '✓ 主旋律' if self._melody_on else '✗ 主旋律', self._melody_on, self._toggle_melody)
+        pm.pack(side=tk.LEFT, padx=(0, 4))
+        pb = pill(row_part, '✓ 低音部' if self._bass_on else '✗ 低音部', self._bass_on, self._toggle_bass)
+        pb.pack(side=tk.LEFT)
+        self._control_panel._part_pills = (pm, pb)
+
+        # ── 伴奏密度 ──
+        row_dens = tk.Frame(body, bg='#ffffff')
+        row_dens.pack(fill=tk.X, pady=2)
+        tk.Label(row_dens, text='伴奏密度', bg='#ffffff', fg='#999999',
+                 font=('Segoe UI', 8), anchor='w').pack(side=tk.LEFT)
+        dens_var = tk.DoubleVar(value=self._bass_density)
+        dens_scale = tk.Scale(row_dens, from_=0.2, to=1.0, resolution=0.1,
+                              orient=tk.HORIZONTAL, variable=dens_var,
+                              bg='#ffffff', fg='#646364', troughcolor='#e8e8e8',
+                              highlightthickness=0, bd=0, length=100, sliderlength=14,
+                              width=10, showvalue=False,
+                              command=lambda v: self._set_bass_density_direct(float(v)))
+        dens_scale.pack(side=tk.LEFT, padx=(6, 2))
+        dens_lbl = tk.Label(row_dens, text=f'{self._bass_density:.0%}', bg='#ffffff',
+                             fg='#333333', font=('Consolas', 9), width=4)
+        dens_lbl.pack(side=tk.LEFT)
+        self._control_panel._dens_var = dens_var
+        self._control_panel._dens_lbl = dens_lbl
+
+        tk.Frame(body, bg='#eeeeee', height=1).pack(fill=tk.X, pady=4)
+
+        # ── 速度 ──
+        row_spd = tk.Frame(body, bg='#ffffff')
+        row_spd.pack(fill=tk.X, pady=2)
+        tk.Label(row_spd, text='速度', bg='#ffffff', fg='#999999',
+                 font=('Segoe UI', 8), width=5, anchor='w').pack(side=tk.LEFT)
+        btn_sm = tk.Label(row_spd, text='−', bg='#eeeeee', fg='#646364',
+                          font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
+        btn_sm.pack(side=tk.LEFT)
+        btn_sm.bind('<Button-1>', lambda e: self._speed_down())
+        spd_lbl = tk.Label(row_spd, text=f'{self._speed:.2f}×', bg='#ffffff',
+                            fg='#333333', font=('Consolas', 10), width=6)
+        spd_lbl.pack(side=tk.LEFT, padx=4)
+        btn_sp = tk.Label(row_spd, text='+', bg='#eeeeee', fg='#646364',
+                          font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
+        btn_sp.pack(side=tk.LEFT)
+        btn_sp.bind('<Button-1>', lambda e: self._speed_up())
+        self._control_panel._spd_lbl = spd_lbl
+
+        # ── 移调 ──
+        row_tr = tk.Frame(body, bg='#ffffff')
+        row_tr.pack(fill=tk.X, pady=2)
+        tk.Label(row_tr, text='移调', bg='#ffffff', fg='#999999',
+                 font=('Segoe UI', 8), width=5, anchor='w').pack(side=tk.LEFT)
+        btn_tm = tk.Label(row_tr, text='−', bg='#eeeeee', fg='#646364',
+                          font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
+        btn_tm.pack(side=tk.LEFT)
+        btn_tm.bind('<Button-1>', lambda e: self._transpose_down())
+        tr_lbl = tk.Label(row_tr, text=f'{self._transpose:+d} 半音', bg='#ffffff',
+                           fg='#333333', font=('Consolas', 10), width=7)
+        tr_lbl.pack(side=tk.LEFT, padx=4)
+        btn_tp = tk.Label(row_tr, text='+', bg='#eeeeee', fg='#646364',
+                          font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
+        btn_tp.pack(side=tk.LEFT)
+        btn_tp.bind('<Button-1>', lambda e: self._transpose_up())
+        btn_rst = tk.Label(row_tr, text='重置', bg='#eeeeee', fg='#646364',
+                           font=('Segoe UI', 8), padx=6, pady=2, cursor='hand2')
+        btn_rst.pack(side=tk.LEFT, padx=(6, 0))
+        btn_rst.bind('<Button-1>', lambda e: self._auto_transpose())
+        self._control_panel._tr_lbl = tr_lbl
+
+        tk.Frame(body, bg='#eeeeee', height=1).pack(fill=tk.X, pady=4)
+
+        # ── 选项行 1 ──
+        row_opt1 = tk.Frame(body, bg='#ffffff')
+        row_opt1.pack(fill=tk.X, pady=2)
+        dc_lbl = pill(row_opt1, 'C调直转 ✓' if self._direct_c else 'C调直转',
+                      self._direct_c, self._toggle_direct_c)
+        dc_lbl.pack(side=tk.LEFT, padx=(0, 6))
+        pf_lbl = pill(row_opt1, '熟练度 ✓' if self._proficiency_enabled else '熟练度',
+                      self._proficiency_enabled, self._toggle_proficiency)
+        pf_lbl.pack(side=tk.LEFT)
+        self._control_panel._dc_lbl = dc_lbl
+        self._control_panel._pf_lbl = pf_lbl
+
+        # ── 选项行 2 ──
+        row_opt2 = tk.Frame(body, bg='#ffffff')
+        row_opt2.pack(fill=tk.X, pady=2)
+        gl_lbl = pill(row_opt2, '结尾滑奏 ✓' if self._glissando else '结尾滑奏',
+                      self._glissando, self._toggle_glissando)
+        gl_lbl.pack(side=tk.LEFT, padx=(0, 6))
+        midi_btn = tk.Label(row_opt2, text='MIDI通道…', bg='#eeeeee', fg='#646364',
+                            font=('Segoe UI', 8), padx=8, pady=2, cursor='hand2')
+        midi_btn.pack(side=tk.LEFT)
+        midi_btn.bind('<Button-1>', lambda e: self._show_channel_settings())
+        self._control_panel._gl_lbl = gl_lbl
+
+        self._fade_panel_in(self._control_panel, target=0.95)
+        self.settings.set('show_control', True)
+        self.settings.save()
+
+    def _update_control_panel(self):
+        """刷新控制面板所有动态显示"""
+        p = self._control_panel
+        if p is None or not p.winfo_exists():
+            return
+        if hasattr(p, '_spd_lbl'):
+            p._spd_lbl.configure(text=f'{self._speed:.2f}×')
+        if hasattr(p, '_tr_lbl'):
+            p._tr_lbl.configure(text=f'{self._transpose:+d} 半音')
+        if hasattr(p, '_dens_lbl'):
+            p._dens_lbl.configure(text=f'{self._bass_density:.0%}')
+        if hasattr(p, '_dens_var'):
+            p._dens_var.set(self._bass_density)
+        if hasattr(p, '_part_pills'):
+            pm, pb = p._part_pills
+            pm.configure(bg='#f3af12' if self._melody_on else '#eeeeee',
+                         fg='#ffffff' if self._melody_on else '#999999',
+                         text='✓ 主旋律' if self._melody_on else '✗ 主旋律')
+            pb.configure(bg='#f3af12' if self._bass_on else '#eeeeee',
+                         fg='#ffffff' if self._bass_on else '#999999',
+                         text='✓ 低音部' if self._bass_on else '✗ 低音部')
+        if hasattr(p, '_mode_pills'):
+            p60, p88 = p._mode_pills
+            cur = self.settings.get('mode_system', 'classic')
+            p60.configure(bg='#f3af12' if cur == 'classic' else '#eeeeee',
+                          fg='#ffffff' if cur == 'classic' else '#999999')
+            p88.configure(bg='#f3af12' if cur == 'extended' else '#eeeeee',
+                          fg='#ffffff' if cur == 'extended' else '#999999')
+        if hasattr(p, '_dc_lbl'):
+            p._dc_lbl.configure(
+                text='C调直转 ✓' if self._direct_c else 'C调直转',
+                bg='#f3af12' if self._direct_c else '#eeeeee',
+                fg='#ffffff' if self._direct_c else '#999999')
+        if hasattr(p, '_pf_lbl'):
+            p._pf_lbl.configure(
+                text='熟练度 ✓' if self._proficiency_enabled else '熟练度',
+                bg='#f3af12' if self._proficiency_enabled else '#eeeeee',
+                fg='#ffffff' if self._proficiency_enabled else '#999999')
+        if hasattr(p, '_gl_lbl'):
+            p._gl_lbl.configure(
+                text='结尾滑奏 ✓' if self._glissando else '结尾滑奏',
+                bg='#f3af12' if self._glissando else '#eeeeee',
+                fg='#ffffff' if self._glissando else '#999999')
+
+    def _set_bass_density_direct(self, val: float):
+        """直接设置伴奏密度 (由控制面板滑块调用)"""
+        self._bass_density = round(val, 1)
+        self.player.set_bass_density(self._bass_density)
+        if self._control_panel and self._control_panel.winfo_exists():
+            if hasattr(self._control_panel, '_dens_lbl'):
+                self._control_panel._dens_lbl.configure(text=f'{self._bass_density:.0%}')
+        self._refresh_menu_if_open()
+
     def _restore_panels(self):
         """恢复上次会话中打开的浮动面板"""
         if self.settings.get('show_piano', False):
@@ -1483,6 +1721,9 @@ class SAOPlayerGUI:
         if self.settings.get('show_status', False):
             if not (self._status_panel and self._status_panel.winfo_exists()):
                 self._toggle_status_panel()
+        if self.settings.get('show_control', False):
+            if not (self._control_panel and self._control_panel.winfo_exists()):
+                self._toggle_control_panel()
 
     def _play_link_start(self):
         sw = self.root.winfo_screenwidth()

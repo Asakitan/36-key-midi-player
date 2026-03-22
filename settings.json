@@ -6,7 +6,7 @@
     "speed_down": "F8",
     "toggle_topmost": "F9"
   },
-  "last_file": "E:\\弹琴\\自选\\Magia.mid",
+  "last_file": "E:\\弹琴\\自选\\LaVI-Bavellabion.mid",
   "speed": 1.0,
   "transpose": -6,
   "chord_mode": true,
@@ -42,5 +42,8 @@
   "status_x": 1109,
   "status_y": 132,
   "viz_x": 384,
-  "viz_y": 131
+  "viz_y": 131,
+  "show_control": true,
+  "ctrl_x": 1353,
+  "ctrl_y": 131
 }
