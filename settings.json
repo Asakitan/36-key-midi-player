@@ -6,9 +6,9 @@
     "speed_down": "F8",
     "toggle_topmost": "F9"
   },
-  "last_file": "E:\\弹琴\\自选\\LaVI-Bavellabion.mid",
+  "last_file": "E:\\弹琴\\自选\\06329-目标是神奇宝贝大师-神奇宝贝OP.mid",
   "speed": 1.0,
-  "transpose": -6,
+  "transpose": 0,
   "chord_mode": true,
   "ui_mode": "sao",
   "bass_density": 1.0,
@@ -44,6 +44,6 @@
   "viz_x": 384,
   "viz_y": 131,
   "show_control": true,
-  "ctrl_x": 1353,
+  "ctrl_x": 1344,
   "ctrl_y": 131
 }

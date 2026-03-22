@@ -1251,19 +1251,19 @@ class SAOHPBar(tk.Canvas):
 # ──────────────────── LINK START 动画 ────────────────────
 class SAOLinkStart:
     """
-    LINK START 高品质粒子入场动画
-    - Phase 0 (0~0.6s): 黑屏 → 中心出现微弱光点
-    - Phase 1 (0.6~1.8s): 速度线从中心向外辐射, 逐渐加速
-    - Phase 2 (1.8~2.8s): 彩色粒子爆发扩散, 粒子有拖尾
-    - Phase 3 (2.8~3.8s): "LINK START" 逐字出现 + 光芒效果
-    - Phase 4 (3.8~4.5s): 一切聚拢到中心 → 闪白 → 渐隐
+    LINK START 高品质粒子入场动画 v2
+    - Phase 0 (0~0.7s):  黑屏 → 中心脉冲光点
+    - Phase 1 (0.4~3.0s): 速度隧道 — 大量蓝白速度线向外飞射 (速度感拖尾)
+    - Phase 2 (1.8~4.2s): 彩色粒子爆发, 长拖尾 (lookback 算法)
+    - Phase 3 (3.4~5.4s): "LINK START" 逐字出现 + 光芒效果
+    - Phase 4 (5.0~5.8s): 白闪脉冲 → ease_in_out 平滑渐隐
     """
 
     def __init__(self, root: tk.Tk, on_done: Optional[Callable] = None):
         self.root = root
         self.on_done = on_done
         self._overlay = None
-        self._DURATION = 4.5
+        self._DURATION = 5.8
 
     def play(self):
         sw = self.root.winfo_screenwidth()
@@ -1274,7 +1274,7 @@ class SAOLinkStart:
         self._overlay.attributes('-topmost', True)
         self._overlay.geometry(f'{sw}x{sh}+0+0')
         self._overlay.configure(bg='#000000')
-        self._overlay.attributes('-alpha', 0.9)  # 半透明, 可以看到背后
+        self._overlay.attributes('-alpha', 0.95)
 
         self._canvas = tk.Canvas(self._overlay, width=sw, height=sh,
                                  bg='#000000', highlightthickness=0)
@@ -1284,35 +1284,40 @@ class SAOLinkStart:
         self._cx, self._cy = cx, cy
         self._sw, self._sh = sw, sh
 
-        # 预生成粒子数据 (优化数量减少卡顿)
+        # 速度线 (蓝白隧道) — 数量 * 2, 速度更高
         self._speed_lines = []
-        for i in range(35):
-            angle = random.uniform(0, 2 * math.pi)
-            speed = random.uniform(200, 1200)
-            length = random.uniform(20, 80)
-            delay = random.uniform(0, 0.8)
-            brightness = random.randint(100, 255)
-            self._speed_lines.append({
-                'angle': angle, 'speed': speed, 'length': length,
-                'delay': delay, 'brightness': brightness
-            })
-
-        self._particles = []
         for i in range(100):
             angle = random.uniform(0, 2 * math.pi)
-            speed = random.uniform(50, 800)
-            color = random.choice(SAOColors.LS_COLORS)
-            size = random.uniform(1.5, 4)
-            delay = random.uniform(0, 0.6)
-            trail_len = random.randint(2, 4)
-            self._particles.append({
-                'angle': angle, 'speed': speed, 'color': color,
-                'size': size, 'delay': delay, 'trail_len': trail_len
+            speed = random.uniform(300, 1600)
+            delay = random.uniform(0, 1.0)
+            brightness = random.randint(140, 255)
+            # 速度越快的线拖尾越长
+            tail_frac = random.uniform(0.06, 0.18)
+            self._speed_lines.append({
+                'angle': angle, 'speed': speed,
+                'delay': delay, 'brightness': brightness,
+                'tail_frac': tail_frac
             })
 
-        # 星尘粒子 (小型, 缓慢漂浮)
+        # 彩色粒子 — 更多粒子, 更长拖尾
+        self._particles = []
+        for i in range(160):
+            angle = random.uniform(0, 2 * math.pi)
+            speed = random.uniform(60, 900)
+            color = random.choice(SAOColors.LS_COLORS)
+            size = random.uniform(2.0, 5.0)
+            delay = random.uniform(0, 0.7)
+            trail_len = random.randint(14, 24)   # 大幅延长拖尾段数
+            trail_step = random.uniform(0.055, 0.09)  # 每段回溯时间
+            self._particles.append({
+                'angle': angle, 'speed': speed, 'color': color,
+                'size': size, 'delay': delay,
+                'trail_len': trail_len, 'trail_step': trail_step
+            })
+
+        # 星尘
         self._dust = []
-        for i in range(50):
+        for i in range(60):
             x = random.uniform(0, sw)
             y = random.uniform(0, sh)
             vx = random.uniform(-20, 20)
@@ -1336,91 +1341,111 @@ class SAOLinkStart:
         self._canvas.delete('all')
         cx, cy = self._cx, self._cy
         sw, sh = self._sw, self._sh
+        edge_dist = math.hypot(sw, sh) * 0.55  # 大致到屏幕角落的距离
 
-        # ── Phase 0: 黑屏 + 中心光点 (0~0.6s) ──
-        if elapsed < 0.6:
-            t = elapsed / 0.6
-            # 中心辉光
-            glow_r = int(30 * t)
-            for r in range(glow_r, 0, -2):
-                alpha_val = int(80 * (1 - r / max(1, glow_r)) * t)
-                c = f'#{alpha_val:02x}{alpha_val:02x}{min(255, alpha_val + 40):02x}'
+        # ── Phase 0: 黑屏 + 中心脉冲光点 (0~0.7s) ──
+        if elapsed < 0.7:
+            t = elapsed / 0.7
+            glow_r = int(40 * t)
+            for r in range(glow_r, 0, -3):
+                alpha_val = int(100 * (1 - r / max(1, glow_r)) * t)
+                c = f'#{alpha_val:02x}{alpha_val:02x}{min(255, alpha_val + 60):02x}'
                 self._canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
                                          fill=c, outline='')
-            # 微弱脉冲
-            pulse = math.sin(t * math.pi * 4) * 0.3 + 0.7
-            pr = int(5 * pulse)
+            pulse = math.sin(t * math.pi * 5) * 0.35 + 0.65
+            pr = max(1, int(7 * pulse))
             self._canvas.create_oval(cx - pr, cy - pr, cx + pr, cy + pr,
-                                     fill='#4488ff', outline='')
+                                     fill='#66aaff', outline='')
 
-        # ── Phase 1: 速度线辐射 (0.6~1.8s) ──
-        if 0.4 <= elapsed < 2.0:
-            phase_t = max(0, (elapsed - 0.4) / 1.6)
-            accel = ease_out(min(1, phase_t * 1.5))  # 加速曲线
+        # ── Phase 1: 速度隧道 — 蓝白速度线 (0.4~3.0s) ──
+        if 0.4 <= elapsed < 3.2:
+            phase_t = max(0.0, (elapsed - 0.4) / 2.6)  # 0→1 over 2.6s
 
             for sl in self._speed_lines:
-                if phase_t < sl['delay']:
+                if phase_t < sl['delay'] / 2.6:
                     continue
-                local_t = (phase_t - sl['delay']) / max(0.01, 1.0 - sl['delay'])
-                local_t = min(1, local_t)
-                dist = sl['speed'] * local_t * accel
-                length = sl['length'] * (0.3 + 0.7 * local_t)
+                # 局部时间: 从该线的 delay 开始
+                local_raw = phase_t - sl['delay'] / 2.6
+                local_t = min(1.0, local_raw / max(0.01, 1.0 - sl['delay'] / 2.6))
+                eased_head = ease_out(local_t)
 
-                x1 = cx + math.cos(sl['angle']) * dist
-                y1 = cy + math.sin(sl['angle']) * dist
-                x2 = cx + math.cos(sl['angle']) * (dist + length)
-                y2 = cy + math.sin(sl['angle']) * (dist + length)
+                # 头部位置
+                dist_head = sl['speed'] * eased_head
+                if dist_head < 3:
+                    continue
 
-                b = sl['brightness']
-                fade = max(0, 1 - local_t * 0.8)
-                bv = int(b * fade)
-                color = f'#{bv:02x}{bv:02x}{min(255, bv + 30):02x}'
-                width = max(1, 2 * (1 - local_t))
-                self._canvas.create_line(x1, y1, x2, y2,
-                                         fill=color, width=width)
+                # 尾部: 向早一段时间的位置回溯
+                tail_raw = max(0.0, local_t - sl['tail_frac'])
+                dist_tail = sl['speed'] * ease_out(tail_raw)
 
-            # 中心光环扩大
-            ring_r = int(50 * accel)
-            ring_alpha = int(120 * (1 - phase_t * 0.5))
-            if ring_alpha > 0:
-                c = f'#{ring_alpha:02x}{ring_alpha:02x}{min(255, ring_alpha + 60):02x}'
+                x1 = cx + math.cos(sl['angle']) * dist_tail
+                y1 = cy + math.sin(sl['angle']) * dist_tail
+                x2 = cx + math.cos(sl['angle']) * dist_head
+                y2 = cy + math.sin(sl['angle']) * dist_head
+
+                # 亮度: 靠近中心渐入, 超过边缘渐出
+                fade_in  = min(1.0, dist_head / 60.0)
+                fade_out = max(0.0, 1.0 - dist_head / edge_dist)
+                overall  = fade_in * fade_out
+                if overall < 0.04:
+                    continue
+
+                b   = sl['brightness']
+                bv  = int(b * overall)
+                # 蓝白渐变色: 亮处偏白, 暗处偏蓝
+                blue_boost = min(255, bv + 50)
+                color = f'#{bv:02x}{bv:02x}{blue_boost:02x}'
+                width = max(1, int(2 * overall + 0.5))
+                self._canvas.create_line(x1, y1, x2, y2, fill=color, width=width)
+
+            # 中心脉冲光环
+            ring_phase = min(1.0, phase_t * 2.0)
+            ring_alpha = int(140 * (1 - ring_phase * 0.6))
+            if ring_alpha > 5:
+                ring_r = int(80 * ease_out(ring_phase))
+                c = f'#{ring_alpha:02x}{ring_alpha:02x}{min(255, ring_alpha + 80):02x}'
                 self._canvas.create_oval(cx - ring_r, cy - ring_r,
                                          cx + ring_r, cy + ring_r,
                                          outline=c, width=2, fill='')
 
-        # ── Phase 2: 彩色粒子爆发 (1.8~2.8s) ──
-        if 1.6 <= elapsed < 3.2:
-            phase_t = max(0, (elapsed - 1.6) / 1.6)
+        # ── Phase 2: 彩色粒子爆发 (1.8~4.2s) ──
+        if 1.8 <= elapsed < 4.4:
+            phase_t = max(0.0, (elapsed - 1.8) / 2.4)  # 0→1 over 2.4s
 
             for p in self._particles:
                 if phase_t < p['delay']:
                     continue
                 local_t = (phase_t - p['delay']) / max(0.01, 1.0 - p['delay'])
-                local_t = min(1, local_t)
-                eased_t = ease_out(local_t)
+                local_t = min(1.0, local_t)
 
-                dist = p['speed'] * eased_t
-                x = cx + math.cos(p['angle']) * dist
-                y = cy + math.sin(p['angle']) * dist
+                # 粒子整体从 phase_t=0.75 起逐渐消隐
+                particle_fade = max(0.0, 1.0 - max(0.0, (phase_t - 0.72) / 0.28))
 
-                # 粒子拖尾
-                trail_len = p['trail_len']
-                for ti in range(trail_len):
-                    trail_t = max(0, eased_t - ti * 0.03)
-                    trail_dist = p['speed'] * trail_t
+                trail_len  = p['trail_len']
+                trail_step = p['trail_step']
+
+                # 从尾到头绘制, 确保头部覆盖在最上层
+                for ti in range(trail_len, -1, -1):
+                    # ti=0 是头, ti=trail_len 是最远的尾
+                    look_back = ti * trail_step
+                    raw_t = max(0.0, local_t - look_back)
+                    eased = ease_out(raw_t)
+
+                    trail_dist = p['speed'] * eased
                     tx = cx + math.cos(p['angle']) * trail_dist
                     ty = cy + math.sin(p['angle']) * trail_dist
-                    trail_fade = 1.0 - ti / trail_len
-                    trail_size = p['size'] * trail_fade
-                    if trail_size < 0.5:
+
+                    # 头 alpha=1, 尾 alpha→0, 整体乘以消隐因子
+                    trail_alpha = (1.0 - ti / trail_len) * particle_fade
+                    if trail_alpha < 0.04:
                         continue
-                    # 颜色淡化
+
                     r0, g0, b0 = hex_to_rgb(p['color'])
-                    r1 = int(r0 * trail_fade)
-                    g1 = int(g0 * trail_fade)
-                    b1 = int(b0 * trail_fade)
+                    r1 = int(r0 * trail_alpha)
+                    g1 = int(g0 * trail_alpha)
+                    b1 = int(b0 * trail_alpha)
                     tc = rgb_to_hex(r1, g1, b1)
-                    s = int(trail_size)
+                    s = max(1, int(p['size'] * (1.0 - ti / trail_len * 0.7)))
                     self._canvas.create_oval(tx - s, ty - s, tx + s, ty + s,
                                              fill=tc, outline='')
 
@@ -1428,8 +1453,8 @@ class SAOLinkStart:
             for d in self._dust:
                 d['x'] += d['vx'] * 0.016
                 d['y'] += d['vy'] * 0.016
-                vis = min(1, phase_t * 2) * d['alpha']
-                if vis < 0.1:
+                vis = min(1.0, phase_t * 2.0) * d['alpha'] * max(0.0, 1.0 - phase_t * 0.8)
+                if vis < 0.08:
                     continue
                 bval = int(255 * vis)
                 dc = f'#{bval:02x}{bval:02x}{bval:02x}'
@@ -1437,72 +1462,83 @@ class SAOLinkStart:
                                          d['x'] + 1, d['y'] + 1,
                                          fill=dc, outline='')
 
-        # ── Phase 3: "LINK START" 逐字出现 (2.6~4.0s) ──
-        if elapsed >= 2.6:
-            text_t = min(1, max(0, (elapsed - 2.6) / 1.4))
+        # ── Phase 3: "LINK START" 逐字出现 (3.4~5.4s) ──
+        if elapsed >= 3.4:
+            text_t = min(1.0, max(0.0, (elapsed - 3.4) / 2.0))
             total_chars = len(self._text_chars)
-            char_spacing = 40
+            char_spacing = 42
             total_width = total_chars * char_spacing
             start_x = cx - total_width // 2
             visible_count = int(total_chars * ease_out(text_t))
 
-            # 背景辉光晕（椭圆）
-            if text_t > 0.05:
-                ga = min(1.0, text_t * 2.0)
-                for gr in range(55, 0, -5):
-                    a = int(28 * ga * (1 - gr / 55))
-                    gc = f'#{a:02x}{int(a * 0.55):02x}{min(255, a * 3 + 40):02x}'
-                    self._canvas.create_oval(cx - gr * 6, cy - gr * 2,
-                                             cx + gr * 6, cy + gr * 2,
+            # 背景辉光晕
+            if text_t > 0.04:
+                ga = min(1.0, text_t * 2.2)
+                # 文字消隐时辉光也消退
+                glow_fade = max(0.0, 1.0 - max(0.0, (text_t - 0.75) / 0.25))
+                for gr in range(60, 0, -5):
+                    a = int(32 * ga * glow_fade * (1 - gr / 60))
+                    gc = f'#{a:02x}{int(a * 0.5):02x}{min(255, a * 3 + 50):02x}'
+                    self._canvas.create_oval(cx - gr * 7, cy - gr * 2,
+                                             cx + gr * 7, cy + gr * 2,
                                              fill=gc, outline='')
 
-            # 扫描线 (随字符出现向右推进)
-            if 0.02 < text_t < 0.96:
-                scan_x = start_x + char_spacing // 2 + int((total_width - char_spacing) * min(1, text_t * 1.1))
-                for si, sy in enumerate(range(cy - 36, cy + 36, 4)):
-                    line_alpha = int(180 * (1 - abs(si - 9) / 10))
+            # 扫描线
+            if 0.02 < text_t < 0.92:
+                scan_x = start_x + char_spacing // 2 + int(
+                    (total_width - char_spacing) * min(1.0, text_t * 1.08))
+                for si, sy in enumerate(range(cy - 38, cy + 38, 4)):
+                    line_alpha = int(200 * (1 - abs(si - 9) / 10))
                     if line_alpha < 10:
                         continue
-                    lc = f'#{line_alpha:02x}{line_alpha:02x}{min(255, line_alpha + 50):02x}'
-                    self._canvas.create_line(scan_x - 1, sy, scan_x + 1, sy + 3, fill=lc, width=2)
+                    lc = f'#{line_alpha:02x}{line_alpha:02x}{min(255, line_alpha + 60):02x}'
+                    self._canvas.create_line(scan_x - 1, sy, scan_x + 2, sy + 3,
+                                             fill=lc, width=2)
 
             # 逐字绘制
+            char_global_fade = max(0.0, 1.0 - max(0.0, (text_t - 0.80) / 0.20))
             for i in range(visible_count):
                 char = self._text_chars[i]
                 char_x = start_x + i * char_spacing + char_spacing // 2
 
-                # 每个字符的独立进入进度
                 char_t = ease_out(min(1.0, max(0.0, text_t * total_chars - i + 0.5)))
+                draw_alpha = char_t * char_global_fade
+                if draw_alpha < 0.02:
+                    continue
 
                 if char == ' ':
-                    # 空格位置绘制一个金色★火花
                     if char_t > 0.3:
-                        sp_a = int(220 * min(1, char_t))
+                        sp_a = int(220 * draw_alpha)
                         self._canvas.create_text(char_x, cy - 4,
                                                  text='✦',
                                                  fill=f'#{sp_a:02x}{int(sp_a * 0.68):02x}00',
-                                                 font=('Segoe UI Symbol', 14))
+                                                 font=('Segoe UI Symbol', 16))
                     continue
 
-                # LINK (i<4) = 金色 #f3af12, START (i>=5) = 青色 #4de8f4
+                # LINK (i<4) 金色, START (i>=5) 青色
                 if i < 4:
                     base_r, base_g, base_b = 243, 175, 18
                 else:
                     base_r, base_g, base_b = 77, 232, 244
 
-                # 从白色渐变到主色
-                r = int(lerp(255, base_r, char_t))
-                g = int(lerp(255, base_g, char_t))
-                b = int(lerp(255, base_b, char_t))
-                text_color = rgb_to_hex(r, g, b)
+                r = int(lerp(lerp(255, base_r, char_t), base_r, char_global_fade))
+                g = int(lerp(lerp(255, base_g, char_t), base_g, char_global_fade))
+                b = int(lerp(lerp(255, base_b, char_t), base_b, char_global_fade))
+                r = int(r * char_global_fade + 255 * (1 - char_global_fade))
+                g = int(g * char_global_fade + 255 * (1 - char_global_fade))
+                b = int(b * char_global_fade + 255 * (1 - char_global_fade))
+                text_color = rgb_to_hex(
+                    int(lerp(255, base_r, char_t * char_global_fade)),
+                    int(lerp(255, base_g, char_t * char_global_fade)),
+                    int(lerp(255, base_b, char_t * char_global_fade))
+                )
 
-                # 从上方滑入
-                offset_y = int(28 * (1 - char_t))
+                offset_y = int(30 * (1 - char_t))
 
-                # 字符光圈
-                if char_t > 0.2:
-                    glow_r = int(26 * char_t)
-                    ga_v = int(55 * char_t * (1 - char_t * 0.6))
+                # 字符辉光
+                if char_t > 0.15 and char_global_fade > 0.1:
+                    glow_r = int(30 * char_t * char_global_fade)
+                    ga_v = int(60 * char_t * (1 - char_t * 0.5) * char_global_fade)
                     if ga_v > 4:
                         gc = rgb_to_hex(int(base_r * ga_v / 255),
                                         int(base_g * ga_v / 255),
@@ -1511,26 +1547,29 @@ class SAOLinkStart:
                                                  char_x + glow_r, cy + glow_r + offset_y,
                                                  fill=gc, outline='')
 
-                # 字体大小: 入场时稍大, 落定后正常
-                fsize = max(24, int(32 + 12 * (1 - char_t)))
+                fsize = max(24, int(32 + 14 * (1 - char_t)))
                 self._canvas.create_text(char_x, cy - 2 + offset_y, text=char,
                                          fill=text_color,
                                          font=('Segoe UI', fsize, 'bold'))
 
-                # 落定后绘制下划线
-                if char_t > 0.75:
-                    line_prog = ease_out((char_t - 0.75) / 0.25)
-                    line_w = int(34 * line_prog)
-                    lc = rgb_to_hex(base_r, base_g, base_b)
-                    self._canvas.create_line(char_x - line_w // 2, cy + 26 + offset_y,
-                                             char_x + line_w // 2, cy + 26 + offset_y,
+                # 落定下划线
+                if char_t > 0.70 and char_global_fade > 0.2:
+                    line_prog = ease_out((char_t - 0.70) / 0.30) * char_global_fade
+                    line_w = int(36 * line_prog)
+                    lc = rgb_to_hex(
+                        int(lerp(255, base_r, char_global_fade)),
+                        int(lerp(255, base_g, char_global_fade)),
+                        int(lerp(255, base_b, char_global_fade))
+                    )
+                    self._canvas.create_line(char_x - line_w // 2, cy + 28 + offset_y,
+                                             char_x + line_w // 2, cy + 28 + offset_y,
                                              fill=lc, width=2)
 
-            # 全字出现后: 向外扩散光环
-            if text_t > 0.88:
-                ring_t = ease_out((text_t - 0.88) / 0.12)
-                ring_r = int(220 * ring_t)
-                ring_a = int(160 * (1 - ring_t))
+            # 全字出现后向外扩散光环
+            if text_t > 0.85:
+                ring_t = ease_out((text_t - 0.85) / 0.15)
+                ring_r = int(260 * ring_t)
+                ring_a = int(180 * (1 - ring_t))
                 if ring_a > 5:
                     rc = f'#{min(255, ring_a + 80):02x}{ring_a:02x}{min(255, ring_a * 2 + 20):02x}'
                     self._canvas.create_oval(cx - ring_r, cy - ring_r // 2,
@@ -1538,18 +1577,26 @@ class SAOLinkStart:
                                              outline=rc, width=3, fill='')
 
             # 副标题淡入
-            if text_t > 0.65:
-                sub_a = min(1.0, (text_t - 0.65) / 0.35)
-                sv = int(200 * sub_a)
+            if text_t > 0.60:
+                sub_in  = min(1.0, (text_t - 0.60) / 0.30)
+                sub_out = char_global_fade
+                sv = int(200 * sub_in * sub_out)
                 sc = f'#{sv:02x}{sv:02x}{sv:02x}'
-                self._canvas.create_text(cx, cy + 58, text='咲 Midi Player  v2.2.0',
+                self._canvas.create_text(cx, cy + 62, text='咲 Midi Player  v3.0.3',
                                          fill=sc, font=('Segoe UI', 13))
 
-        # ── Phase 4: 平滑渐隐 (3.8~4.5s) ──
-        if elapsed >= 3.8:
-            fade_t = min(1.0, (elapsed - 3.8) / 0.7)
-            # 平滑渐隐 — 不画白色矩形, 直接淡出 overlay
-            alpha = max(0.0, 0.9 * (1.0 - ease_out(fade_t)))
+        # ── Phase 4: 白闪脉冲 + ease_in_out 平滑渐隐 (5.0~5.8s) ──
+        if elapsed >= 5.0:
+            fade_t = min(1.0, (elapsed - 5.0) / 0.8)
+            # 开头短暂白闪
+            flash = max(0.0, 1.0 - fade_t * 6.0)
+            if flash > 0.02:
+                wv = int(255 * flash * 0.7)
+                self._canvas.create_rectangle(0, 0, sw, sh,
+                                              fill=f'#{wv:02x}{wv:02x}{wv:02x}',
+                                              outline='')
+            # overlay 整体渐隐
+            alpha = max(0.0, 0.95 * (1.0 - ease_in_out(fade_t)))
             try:
                 self._overlay.attributes('-alpha', alpha)
             except Exception:
@@ -2047,7 +2094,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.0.2+3002", on_close=None, **kw):
+                 version="v3.0.3+3003", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close
