@@ -898,11 +898,14 @@ class MidiPlayer:
             
             score = hit_rate * 0.45 + center_score * 0.3 + spread * 0.15 - extreme_penalty - shift_penalty
             
-            # 额外：如果命中率100%且偏移为0，给较大奖励（优先保持原始音高）
-            if hit_rate >= 1.0 and offset == 0:
-                score += 0.2
-            elif offset == 0:
-                score += 0.05  # 即使命中率不满也给小奖励
+            # 额外：如果偏移为0，给较大奖励（强烈倾向保持原始音高）
+            if offset == 0:
+                if hit_rate >= 1.0:
+                    score += 0.5   # 命中率100%: 大幅奖励原始音高
+                elif hit_rate >= 0.7:
+                    score += 0.35  # 命中率≥70%: 依然优先不移调
+                else:
+                    score += 0.15  # 即使命中率偏低也给小奖励
             
             # 同分时优先选择更小的偏移量（减少不必要的移调）
             if score > best_score or (score == best_score and abs(offset) < abs(best_offset)):

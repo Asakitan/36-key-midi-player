@@ -130,10 +130,15 @@ def _apply_panel_style(panel):
 
 def _apply_viz_light_theme(viz):
     """将 MidiVisualizer 内部深色 ModernColors 覆盖为白色 SAO 配色"""
+    # ── 关键: 同步更新类属性, 否则渲染代码里的 lerp 仍用暗色底 ──
+    _VIZ_LIGHT = '#f0f2f8'
+    ModernColors.VIZ_BG = _VIZ_LIGHT
+
     _bg_map = {
         '#2c2c2e': '#ffffff',   # ModernColors.BG_CARD
         '#3a3a3c': '#f0f0f0',   # ModernColors.BG_HOVER
-        '#131315': '#f0f2f8',   # ModernColors.VIZ_BG
+        '#131315': _VIZ_LIGHT,  # ModernColors.VIZ_BG
+        '#060a10': _VIZ_LIGHT,  # SAO 模式 VIZ_BG 备用值
         '#1c1c1e': '#ffffff',   # ModernColors.BG_DARK / BG_INPUT
     }
     _fg_map = {
