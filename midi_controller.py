@@ -2758,9 +2758,11 @@ class MIDIControllerDialog(tk.Toplevel):
             self.player.mapper.set_channel_enabled(ch, vs['enabled'].get())
             self.player.mapper.set_channel_transpose(ch, vs['transpose'].get())
 
-        # 钢琴键盘拖拽的全局移调 → 仅调整 user_transpose, 不覆盖 mapper.transpose
+        # 钢琴键盘拖拽的全局移调 → 减去自动调性偏移, 只把用户手动δ存入 _user_transpose
         piano_transpose = self.piano.get_transpose()
-        self.player.set_transpose(piano_transpose)
+        auto_offset = getattr(self.player, '_key_transpose', 0)
+        user_delta = piano_transpose - auto_offset   # 用户在自动结果之上的额外微调
+        self.player.set_transpose(user_delta)
 
         # 保存通道设置到全局 settings
         ch_settings = {}
@@ -2771,11 +2773,11 @@ class MIDIControllerDialog(tk.Toplevel):
             }
         self.settings.set('channel_settings', ch_settings)
 
-        # 回调通知主 GUI
+        # 回调通知主 GUI (global_transpose 为用户移调量, 不含自动偏移)
         if self._on_apply:
             self._on_apply({
                 'channel_config': ch_settings,
-                'global_transpose': piano_transpose,
+                'global_transpose': user_delta,
             })
 
         self._show_msg("完成", "设置已应用")
@@ -2796,7 +2798,9 @@ class MIDIControllerDialog(tk.Toplevel):
             if hasattr(self, 'roll'):
                 self.roll.set_channel_visible(ch, True)
         if hasattr(self, 'piano'):
-            self.piano.set_transpose(0)
+            # 重置到自动调性偏移位置 (清除用户手动移调)
+            auto_offset = getattr(self.player, '_key_transpose', 0)
+            self.piano.set_transpose(auto_offset)
         self._transpose_label.configure(text="拖拽移调: 0")
         self._update_hit_stats()
 
@@ -2869,7 +2873,8 @@ class MIDIControllerDialog(tk.Toplevel):
                 'transpose': vs['transpose'].get(),
             }
         song_data['channel_config'] = ch_cfg
-        song_data['global_transpose'] = self.piano.get_transpose()
+        # 只保存用户手动移调 (不含自动调性偏移), 避免加载时与自动偏移双重叠加
+        song_data['global_transpose'] = getattr(self.player, '_user_transpose', 0)
         song_data['mode_system'] = getattr(self.player, '_mode_system', 'classic')
 
         # 命中范围
