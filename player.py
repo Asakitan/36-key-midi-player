@@ -22,6 +22,19 @@ try:
 except ImportError:
     PYNPUT_AVAILABLE = False
 
+# 屏幕截图（用于防漂移检测）
+try:
+    from PIL import ImageGrab
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+try:
+    import win32gui
+    WIN32GUI_AVAILABLE = True
+except ImportError:
+    WIN32GUI_AVAILABLE = False
+
 from midi_parser import MidiParser, JSParser, NoteEvent, ChordEvent, PlayEvent
 from keyboard_mapper import KeyboardMapper
 from config import (KEY_PRESS_DURATION, MIN_NOTE_INTERVAL, KEY_DURATION_MAX, KEY_DURATION_MIN,
@@ -492,6 +505,11 @@ class MidiPlayer:
         # 模式系统: 'classic' (L Shift/L Ctrl) 或 'extended' (</>)
         self._mode_system = DEFAULT_MODE_SYSTEM
         
+        # === 屏幕防漂移检测 ===
+        self._screen_note_counter = 0       # 已弹音符计数（用于每N个触发检测）
+        self._screen_check_interval = 100   # 每隔多少个音符检测一次
+        self._screen_drift_enabled = True   # 屏幕检测开关（自动回退到PIL/win32失败时关闭）
+        
         # 文件类型标识
         self._is_js_file = False
         
@@ -679,6 +697,8 @@ class MidiPlayer:
         """加载MIDI或JS文件"""
         # 加载前先重置模式状态，防止上一首残留导致后续曲目映射错乱
         self.simulator.reset_mode()
+        # 重置屏幕防漂移计数
+        self._screen_note_counter = 0
         # 判断文件类型
         if filepath.lower().endswith('.js'):
             return self._load_js(filepath)
@@ -691,6 +711,8 @@ class MidiPlayer:
         # 确保使用 MidiParser
         if not isinstance(self.parser, MidiParser):
             self.parser = MidiParser()
+        # 加载新曲目时清除旧通道设置，防止跨曲目串扰
+        self.mapper.clear_channel_settings()
         success = self.parser.load_file(filepath)
         if success:
             self.state = PlaybackState()
@@ -723,6 +745,8 @@ class MidiPlayer:
             # 替换 parser
             self.parser = js_parser
             self.state = PlaybackState()
+            # 加载新曲目时清除旧通道设置
+            self.mapper.clear_channel_settings()
             # JS文件已经是游戏内格式，直接映射
             self._setup_js_mapping()
         return success
@@ -3193,6 +3217,120 @@ class MidiPlayer:
         
         return duration
     
+    
+    # ==================== 屏幕防漂移检测 ====================
+
+    def _get_game_window_rect(self):
+        """
+        尝试查找游戏窗口（Star.exe）的屏幕矩形。
+        返回 (left, top, right, bottom) 或 None。
+        """
+        if not WIN32GUI_AVAILABLE:
+            return None
+        try:
+            # 遍历所有可见窗口，找标题含"Star"的
+            results = []
+            def _enum_cb(hwnd, _):
+                if win32gui.IsWindowVisible(hwnd):
+                    title = win32gui.GetWindowText(hwnd)
+                    if 'Star' in title or 'star' in title:
+                        rect = win32gui.GetWindowRect(hwnd)
+                        w = rect[2] - rect[0]
+                        h = rect[3] - rect[1]
+                        if w > 200 and h > 200:  # 过滤太小的窗口
+                            results.append(rect)
+            win32gui.EnumWindows(_enum_cb, None)
+            if results:
+                return results[0]
+        except Exception:
+            pass
+        return None
+
+    def _check_screen_mode_drift(self):
+        """
+        每 _screen_check_interval 个音符后，截取游戏窗口右侧的模式指示器区域，
+        检测 高八度(shift)/默认(normal)/低八度(ctrl) 三个按钮哪个最亮，
+        与 simulator._current_mode 比较；若不一致则强制纠正。
+
+        按钮排布（从截图推断，自上而下）：
+            index 0 → 高八度 → shift
+            index 1 → 默认   → normal
+            index 2 → 低八度 → ctrl
+
+        采样区域：窗口右侧 5% 宽度内，垂直三等分中段。
+        仅在 classic 模式下启用。
+        """
+        if not self._screen_drift_enabled:
+            return
+        if self._mode_system != 'classic':
+            return
+        if not PIL_AVAILABLE:
+            return
+
+        try:
+            win_rect = self._get_game_window_rect()
+            if win_rect:
+                left, top, right, bottom = win_rect
+                w = right - left
+                h = bottom - top
+            else:
+                # 回退：使用主屏幕全尺寸
+                import ctypes
+                user32 = ctypes.windll.user32
+                w = user32.GetSystemMetrics(0)
+                h = user32.GetSystemMetrics(1)
+                left, top = 0, 0
+
+            # 右侧指示器区域：右边 8% 宽，钢琴 UI 大约在中下部 40%~80% 高
+            rx0 = left + int(w * 0.90)
+            rx1 = left + int(w * 0.99)
+            ry0 = top  + int(h * 0.40)
+            ry1 = top  + int(h * 0.80)
+
+            img = ImageGrab.grab(bbox=(rx0, ry0, rx1, ry1), all_screens=True)
+            img_w, img_h = img.size
+            if img_w < 2 or img_h < 2:
+                return
+
+            # 三等分垂直区域，分别对应 高八度/默认/低八度
+            slice_h = img_h // 3
+            mode_order = ['shift', 'normal', 'ctrl']
+            brightness = []
+            for i in range(3):
+                y0 = i * slice_h
+                y1 = (i + 1) * slice_h
+                region = img.crop((0, y0, img_w, y1))
+                pixels = list(region.getdata())
+                if not pixels:
+                    brightness.append(0)
+                    continue
+                avg_r = sum(p[0] for p in pixels) / len(pixels)
+                avg_g = sum(p[1] for p in pixels) / len(pixels)
+                avg_b = sum(p[2] for p in pixels) / len(pixels)
+                brightness.append(avg_r + avg_g + avg_b)
+
+            # 亮度差异太小时不做判断（可能截图区域不正确）
+            max_b = max(brightness)
+            min_b = min(brightness)
+            if max_b - min_b < 15:   # 亮度差小于 15/765，认为无法区分
+                return
+
+            detected_mode = mode_order[brightness.index(max_b)]
+            current_mode  = self.simulator._current_mode
+
+            if detected_mode != current_mode:
+                print(f"[防漂移] 屏幕检测: 游戏显示 {detected_mode}，代码认为 {current_mode}，执行纠正。"
+                      f"亮度: {[f'{b:.0f}' for b in brightness]}")
+                # 强制纠正：先回 normal，再到目标
+                self.simulator._mode_toggle_count = 0
+                self.simulator._current_mode = detected_mode  # 以屏幕为准
+                if detected_mode != current_mode:
+                    self.simulator._force_reset_mode(target=current_mode)
+
+        except Exception as e:
+            # 检测失败不影响播放
+            print(f"[防漂移] 屏幕检测失败（已忽略）: {e}")
+
     def _play_events(self, events: List[PlayEvent], next_event_time: Optional[float] = None):
         """
         播放一组事件 - 单音直接映射 + 按键时长延音 + SHIFT/CTRL三模式切换
@@ -3556,6 +3694,15 @@ class MidiPlayer:
             
             if self.on_note_play and note_info:
                 self.on_note_play(final_key, note_info, is_chord)
+        
+        # === 屏幕防漂移：每 N 个音符检测一次游戏UI ===
+        if keys_to_press and self._mode_system == 'classic':
+            self._screen_note_counter += len(keys_to_press)
+            if self._screen_note_counter >= self._screen_check_interval:
+                self._screen_note_counter = 0
+                # 在后台线程中执行，避免阻塞播放线程
+                t = threading.Thread(target=self._check_screen_mode_drift, daemon=True)
+                t.start()
                 
     def _smart_chord_simplify(self, keys_to_press: dict, max_keys: int) -> dict:
         """

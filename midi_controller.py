@@ -1462,6 +1462,7 @@ class PianoRollWidget(tk.Frame):
             self._notes = notes
             self._ch_colors = ch_colors
             self._ch_visible = {ch: True for ch in ch_colors}
+            self._initial_scroll_done = False  # 每次加载新文件重置滚动状态
             if notes:
                 pitches = [n[0] for n in notes]
                 self._lo = max(0, (min(pitches) // 12) * 12)
@@ -1505,7 +1506,11 @@ class PianoRollWidget(tk.Frame):
         lo, hi = self._lo, self._hi
         n_rows = hi - lo + 1
         total_h = n_rows * self.ROW_H
-        total_w = max(400, int(self._duration * self.SEC_W * self._zoom))
+        MAX_CANVAS_W = 30000   # Tkinter Canvas 上限约 32767px，留余量
+        actual_w = max(400, int(self._duration * self.SEC_W * self._zoom))
+        total_w = min(actual_w, MAX_CANVAS_W)
+        # 当实际宽度超限时，按比例缩放 x 坐标
+        x_scale = total_w / actual_w if actual_w > MAX_CANVAS_W else 1.0
         self._total_w = total_w
         self._total_h = total_h
 
