@@ -312,7 +312,7 @@ var _barVals = new Float32Array(NUM_BARS);
 var _barPeaks = new Float32Array(NUM_BARS);
 var _hueOffset = 0, _beatBright = 0;
 var _vizRunning = false, _vizCanvas = null, _vizCtx = null;
-var BG = [26,26,30];
+var BG = [255,255,255];
 
 var KEY_BAR = {
     'z':0,'1':1,'x':2,'2':3,'c':4,'v':5,'3':6,'b':7,'4':8,'n':9,'5':10,'m':11,
@@ -330,7 +330,7 @@ function _hsv(h,s,v) {
 
 function _barCol(i) {
     var hue=(15+i/(NUM_BARS-1)*220+_hueOffset)%360;
-    return _hsv(hue,0.88,Math.max(0.05,Math.min(1,0.6+0.35*_beatBright)));
+    return _hsv(hue,0.88,Math.max(0.3,Math.min(1,0.6+0.35*_beatBright)));
 }
 function _barGlow(i) {
     var hue=(15+i/(NUM_BARS-1)*220+_hueOffset)%360;
@@ -377,7 +377,7 @@ function _vizAnimate() {
 function _drawBars() {
     var c=_vizCtx, w=_vizCanvas.width, h=_vizCanvas.height;
     if (!c||w<2||h<2) return;
-    c.fillStyle='#1a1a1e'; c.fillRect(0,0,w,h);
+    c.fillStyle='#ffffff'; c.fillRect(0,0,w,h);
     var pad=3, uH=h-pad*2, uW=w-pad*2, bH=uH/NUM_BARS, mW=uW-2;
     for (var i=0;i<NUM_BARS;i++){
         var y=pad+(NUM_BARS-1-i)*bH, val=_barVals[i], pk=_barPeaks[i], col=_barCol(i), gl=_barGlow(i);
@@ -445,6 +445,10 @@ function initPanel(type, state) {
             '<div style="margin-top:2px">' +
                 '<span class="ctrl-toggle off" id="tog-directc" onclick="doAction(\'toggle_directc\')">C调直转</span>' +
                 '<span class="ctrl-toggle off" id="tog-glissando" onclick="doAction(\'toggle_glissando\')">滑奏</span>' +
+            '</div>' +
+            '<div class="ctrl-sep"></div>' +
+            '<div>' +
+                '<span class="ctrl-toggle off" id="tog-midi" onclick="doAction(\'midi_channel\')">⊞ MIDI通道控制</span>' +
             '</div>';
     } else if (type === 'status') {
         title.textContent = '◉ 状态面板';

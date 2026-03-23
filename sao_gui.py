@@ -818,63 +818,57 @@ class SAOPlayerGUI:
         bar_w = 260
         bar_h = 23
 
-        # SVG polygon border: points="0,0 260,0 255,16 124,16 120,23 0,23"
-        border_pts = [
-            bar_x + 0,   bar_y + 0,
-            bar_x + 260, bar_y + 0,
+        # ── 1) 多边形背景填充 (最底层, 提供 HP 条深色底) ──
+        bar_bg_pts = [
+            bar_x,       bar_y,
+            bar_x + 260, bar_y,
             bar_x + 255, bar_y + 16,
             bar_x + 124, bar_y + 16,
             bar_x + 120, bar_y + 23,
-            bar_x + 0,   bar_y + 23,
+            bar_x,       bar_y + 23,
         ]
-        cv.create_polygon(border_pts,
-                          outline=BORDER_C, fill='', width=1,
-                          tags='svg_border')
+        cv.create_polygon(bar_bg_pts, fill='#3a3e4a', outline='', tags='hp_bg')
 
-        # .xt_border clip-path: polygon(120px 100%, 124px 16px, 98% 16px,
-        #                               100% 0%, 0% 0%, 0% 100%)
-        # 这定义了内部区域: 左上全宽, 右下被阶梯裁剪
-        # 内部由 .xt_border_left (1.5px 竖线) + .xt_border_right (fill) 组成
-        # .xt_border_right 包含 tb_line (水平分隔线) 和 .xt_in (HP填充)
-
-        # 左侧竖线 (.xt_border_left)
-        cv.create_line(bar_x + 1, bar_y + 1, bar_x + 1, bar_y + bar_h - 1,
-                       fill=BORDER_C, width=1, tags='xt_border_left')
-
-        # .xt_in — HP 填充条 (绿/黄/红渐变)
-        # 填充区域在 tb_line 之间, 即 y: bar_y+2 到 bar_y+15 (上半部分)
-        # 和 y: bar_y+2 到 bar_y+22 (左半部分 x<120)
-        # 简化: 用矩形填充上半部分 (占视觉大部分)
-        # 存储 HP 填充坐标
+        # ── 2) HP 填充条 (初始隐藏, 播放时从 0 填充到满) ──
         self._hp_bar_x = bar_x + 2
         self._hp_bar_y = bar_y + 2
-        self._hp_bar_right = bar_x + 254   # 上半最大 x
-        self._hp_bar_bot_top = bar_y + 15   # 上半最大 y
-        self._hp_bar_bot_full = bar_y + 22  # 下半最大 y (左侧)
-        self._hp_bar_step_x = bar_x + 120   # 台阶 x
+        self._hp_bar_right = bar_x + 254
+        self._hp_bar_bot_top = bar_y + 15
+        self._hp_bar_bot_full = bar_y + 22
+        self._hp_bar_step_x = bar_x + 120
 
-        # 初始 HP 填充 (100%)
         self._float_hp_fill_top = cv.create_rectangle(
-            self._hp_bar_x, self._hp_bar_y,
-            self._hp_bar_right, self._hp_bar_bot_top,
-            fill='#9ad334', outline='', tags='hp_fill_top')
+            -1, -1, -1, -1,
+            fill='#9ad334', outline='', tags='hp_fill')
         self._float_hp_fill_bot = cv.create_rectangle(
-            self._hp_bar_x, self._hp_bar_bot_top,
-            self._hp_bar_step_x, self._hp_bar_bot_full,
-            fill='#9ad334', outline='', tags='hp_fill_bot')
+            -1, -1, -1, -1,
+            fill='#9ad334', outline='', tags='hp_fill')
 
-        # 上方水平线 (.tb_line) — 在填充之上渲染
+        # ── 3) 内部水平分隔线 (在填充之上) ──
         cv.create_line(bar_x + 2, bar_y + 1, bar_x + 258, bar_y + 1,
-                       fill=BORDER_C, width=1, tags='tb_line_top')
-
-        # 下方水平线 (.tb_line) — 在填充之上渲染
+                       fill=BORDER_C, width=1, tags='hp_inner')
         cv.create_line(bar_x + 2, bar_y + 22, bar_x + 119, bar_y + 22,
-                       fill=BORDER_C, width=1, tags='tb_line_bot1')
+                       fill=BORDER_C, width=1, tags='hp_inner')
         cv.create_line(bar_x + 124, bar_y + 15, bar_x + 254, bar_y + 15,
-                       fill=BORDER_C, width=1, tags='tb_line_bot2')
+                       fill=BORDER_C, width=1, tags='hp_inner')
 
-        # SVG 多边形边框 — 最顶层渲染
-        cv.tag_raise('svg_border')
+        # ── 4) 左侧竖线 (.xt_border_left) ──
+        cv.create_line(bar_x + 1, bar_y + 1, bar_x + 1, bar_y + bar_h - 1,
+                       fill=BORDER_C, width=1, tags='hp_inner')
+
+        # ── 5) 外边框 (最高层, 逐段绘制确保可见) ──
+        cv.create_line(bar_x, bar_y, bar_x + 260, bar_y,
+                       fill=BORDER_C, width=2, tags='hp_outer')
+        cv.create_line(bar_x + 260, bar_y, bar_x + 255, bar_y + 16,
+                       fill=BORDER_C, width=2, tags='hp_outer')
+        cv.create_line(bar_x + 255, bar_y + 16, bar_x + 124, bar_y + 16,
+                       fill=BORDER_C, width=2, tags='hp_outer')
+        cv.create_line(bar_x + 124, bar_y + 16, bar_x + 120, bar_y + 23,
+                       fill=BORDER_C, width=2, tags='hp_outer')
+        cv.create_line(bar_x + 120, bar_y + 23, bar_x, bar_y + 23,
+                       fill=BORDER_C, width=2, tags='hp_outer')
+        cv.create_line(bar_x, bar_y + 23, bar_x, bar_y,
+                       fill=BORDER_C, width=2, tags='hp_outer')
 
         # ═══════════════════════════════════════
         #  .number_xt — 数值标签 (current/total, lv.N)

@@ -639,20 +639,14 @@ class SAOWebViewGUI:
         in vec2 uv;
         out vec4 fragColor;
         void main() {
-            vec2 center = vec2(0.5, 0.5);
-            vec2 d = uv - center;
-            float r = length(d);
-            float bind = length(center);
-            float power = 1.0 + strength;
-            vec2 nuv = center + normalize(d) * tan(r * power) * bind / tan(bind * power);
-            if (nuv.x < 0.0 || nuv.x > 1.0 || nuv.y < 0.0 || nuv.y > 1.0)
-                fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-            else
-                fragColor = texture(tex, nuv);
+            vec2 c = uv - 0.5;
+            float r2 = dot(c, c);
+            vec2 d = uv + c * strength * r2;
+            fragColor = texture(tex, d);
         }
         '''
         self._gl_prog = ctx.program(vertex_shader=vert_src, fragment_shader=frag_src)
-        self._gl_prog['strength'] = 0.55
+        self._gl_prog['strength'] = 0.65
 
         verts = np.array([
             -1, -1, 0, 0,
@@ -693,33 +687,27 @@ class SAOWebViewGUI:
         except Exception:
             pass
 
-        # ── numpy fallback (bilinear interpolation) ──
+        # ── numpy fallback (simple polynomial, matches SAO_GUI) ──
         try:
-            strength = 0.55
+            strength = 0.65
             arr = np.array(img, dtype=np.float32)
             cy, cx = h / 2.0, w / 2.0
-            Y, X = np.mgrid[0:h, 0:w]
-            dx = (X - cx) / cx
-            dy = (Y - cy) / cy
-            r = np.sqrt(dx * dx + dy * dy)
-            r = np.clip(r, 1e-8, None)
-            bind_r = np.sqrt(1.0 + (cy / cx) ** 2)
-            power = 1.0 + strength
-            factor = np.tan(r * power) * bind_r / np.tan(bind_r * power) / r
-            nx = ((dx * factor + 1.0) * cx).astype(np.float32)
-            ny = ((dy * factor + 1.0) * cy).astype(np.float32)
-            mask = (nx >= 0) & (nx < w - 1) & (ny >= 0) & (ny < h - 1)
-            x0 = np.clip(nx.astype(np.int32), 0, w - 2)
-            y0 = np.clip(ny.astype(np.int32), 0, h - 2)
-            fx = nx - x0; fy = ny - y0
-            fx3 = fx[:, :, None]; fy3 = fy[:, :, None]
-            out = (arr[y0, x0] * (1 - fx3) * (1 - fy3) +
-                   arr[y0, x0 + 1] * fx3 * (1 - fy3) +
-                   arr[y0 + 1, x0] * (1 - fx3) * fy3 +
-                   arr[y0 + 1, x0 + 1] * fx3 * fy3)
-            result = np.zeros_like(arr, dtype=np.uint8)
-            result[mask] = out[mask].astype(np.uint8)
-            return Image.fromarray(result)
+            Y, X = np.mgrid[0:h, 0:w].astype(np.float32)
+            nx = (X - cx) / cx
+            ny = (Y - cy) / cy
+            r2 = nx * nx + ny * ny
+            f = 1.0 + strength * r2
+            sx = np.clip(cx + nx * f * cx, 0.0, w - 1.001).astype(np.float32)
+            sy = np.clip(cy + ny * f * cy, 0.0, h - 1.001).astype(np.float32)
+            x0 = sx.astype(np.int32); x1 = x0 + 1
+            y0 = sy.astype(np.int32); y1 = y0 + 1
+            x1 = np.clip(x1, 0, w - 1); y1 = np.clip(y1, 0, h - 1)
+            fx = (sx - x0)[..., None]; fy = (sy - y0)[..., None]
+            out = (arr[y0, x0] * (1 - fx) * (1 - fy) +
+                   arr[y0, x1] * fx * (1 - fy) +
+                   arr[y1, x0] * (1 - fx) * fy +
+                   arr[y1, x1] * fx * fy)
+            return Image.fromarray(out.clip(0, 255).astype(np.uint8))
         except Exception:
             return img  # 无畸变 fallback
 
@@ -731,11 +719,15 @@ class SAOWebViewGUI:
             self._eval_menu(js)
 
     def _fisheye_loop(self, gen: int):
-        """实时刷新背景 — 菜单打开期间每 1 秒更新截图, CSS 动画实现 60fps.
+        """实时刷新背景 — 菜单打开期间持续截屏+GPU畸变, 目标60fps.
         gen: 代数标记, 如果新循环启动, 旧循环自动退出."""
+        import time as _time
         while self._fisheye_active and self._menu_visible and gen == self._fisheye_gen:
+            t0 = _time.time()
             self._push_fisheye_background()
-            time.sleep(1)
+            elapsed = _time.time() - t0
+            sleep_t = max(0.001, 0.016 - elapsed)  # 目标 ~60fps
+            _time.sleep(sleep_t)
 
     # ─── 面板管理 ───
     def _toggle_panel(self, panel_type):
@@ -754,9 +746,9 @@ class SAOWebViewGUI:
         url = os.path.join(web_dir, 'panel.html')
 
         sizes = {
-            'control': (280, 210),
+            'control': (280, 240),
             'piano': (700, 120),
-            'status': (220, 195),
+            'status': (220, 240),
             'viz': (240, 400),
         }
         w, h = sizes.get(panel_type, (280, 200))
@@ -861,6 +853,7 @@ class SAOWebViewGUI:
             'panel_piano': lambda: self._toggle_panel('piano'),
             'panel_status': lambda: self._toggle_panel('status'),
             'panel_viz': lambda: self._toggle_panel('viz'),
+            'midi_channel': self._show_channel_settings,
             'switch_sao': self._switch_to_sao_ui,
             'switch_old': self._switch_to_old_ui,
             'exit': self._exit,
@@ -888,6 +881,7 @@ class SAOWebViewGUI:
             'panel_piano': lambda: self._toggle_panel('piano'),
             'panel_status': lambda: self._toggle_panel('status'),
             'panel_viz': lambda: self._toggle_panel('viz'),
+            'midi_channel': self._show_channel_settings,
             'switch_sao': self._switch_to_sao_ui,
             'switch_old': self._switch_to_old_ui,
             'exit': self._exit,
@@ -1007,6 +1001,24 @@ class SAOWebViewGUI:
         self._eval_menu(f'SAO.updateBadge("glissando", {"true" if self._glissando else "false"})')
         self._eval_menu(f'SAO.showToast("结尾滑奏: {"ON" if self._glissando else "OFF"}")')
         self._sync_all_panels()
+
+    def _show_channel_settings(self):
+        """打开 MIDI 通道控制器对话框."""
+        if self._menu_visible:
+            self._close_menu()
+            time.sleep(0.5)
+        try:
+            import tkinter as tk
+            _tmp = tk.Tk()
+            _tmp.withdraw()
+            from midi_controller import MIDIControllerDialog
+            MIDIControllerDialog(_tmp, self.player, self.settings,
+                                 midi_path=self._current_file or '')
+            _tmp.mainloop()
+        except ImportError:
+            self._eval_menu('SAO.showAlert("错误", "MIDI控制器模块不可用", false)')
+        except Exception as e:
+            print(f"[SAO] channel settings: {e}")
 
     # ════════════════════════════════════════
     #  文件管理
