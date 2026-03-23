@@ -384,14 +384,12 @@ class SAOWebViewGUI:
 
     # ─── WebView 就绪 ───
     def _on_webview_started(self):
-        time.sleep(0.5)
-
         # 初始化 HP
-        self._eval_hp(f'setUsername("{self._safe_js(self._username)}")')
-        self._eval_hp(f'updateHP(0, 100, {self._level})')
-
-        # 同步菜单
-        self._sync_menu_info()
+        def _init():
+            self._eval_hp(f'setUsername("{self._safe_js(self._username)}")')
+            self._eval_hp(f'updateHP(0, 100, {self._level})')
+            self._sync_menu_info()
+        threading.Timer(0.5, _init).start()
 
         # 后台线程
         threading.Thread(target=self._progress_loop, daemon=True).start()
@@ -447,11 +445,13 @@ class SAOWebViewGUI:
         self._menu_visible = False
         self._play_sound('menu_close')
         self._eval_menu('SAO.closeMenu()')
-        time.sleep(0.5)
-        try:
-            self.menu_win.hide()
-        except Exception:
-            pass
+        # 非阻塞延迟隐藏 — 用 threading.Timer 代替 time.sleep
+        def _hide():
+            try:
+                self.menu_win.hide()
+            except Exception:
+                pass
+        threading.Timer(0.5, _hide).start()
 
     def _push_fisheye_background(self):
         """截图 → barrel distortion → 推送到菜单 JS 做背景"""
@@ -725,6 +725,13 @@ class SAOWebViewGUI:
         self._progress_total = 0.0
         while True:
             time.sleep(0.15)
+            try:
+                # 检查窗口是否还活着
+                if self.hp_win is None:
+                    return
+                _ = self.hp_win.x  # 如果窗口已销毁会抛异常
+            except Exception:
+                return
             if self._playing and not self._paused:
                 cur, total = self._progress_current, self._progress_total
                 if total > 0:
@@ -737,13 +744,15 @@ class SAOWebViewGUI:
         while True:
             time.sleep(5)
             try:
+                if self.hp_win is None:
+                    return
                 x, y = self.hp_win.x, self.hp_win.y
                 if x is not None and y is not None:
                     self.settings.set('float_x', x)
                     self.settings.set('float_y', y)
                     self.settings.save()
             except Exception:
-                pass
+                return  # 窗口已销毁, 退出循环
 
     # ════════════════════════════════════════
     #  3-UI 热切换

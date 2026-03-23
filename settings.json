@@ -10,7 +10,7 @@
   "speed": 1.0,
   "transpose": 0,
   "chord_mode": true,
-  "ui_mode": "sao",
+  "ui_mode": "webview",
   "bass_density": 1.0,
   "song_play_counts": {
     "6d6224e565ec": 1,

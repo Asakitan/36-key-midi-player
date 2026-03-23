@@ -1490,19 +1490,31 @@ void main() {
     #  Link Start 音效播放
     # ════════════════════════════════════════════════════════
     def _play_sound(self):
-        """在后台线程中播放 linkstart.mp3 音效"""
+        """在后台线程中播放 LinkStart 音效"""
         import threading
         def _do_play():
             try:
-                _snd = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'linkstart.mp3')
-                if not os.path.isfile(_snd):
+                # 优先使用 sao_sound 模块 (已处理路径映射)
+                try:
+                    from sao_sound import play_sound as _ps
+                    _ps('link_start', volume=0.8)
                     return
-                import pygame
-                if not pygame.mixer.get_init():
-                    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
-                snd = pygame.mixer.Sound(_snd)
-                self._sound_player = snd
-                snd.play()
+                except Exception:
+                    pass
+                # fallback: 直接查找音效文件
+                _base = os.path.dirname(os.path.abspath(__file__))
+                for _name in ('assets/sounds/LinkStart.SAO.Kirito.mp3',
+                              'assets/sounds/Startup.SAO.NerveGear.mp3',
+                              'linkstart.mp3'):
+                    _snd = os.path.join(_base, _name)
+                    if os.path.isfile(_snd):
+                        import pygame
+                        if not pygame.mixer.get_init():
+                            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+                        snd = pygame.mixer.Sound(_snd)
+                        self._sound_player = snd
+                        snd.play()
+                        return
             except Exception as e:
                 print(f'[LinkStart] Sound play failed: {e}')
         threading.Thread(target=_do_play, daemon=True).start()
@@ -2970,7 +2982,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.2.0+3200", on_close=None, **kw):
+                 version="v3.2.1+3201", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close

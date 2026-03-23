@@ -852,6 +852,7 @@ class SAOPlayerGUI:
         self._lift_loop_active = False
         self._skip_canvas_click = False
         self._float_progress_pct = 0.0
+        self._destroyed = False  # hot-switch 守卫: 阻止 after() 回调在 root 销毁后执行
         # 浮动呼吸动画
         self._breath_active = False
         self._breath_base_x = 0
@@ -922,11 +923,13 @@ class SAOPlayerGUI:
         cv.pack(fill=tk.BOTH, expand=True)
         self._float_cv = cv
 
-        # ── 颜色 (对标 HP CSS 变量) ──
-        BG = '#cdddf8'       # --bgColor: rgba(205,221,248,0.5) — 半透明蓝
-        BG_HOVER = '#e5e7ec'  # --hover: rgba(229,231,236,0.6)
-        BORDER_C = '#dad7d7'  # stroke: rgb(218,215,215)
-        FONT_C = '#e1dede'    # color: #e1dede
+        # ── 颜色 (对标 HP CSS 变量 — tkinter 无法做真正半透, 调暗底色模拟) ──
+        # CSS: --bgColor: rgba(205,221,248,0.5) — 半透明蓝, 在桌面上偏暗
+        # tkinter 用不透明色近似该效果, 使文字可读
+        BG = '#8BA0C7'       # ≈ rgba(205,221,248,0.5) over medium desktop
+        BG_HOVER = '#9AB0D4'  # hover 稍亮
+        BORDER_C = '#b0afaf'  # stroke: rgb(218,215,215) — 适配暗底
+        FONT_C = '#e8e8e8'    # 白灰文字, 对暗底可读
 
         # ═══════════════════════════════════════
         #  .xt_left — 22×40, clip-path 凹口
@@ -960,15 +963,19 @@ class SAOPlayerGUI:
         name_area_w = 75     # 名称区宽度 (对标 xt_right span max-width:72px)
         name_area_h = xt_h   # 全高
 
-        # 渐变填充
+        # 渐变填充 (从 BG 色渐变到透明色键)
+        # BG=#8BA0C7 = RGB(139,160,199)
+        bg_r, bg_g, bg_b = 139, 160, 199
+        trans_r, trans_g, trans_b = 1, 2, 1  # TRANS=#010201
         for i in range(name_area_w):
             t = i / name_area_w
             alpha = 0.5 if t < 0.5 else max(0, 0.5 * (1 - (t - 0.5) * 2))
-            r = int(205 + (255 - 205) * (1 - alpha))
-            g = int(221 + (255 - 221) * (1 - alpha))
-            b = int(248 + (255 - 248) * (1 - alpha))
+            r = int(bg_r * alpha + trans_r * (1 - alpha))
+            g = int(bg_g * alpha + trans_g * (1 - alpha))
+            b = int(bg_b * alpha + trans_b * (1 - alpha))
+            clr = f'#{max(2,r):02x}{max(2,g):02x}{max(2,b):02x}'
             cv.create_line(name_x + i, 0, name_x + i, name_area_h,
-                           fill=f'#{min(255,r):02x}{min(255,g):02x}{min(255,b):02x}',
+                           fill=clr,
                            tags='xt_right_grad')
 
         # 用户名 (对标 .xt_right > span, text-align:center, max-width:72px)
@@ -1146,7 +1153,7 @@ class SAOPlayerGUI:
         self._breath_step()
 
     def _breath_step(self):
-        if not self._breath_active:
+        if self._destroyed or not self._breath_active:
             return
         if self._drag.get('dragging', False):
             self.root.after(16, self._breath_step)
@@ -1181,6 +1188,8 @@ class SAOPlayerGUI:
         t0 = time.time()
 
         def _step():
+            if self._destroyed:
+                return
             try:
                 if not panel.winfo_exists():
                     return
@@ -1320,6 +1329,8 @@ class SAOPlayerGUI:
         steps = max(1, ms // 16)
         step = [0]
         def tick():
+            if self._destroyed:
+                return
             if not self._float.winfo_exists():
                 return
             step[0] += 1
@@ -1334,7 +1345,7 @@ class SAOPlayerGUI:
 
     def _lift_float_loop(self):
         """SAO 菜单开启时持续将悬浮按钮保持在最上层"""
-        if not self._lift_loop_active:
+        if self._destroyed or not self._lift_loop_active:
             return
         try:
             if self._float.winfo_exists():
@@ -1509,6 +1520,8 @@ class SAOPlayerGUI:
 
     def _start_fisheye_with_retry(self, retries=5, delay=80):
         """带重试的鱼眼启动 — 首次进入时菜单可能还未完成渲染"""
+        if self._destroyed:
+            return
         if self._fisheye_ov is not None:
             return  # 已在运行
         if retries <= 0:
@@ -1544,8 +1557,9 @@ class SAOPlayerGUI:
         self._lift_loop_active = False
         self._player_panel = None
         self._maybe_stop_fisheye()
-        self._restore_focus()
-        self.root.after(400, self._start_float_breath)
+        if not self._destroyed:
+            self._restore_focus()
+            self.root.after(400, self._start_float_breath)
 
     def _refresh_menu_if_open(self):
         """如果菜单打开, 刷新子菜单和面板"""
@@ -2451,6 +2465,8 @@ class SAOPlayerGUI:
             try: ov.after(16, _tick)
             except Exception: pass
 
+        if self._destroyed:
+            return
         ov.after(30, _init_layered)
         ov.after(50, _tick)
 
@@ -2692,6 +2708,10 @@ class SAOPlayerGUI:
         dur = 0.90
 
         def _fade():
+            if self._destroyed:
+                try: ov.destroy()
+                except: pass
+                return
             elapsed = time.time() - t0
             if elapsed >= dur:
                 try:
@@ -2736,7 +2756,7 @@ class SAOPlayerGUI:
             anim_start = time.time()
 
             def entrance_tick():
-                if not self._float.winfo_exists():
+                if self._destroyed or not self._float.winfo_exists():
                     return
                 dt = time.time() - anim_start
                 if dt < 0.4:
@@ -3157,6 +3177,8 @@ class SAOPlayerGUI:
     # ══════════════════════════════════════════════
     def _bind_callbacks(self):
         def on_note(key, note, is_chord=False):
+            if self._destroyed:
+                return
             dur = int(min(2000, max(100, note.duration * 1000)))
             vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8
             midi_note = note.note
@@ -3166,18 +3188,26 @@ class SAOPlayerGUI:
                 self.root.after(0, lambda k=key, v=vel: self._visualizer.trigger_note(k, v))
 
         def on_progress(current, total):
+            if self._destroyed:
+                return
             self.root.after(0, lambda: self._update_progress(current, total))
 
         def on_end():
+            if self._destroyed:
+                return
             self.root.after(0, self._on_playback_end)
 
         def on_sustain(active: bool):
+            if self._destroyed:
+                return
             self._sustain_active = active
             if self._player_panel:
                 self.root.after(0, lambda: self._player_panel.update_sustain(active))
             self.root.after(0, self._update_status_panel)
 
         def on_shift(mode):
+            if self._destroyed:
+                return
             _labels = {'normal': '普通模式', 'shift': 'SHIFT 高音',
                        'ctrl': 'CTRL 低音', 'lt': 'LT 极低', 'gt': 'GT 极高'}
             text = _labels.get(mode, mode)
@@ -3301,6 +3331,9 @@ class SAOPlayerGUI:
         self.settings.save()
 
         def _do_switch():
+            self._destroyed = True
+            self._breath_active = False
+            self._lift_loop_active = False
             try:
                 if hasattr(self, '_hotkey_mgr'):
                     self._hotkey_mgr.cleanup()
@@ -3342,6 +3375,9 @@ class SAOPlayerGUI:
 
         def _do_switch():
             """热切换: 销毁 SAO UI → 构建 Old UI"""
+            self._destroyed = True
+            self._breath_active = False
+            self._lift_loop_active = False
             # 清理 SAO 资源
             try:
                 if hasattr(self, '_hotkey_mgr'):
@@ -3383,7 +3419,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.0+3200\n\n"
+            "咲 Midi Player  SAO Edition\nv3.2.1+3201\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3411,6 +3447,9 @@ class SAOPlayerGUI:
             self._float, on_done=on_profile_done))
 
     def _on_close(self):
+        self._destroyed = True
+        self._breath_active = False
+        self._lift_loop_active = False
         if hasattr(self, '_hotkey_mgr'):
             self._hotkey_mgr.cleanup()
         self._stop_fisheye_overlay()
