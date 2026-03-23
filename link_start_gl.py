@@ -14,6 +14,7 @@ SAO Link Start — pyglet 2.x OpenGL 渲染器
 """
 
 import math
+import os
 import random
 import time
 import ctypes
@@ -123,6 +124,7 @@ class LinkStartGL:
         self._speed_lines = []
         self._finished = False
         self._shapes = []
+        self._sound_player = None
 
     def run(self):
         """启动动画 (阻塞式)"""
@@ -174,6 +176,14 @@ class LinkStartGL:
         self._generate_streaks()
         self._start_time = time.time()
 
+        # 播放 Link Start 音效
+        try:
+            _snd = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'linkstart.mp3')
+            _src = pyglet.media.load(_snd, streaming=False)
+            self._sound_player = _src.play()
+        except Exception:
+            pass
+
         @self._window.event
         def on_draw():
             self._render()
@@ -201,6 +211,11 @@ class LinkStartGL:
             return
         self._finished = True
         pyglet.clock.unschedule(self._update)
+        if self._sound_player:
+            try:
+                self._sound_player.pause()
+            except Exception:
+                pass
         if self._window:
             try:
                 self._window.close()
