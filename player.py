@@ -72,7 +72,7 @@ PIANO_LOW_SUSTAIN = 0.85         # 低音根音缩短，避免低音抢戏
 # 弹性速度（rubato）：长音符微微拉伸，短音符微微加快
 PIANO_RUBATO_ENABLED = True      # 启用弹性速度
 PIANO_RUBATO_LONG_STRETCH = 1.22 # 长音符拉伸系数 (>0.5s 的音符)，更有歌唱感
-PIANO_RUBATO_SHORT_TIGHTEN = 1.0 # 短音符不缩短（避免游戏吞音）
+PIANO_RUBATO_SHORT_TIGHTEN = 1.03 # 短音符微微拉伸3%，避免过于机械急促
 # 乐句呼吸：乐句结尾稍微渐慢
 PIANO_PHRASE_BREATH = True       # 启用乐句呼吸
 PIANO_PHRASE_GAP_THRESHOLD = 0.3 # 乐句间隙阈值(秒)，超过此值视为新乐句
@@ -297,7 +297,7 @@ class KeyboardSimulator:
             
             self._mode_toggle_count += 1
             self._mode_last_toggle_time = time.monotonic()
-            time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)  # 200ms强制等待，确保游戏完成模式切换
+            time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)  # 65ms强制等待，确保游戏完成模式切换
         except Exception as e:
             print(f"[MODE] {key_name} 切换失败: {e}")
 
@@ -474,7 +474,7 @@ class MidiPlayer:
         self._glissando_style = 'auto'      # 滑奏风格: 'auto', 'up', 'down', 'updown'
         
         # 熟练度模拟系统
-        self._proficiency_enabled = True    # 启用熟练度模拟
+        self._proficiency_enabled = False   # 熟练度模拟（默认关闭）
         self._song_play_counts = {}         # 曲目播放次数记录 {song_hash: count}
         self._current_song_hash = None      # 当前曲目hash
         self._current_proficiency = 0.0     # 当前熟练度 0.0-1.0
@@ -872,6 +872,11 @@ class MidiPlayer:
         best_hit_rate = 0
         best_score = -1
         
+        # 分析原始音符中心, 决定偏移方向偏好
+        original_center = sum(notes) / len(notes)
+        # 当原始音符偏低时, 倾向向上移调 (正偏移)
+        upward_bias = max(0, (PREFERRED_CENTER - original_center) / 24.0)  # 0~1
+        
         for octave_shift in range(-5, 6):
             offset = octave_shift * 12
             hits = sum(1 for n in notes if GAME_MIN <= n + offset <= GAME_MAX)
@@ -893,8 +898,15 @@ class MidiPlayer:
             high_ratio = sum(1 for n in in_range if n >= GAME_MAX - 11) / max(len(in_range), 1)
             extreme_penalty = max(0, low_ratio - 0.25) * 0.3 + max(0, high_ratio - 0.25) * 0.3
             
-            # 对称偏移惩罚：任何方向的大偏移都扣分
-            shift_penalty = 0.03 * abs(offset / 12)
+            # 非对称偏移惩罚：偏低时鼓励向上移, 向下移惩罚更重
+            if offset > 0:
+                # 向上移调 — 音符偏低时减轻惩罚
+                shift_penalty = 0.03 * (1.0 - upward_bias * 0.6) * abs(offset / 12)
+            elif offset < 0:
+                # 向下移调 — 音符偏低时加重惩罚
+                shift_penalty = 0.03 * (1.0 + upward_bias * 0.8) * abs(offset / 12)
+            else:
+                shift_penalty = 0
             
             score = hit_rate * 0.45 + center_score * 0.3 + spread * 0.15 - extreme_penalty - shift_penalty
             
@@ -3574,7 +3586,7 @@ class MidiPlayer:
         策略：
         1. 始终保留最低音（根音/bass）
         2. 始终保留最高音（旋律）
-        3. 中间音按力度和音程重要性选择
+        3. 中间音按高音优先+力度重要性选择 (MELODY_PRIORITY)
         """
         if len(keys_to_press) <= max_keys:
             return keys_to_press
@@ -3592,12 +3604,9 @@ class MidiPlayer:
         middle_items = sorted_items[1:-1] if len(sorted_items) > 2 else []
         
         if remaining_slots > 0 and middle_items:
-            # 中间音按力度排序，保留力度最大的
-            middle_by_velocity = sorted(middle_items, key=lambda x: x[1][3], reverse=True)  # x[1][3] = velocity
-            
             # 优先保留五度音（与根音相差7个半音）
             root_note = sorted_items[0][1][4]
-            fifth_candidates = [item for item in middle_by_velocity 
+            fifth_candidates = [item for item in middle_items 
                                if abs(item[1][4] - root_note) % 12 == 7]  # 五度音
             
             # 先添加五度音
@@ -3605,8 +3614,14 @@ class MidiPlayer:
                 preserved[item[0]] = item[1]
                 remaining_slots -= 1
             
-            # 再添加其他高力度音
-            for item in middle_by_velocity:
+            # 高音优先：按音高降序排列中间音, 高音旋律更重要
+            if MELODY_PRIORITY:
+                middle_by_priority = sorted(middle_items, 
+                    key=lambda x: (x[1][4] * 0.6 + x[1][3] * 0.4), reverse=True)
+            else:
+                middle_by_priority = sorted(middle_items, key=lambda x: x[1][3], reverse=True)
+            
+            for item in middle_by_priority:
                 if remaining_slots <= 0:
                     break
                 if item[0] not in preserved:

@@ -684,7 +684,9 @@ class SAOPlayerGUI:
         self._direct_c = False
         self._sustain_active = False
         self._shift_mode = 'normal'     # 当前演奏模式: normal/shift/ctrl/lt/gt
-        self._proficiency_enabled = True
+        self._proficiency_enabled = False
+        self._panels_hidden = False  # 一键隐藏所有面板
+        self._hidden_panels_snapshot = []  # 隐藏前记录哪些面板是开的
         self._player_panel = None  # 当 SAO 菜单打开时设置
         self._picker = None        # SAOFilePicker 引用 (防止 GC)
         self._piano_panel = None   # 浮动钢琴面板
@@ -901,6 +903,7 @@ class SAOPlayerGUI:
         self._float_ctx.add_command(label='◉ 状态面板', command=self._toggle_status_panel)
         self._float_ctx.add_command(label='⚙ 控制面板', command=self._toggle_control_panel)
         self._float_ctx.add_separator()
+        self._float_ctx.add_command(label='◈ 隐藏/显示面板', command=self._toggle_hide_all_panels)
         self._float_ctx.add_command(label='↺ 切换到 Old UI', command=self._switch_to_old_ui)
         self._float_ctx.add_command(label='✕ 退出', command=self._on_close)
         def _show_ctx_menu(e):
@@ -1183,6 +1186,7 @@ class SAOPlayerGUI:
                 {'icon': '◉', 'label': '状态面板  (延音/模式)', 'command': self._toggle_status_panel},
                 {'icon': '⚙', 'label': '控制面板  (音部/速度/移调)', 'command': self._toggle_control_panel},
                 {'icon': '⊤', 'label': '滑音: ' + ('ON' if self._glissando else 'OFF'), 'command': self._toggle_glissando},
+                {'icon': '◈', 'label': '一键隐藏面板' + (' ✓' if self._panels_hidden else ''), 'command': self._toggle_hide_all_panels},
             ],
             '关于': [
                 {'icon': '◇', 'label': '关于本程序', 'command': self._show_about},
@@ -1214,7 +1218,11 @@ class SAOPlayerGUI:
         self._sao_menu.bind_events()
 
     def _fade_panel_in(self, panel, target=0.92, duration_ms=350):
-        """浮动面板淡入 — 平滑 ease-out 动画"""
+        """浮动面板淡入 — 平滑 ease-out 动画, 并确保鱼眼叠加层运行"""
+        # 面板打开时, 如果鱼眼尚未启动则启动
+        if self._fisheye_ov is None:
+            self.root.after(100, self._start_fisheye_overlay)
+
         t0 = time.time()
         dur = duration_ms / 1000.0
 
@@ -1250,11 +1258,24 @@ class SAOPlayerGUI:
         # 不启动 _lift_float_loop (tkinter .lift() 会引起闪烁);
         # z-order 完全由 _start_fisheye_overlay 内的 Win32 SetWindowPos 管理
         self._lift_loop_active = False
-        # 延迟启动鱼眼叠加 (等菜单渲染完再截图)
-        self.root.after(50, self._start_fisheye_overlay)
+        # 延迟启动鱼眼叠加 (等菜单渲染完再截图), 带重试确保首次也能生效
+        self._start_fisheye_with_retry(retries=5, delay=80)
+
+    def _start_fisheye_with_retry(self, retries=5, delay=80):
+        """带重试的鱼眼启动 — 首次进入时菜单可能还未完成渲染"""
+        if self._fisheye_ov is not None:
+            return  # 已在运行
+        if retries <= 0:
+            return
+        if self._sao_menu.visible or self._any_panel_open():
+            self._start_fisheye_overlay()
+        else:
+            self.root.after(delay, lambda: self._start_fisheye_with_retry(retries - 1, delay))
 
     def _any_panel_open(self):
-        """检查是否有任何浮动面板处于打开状态"""
+        """检查是否有任何浮动面板处于打开且可见状态"""
+        if self._panels_hidden:
+            return False
         for p in (self._piano_panel, self._viz_panel,
                   self._status_panel, self._control_panel):
             try:
@@ -1273,10 +1294,10 @@ class SAOPlayerGUI:
         self._stop_fisheye_overlay()
 
     def _on_sao_menu_close(self):
-        """SAO 菜单关闭时 — 重启呼吸动画; 鱼眼由 _tick 自动渐隐, 此处作安全兜底"""
+        """SAO 菜单关闭时 — 重启呼吸动画; 面板仍开时保持鱼眼, 否则渐隐销毁"""
         self._lift_loop_active = False
         self._player_panel = None
-        self._stop_fisheye_overlay()
+        self._maybe_stop_fisheye()
         self._restore_focus()
         self.root.after(400, self._start_float_breath)
 
@@ -1823,8 +1844,49 @@ class SAOPlayerGUI:
                 self._control_panel._dens_lbl.configure(text=f'{self._bass_density:.0%}')
         self._refresh_menu_if_open()
 
+    def _toggle_hide_all_panels(self):
+        """一键隐藏/显示所有浮动面板 (不销毁, 只是 withdraw/deiconify)"""
+        panels = [
+            ('piano',   self._piano_panel),
+            ('viz',     self._viz_panel),
+            ('status',  self._status_panel),
+            ('control', self._control_panel),
+        ]
+
+        if not self._panels_hidden:
+            # ── 隐藏 ──
+            self._hidden_panels_snapshot = []
+            for name, p in panels:
+                try:
+                    if p and p.winfo_exists():
+                        self._hidden_panels_snapshot.append(name)
+                        p.withdraw()
+                except Exception:
+                    pass
+            self._panels_hidden = True
+            self._maybe_stop_fisheye()
+        else:
+            # ── 恢复 ──
+            for name, p in panels:
+                try:
+                    if name in self._hidden_panels_snapshot and p and p.winfo_exists():
+                        p.deiconify()
+                        p.lift()
+                except Exception:
+                    pass
+            self._hidden_panels_snapshot = []
+            self._panels_hidden = False
+            # 面板恢复后确保鱼眼也恢复
+            if self._fisheye_ov is None and self._any_panel_open():
+                self.root.after(100, self._start_fisheye_overlay)
+
+        self._refresh_menu_if_open()
+
     def _restore_panels(self):
         """恢复上次会话中打开的浮动面板"""
+        # 如果面板处于隐藏状态则跳过恢复
+        if self._panels_hidden:
+            return
         if self.settings.get('show_piano', False):
             if not (self._piano_panel and self._piano_panel.winfo_exists()):
                 self._toggle_piano_panel()
@@ -1981,7 +2043,7 @@ class SAOPlayerGUI:
           • 菜单关闭 16ms 内检测 → 同步渐隐, 无需二次点击
         """
         self._stop_fisheye_overlay()
-        if not self._sao_menu.visible:
+        if not self._sao_menu.visible and not self._any_panel_open():
             return
         self._lift_loop_active = False
 
@@ -2793,6 +2855,7 @@ class SAOPlayerGUI:
             'speed_up': lambda: self.root.after(0, self._speed_up),
             'speed_down': lambda: self.root.after(0, self._speed_down),
             'toggle_topmost': lambda: self.root.after(0, self._toggle_topmost),
+            'hide_panels': lambda: self.root.after(0, self._toggle_hide_all_panels),
         })
 
     # ══════════════════════════════════════════════
@@ -2812,17 +2875,34 @@ class SAOPlayerGUI:
 
     def _switch_to_old_ui(self):
         self.settings.set('ui_mode', 'old')
+        self.settings.save()  # 确保持久化
         if self._sao_menu.visible:
             self._sao_menu.close()
-        SAODialog.showinfo(self._float, "切换 UI",
-                           "将切换到经典 UI 模式。\n请重新启动程序。")
+
+        def _do_restart():
+            """实际执行重启 — 关闭当前窗口并启动新进程"""
+            import subprocess
+            try:
+                # 启动新进程
+                subprocess.Popen(
+                    [sys.executable] + sys.argv,
+                    cwd=os.path.dirname(os.path.abspath(__file__))
+                )
+            except Exception as e:
+                print(f"[重启] 启动新进程失败: {e}")
+            # 关闭当前实例
+            self._on_close()
+
+        SAODialog.ask(self._float, "切换 UI",
+                      "将切换到经典 UI 模式并自动重启。\n确定继续吗？",
+                      on_ok=_do_restart)
 
     def _show_about(self):
         if self._sao_menu.visible:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.1.1+3101\n\n"
+            "咲 Midi Player  SAO Edition\nv3.1.2+3102\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

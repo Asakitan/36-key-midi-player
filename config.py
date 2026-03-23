@@ -138,8 +138,8 @@ KEY_TO_MIDI_GT = {v: k for k, v in MIDI_TO_KEY_GT.items()}
 DEFAULT_MODE_SYSTEM = 'classic'
 
 # 模式切换设置
-MODE_SWITCH_DELAY_MS = 100    # 切换模式后必须等待的延迟(毫秒)，确保游戏响应
-MODE_KEY_PRESS_MS = 50        # 模式切换按键按下时长(毫秒)
+MODE_SWITCH_DELAY_MS = 65     # 切换模式后必须等待的延迟(毫秒)，确保游戏响应
+MODE_KEY_PRESS_MS = 35        # 模式切换按键按下时长(毫秒)
 
 # 黑键集合（完整5八度: C2-B6, MIDI 36-95）
 BLACK_KEY_NOTES = {
@@ -182,7 +182,7 @@ CHORD_PRESERVE_BASS = True   # 保留低音根音（和弦基础）
 CHORD_PRESERVE_TOP = True    # 保留高音旋律（最重要）
 
 # GUI设置
-WINDOW_TITLE = "咲Midiplayer v3.0.3 60/88键位"
+WINDOW_TITLE = "咲Midiplayer v3.1.2+3102 60/88键位"
 WINDOW_SIZE = "900x980"
 BUTTON_WIDTH = 60
 BUTTON_HEIGHT = 60
@@ -194,6 +194,7 @@ DEFAULT_HOTKEYS = {
     'speed_up': 'F7',           # 加速
     'speed_down': 'F8',         # 减速
     'toggle_topmost': 'F9',     # 置顶切换
+    'hide_panels': 'F10',       # 一键隐藏/显示面板
 }
 
 # 配置文件路径

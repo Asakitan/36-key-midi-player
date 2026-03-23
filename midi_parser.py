@@ -396,6 +396,7 @@ class MidiParser:
         self.harmony_channels: List[int] = []   # 和声通道
         self.bass_channels: List[int] = []      # 贝斯通道
         self.recommended_transpose: Dict[int, int] = {}  # 推荐移调 {channel: semitones}
+        self.recommended_global_octave_shift: int = 0     # 全局推荐八度偏移 (正=向上)
         
         # === 音高分部分析（按音高而非乐器） ===
         self.melody_notes: List[NoteEvent] = []   # 高音部（主旋律）
@@ -1391,6 +1392,25 @@ class MidiParser:
                     self.harmony_channels.append(ch)
                 target_center = 54  # Z-M行中心
                 self.recommended_transpose[ch] = int(target_center - avg) if abs(target_center - avg) > 6 else 0
+        
+        # === 全局八度偏移推荐 ===
+        # 综合所有音符, 当整体偏低时推荐向上移
+        all_notes_flat = [n for stats in channel_stats.values() for n in stats['notes']]
+        if all_notes_flat:
+            global_avg = sum(all_notes_flat) / len(all_notes_flat)
+            IDEAL_CENTER = 65.0  # F4 — 演奏最佳区
+            low_note_ratio = sum(1 for n in all_notes_flat if n < 60) / len(all_notes_flat)
+            
+            if global_avg < 54 and low_note_ratio > 0.6:
+                # 严重偏低 — 推荐上移2个八度
+                self.recommended_global_octave_shift = 2
+                print(f"[通道分析] 全局音高偏低 (均值{global_avg:.0f}, 低音占{low_note_ratio:.0%}), 推荐上移+2八度")
+            elif global_avg < 60 and low_note_ratio > 0.4:
+                # 较低 — 推荐上移1个八度
+                self.recommended_global_octave_shift = 1
+                print(f"[通道分析] 全局音高偏低 (均值{global_avg:.0f}, 低音占{low_note_ratio:.0%}), 推荐上移+1八度")
+            else:
+                self.recommended_global_octave_shift = 0
     
     def _scan_tempo(self):
         """预扫描MIDI文件获取tempo信息"""
@@ -2187,6 +2207,7 @@ class MidiParser:
             'harmony_channels': self.harmony_channels,
             'bass_channels': self.bass_channels,
             'recommended_transpose': self.recommended_transpose,
+            'recommended_global_octave_shift': self.recommended_global_octave_shift,
         }
     
     def get_instrument_info(self) -> dict:
@@ -2342,6 +2363,7 @@ class JSParser:
         self.harmony_channels: List[int] = []
         self.bass_channels: List[int] = []
         self.recommended_transpose: Dict[int, int] = {}
+        self.recommended_global_octave_shift: int = 0
         
         # tempo兼容
         self.tempo_changes: list = []
