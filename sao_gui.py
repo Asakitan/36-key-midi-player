@@ -794,9 +794,9 @@ class SAOPlayerGUI:
         # 分三个区域: 顶部条(oy ~ bar_y), 底部右(bar_y+PH ~ oy+BH*0.80), 最底部(oy+BH*0.80 ~ oy+BH)
         bg_r, bg_g, bg_b = 0x9d, 0xb5, 0xd0  # BG = #9db5d0
         tr_r, tr_g, tr_b = 0x01, 0x02, 0x01  # TRANS = #010201
-        fade_start = xr_x + xr_w // 2  # 50% 开始渐变
-        fade_end   = xr_x + xr_w       # 100% 完全透明
-        n_strips = 16
+        fade_start = xr_x + int(xr_w * 0.40)  # 40% 开始渐变
+        fade_end   = xr_x + xr_w                 # 100% 完全透明
+        n_strips = 48
         for i in range(n_strips):
             t = i / max(1, n_strips - 1)
             # 非线性: 后半快速渐隐
@@ -3254,7 +3254,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.3.0+3300\n\n"
+            "咲 Midi Player  SAO Edition\nv3.3.1+3301\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

@@ -591,6 +591,17 @@ class SAOWebViewGUI:
         gen = self._fisheye_gen
         threading.Thread(target=self._fisheye_loop, args=(gen,), daemon=True).start()
 
+        # 恢复窗口透明度, 以防上次关闭时已置 alpha=0
+        try:
+            _hwnd2 = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
+            if _hwnd2:
+                GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000; LWA_ALPHA = 2
+                _ex2 = ctypes.windll.user32.GetWindowLongW(_hwnd2, GWL_EXSTYLE)
+                if not (_ex2 & WS_EX_LAYERED):
+                    ctypes.windll.user32.SetWindowLongW(_hwnd2, GWL_EXSTYLE, _ex2 | WS_EX_LAYERED)
+                ctypes.windll.user32.SetLayeredWindowAttributes(_hwnd2, 0, 255, LWA_ALPHA)
+        except Exception:
+            pass
         try:
             self.menu_win.show()
         except Exception:
@@ -612,6 +623,18 @@ class SAOWebViewGUI:
         self._fisheye_active = False  # 停止鱼眼刷新
         self._play_sound('menu_close')
         self._eval_menu('SAO.closeMenu()')
+
+        # 立即将菜单窗口设为完全透明, 避免 hide() 延迟期间出现白屏
+        try:
+            _hwnd = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
+            if _hwnd:
+                GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000; LWA_ALPHA = 2
+                _ex = ctypes.windll.user32.GetWindowLongW(_hwnd, GWL_EXSTYLE)
+                if not (_ex & WS_EX_LAYERED):
+                    ctypes.windll.user32.SetWindowLongW(_hwnd, GWL_EXSTYLE, _ex | WS_EX_LAYERED)
+                ctypes.windll.user32.SetLayeredWindowAttributes(_hwnd, 0, 0, LWA_ALPHA)
+        except Exception:
+            pass
 
         def _hide():
             time.sleep(0.4)

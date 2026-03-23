@@ -33,8 +33,8 @@ html, body {
     left: 0; top: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(3px);
+    background: rgba(0, 0, 0, 0.30);
+    backdrop-filter: blur(2px);
     perspective: 600px;
     opacity: 0;
     pointer-events: none;
@@ -800,7 +800,7 @@ function setFisheyeBg(dataUrl) {
             document.getElementById('popup-overlay').prepend(el);
         }
         el.style.backgroundImage = 'url(' + dataUrl + ')';
-        setTimeout(function(){ el.style.opacity = '0.45'; }, 50);
+        setTimeout(function(){ el.style.opacity = '0.75'; }, 50);
         return;
     }
 
@@ -813,7 +813,7 @@ function setFisheyeBg(dataUrl) {
         if (!_feRunning) {
             _feRunning = true;
             requestAnimationFrame(_fisheyeFrame);
-            setTimeout(function(){ _feCanvas.style.opacity = '0.45'; }, 50);
+            setTimeout(function(){ _feCanvas.style.opacity = '0.75'; }, 50);
         }
     };
     img.src = dataUrl;
