@@ -194,6 +194,20 @@ class SAOWebAPI:
     def play_sound(self, name: str):
         threading.Thread(target=self._g._play_sound, args=(name,), daemon=True).start()
 
+    def window_drag(self, dx, dy):
+        """JS→Python drag bridge: move HP window by (dx, dy)"""
+        try:
+            x = self._g.hp_win.x + int(dx)
+            y = self._g.hp_win.y + int(dy)
+            self._g.hp_win.move(x, y)
+        except Exception:
+            pass
+
+    def set_ctx_menu_active(self, active):
+        """控制 HP 窗口 click-through 区域 (右键菜单开关)"""
+        self._g._ctx_menu_active = bool(active)
+        self._g._set_hp_region(expanded=bool(active))
+
     def get_state(self):
         """供 JS 查询当前状态 (JSON 格式)"""
         return json.dumps({
@@ -277,6 +291,11 @@ class SAOWebViewGUI:
         # JS API
         self._api = SAOWebAPI(self)
 
+        # 窗口 click-through
+        self._hp_hwnd = 0
+        self._ctx_menu_active = False
+        self._fisheye_active = False
+
         # 回调
         self.player.on_progress = self._on_progress
         self.player.on_playback_end = self._on_playback_end
@@ -359,13 +378,48 @@ class SAOWebViewGUI:
 
     # ─── 透明设置 (pywebview transparent=True 自动处理) ───
 
+    # ─── 点击穿透 ───
+    def _setup_click_through(self):
+        """限制 HP 窗口可交互区域 — 只保留 HP 条, 透明区域鼠标穿透."""
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, '♪ SAO HP')
+            if not hwnd:
+                return
+            self._hp_hwnd = hwnd
+            self._set_hp_region(False)
+        except Exception as e:
+            print(f"[SAO] click-through setup failed: {e}")
+
+    def _set_hp_region(self, expanded=False):
+        """设置 HP 窗口 Region — 限制点击/渲染区域."""
+        if not self._hp_hwnd:
+            return
+        try:
+            gdi32 = ctypes.windll.gdi32
+            user32 = ctypes.windll.user32
+            if expanded:
+                # 右键菜单打开: 扩展到全窗口 (含菜单空间)
+                hrgn = gdi32.CreateRectRgn(0, 0, 430, 280)
+            else:
+                # 默认: 只保留 HP 条 (body pad=8 + XTBox=40 + number=20 = 68px)
+                hrgn = gdi32.CreateRectRgn(0, 0, 420, 68)
+            user32.SetWindowRgn(self._hp_hwnd, hrgn, True)
+        except Exception:
+            pass
+
     # ─── WebView 就绪 ───
     def _on_webview_started(self):
         # 初始化 HP
         def _init():
+            from character_profile import calc_level
             self._eval_hp(f'setUsername("{self._safe_js(self._username)}")')
-            self._eval_hp(f'updateHP(0, 100, {self._level})')
+            lv, cur_xp, need_xp = calc_level(self._xp)
+            self._eval_hp(f'updateHP({cur_xp}, {need_xp}, {lv})')
             self._sync_menu_info()
+            # 设置 click-through (延迟确保窗口已完全创建)
+            time.sleep(0.3)
+            self._setup_click_through()
         threading.Timer(0.5, _init).start()
 
         # 后台线程
@@ -407,8 +461,9 @@ class SAOWebViewGUI:
         self._sync_menu_info()
         self._play_sound('menu_open')
 
-        # 鱼眼背景 (非阻塞)
-        threading.Thread(target=self._push_fisheye_background, daemon=True).start()
+        # 实时鱼眼背景循环 (非阻塞)
+        self._fisheye_active = True
+        threading.Thread(target=self._fisheye_loop, daemon=True).start()
 
         try:
             self.menu_win.show()
@@ -426,6 +481,7 @@ class SAOWebViewGUI:
 
     def _close_menu(self):
         self._menu_visible = False
+        self._fisheye_active = False  # 停止鱼眼刷新
         self._play_sound('menu_close')
         self._eval_menu('SAO.closeMenu()')
         # 非阻塞延迟隐藏 — 用 threading.Timer 代替 time.sleep
@@ -442,6 +498,12 @@ class SAOWebViewGUI:
         if b64:
             js = f'SAO.setFisheyeBg("data:image/jpeg;base64,{b64}")'
             self._eval_menu(js)
+
+    def _fisheye_loop(self):
+        """实时刷新鱼眼背景 — 菜单打开期间每 2 秒更新"""
+        while self._fisheye_active and self._menu_visible:
+            self._push_fisheye_background()
+            time.sleep(2)
 
     # ─── 同步信息 ───
     def _sync_menu_info(self):
@@ -670,7 +732,6 @@ class SAOWebViewGUI:
         self._playing = False
         self._paused = False
         self._eval_hp('setPlayState("idle")')
-        self._eval_hp(f'updateHP(0, 100, {self._level})')
 
         # 经验值
         try:
@@ -683,6 +744,8 @@ class SAOWebViewGUI:
             self._songs_played = profile.get('songs_played', 0)
             lv, cur, need = calc_level(self._xp)
             self._xp_pct = (cur / max(1, need)) * 100
+            # 更新 HP 条显示 XP (空闲时显示经验值)
+            self._eval_hp(f'updateHP({cur}, {need}, {lv})')
             if leveled_up:
                 self._play_sound('alert')
                 self._eval_menu(f'SAO.showAlert("LEVEL UP!", "Lv.{old_lv} → Lv.{new_lv}", false)')

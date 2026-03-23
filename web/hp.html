@@ -44,8 +44,7 @@ body {
     letter-spacing: 1px;
     color: #e1dede;
     font-size: 12px;
-    cursor: pointer;
-    -webkit-app-region: drag;
+    cursor: grab;
 }
 
 .xt_left, .xt_right, .number_xt { height: 100%; }
@@ -292,45 +291,97 @@ function snd(name) {
     } catch(e) {}
 }
 
-/* ═══ Click → toggle menu ═══ */
-document.getElementById('hp').addEventListener('click', function(e) {
-    if (e.button !== 0) return;
-    var ctx = document.getElementById('ctx-menu');
-    if (ctx.classList.contains('show')) return;
-    snd('click');
-    if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.toggle_menu();
-    }
-});
-
-/* ═══ Right-click → context menu ═══ */
+/* ═══ Context Menu helpers ═══ */
 var ctxMenu = document.getElementById('ctx-menu');
 
+function showCtxMenu(x, y) {
+    if (ctxMenu.classList.contains('show')) {
+        hideCtxMenu();
+        return;
+    }
+    if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.set_ctx_menu_active(true);
+    }
+    setTimeout(function() {
+        ctxMenu.style.left = x + 'px';
+        ctxMenu.style.top  = y + 'px';
+        ctxMenu.classList.add('show');
+    }, 50);
+}
+
+function hideCtxMenu() {
+    ctxMenu.classList.remove('show');
+    if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.set_ctx_menu_active(false);
+    }
+}
+
+/* ═══ Drag & Click (manual JS — replaces CSS app-region:drag) ═══
+   mousedown+move = drag window,  mousedown+up (no move) = click ═══ */
+(function() {
+    var hp = document.getElementById('hp');
+    var drag = { on: false, sx: 0, sy: 0, moved: false };
+
+    hp.addEventListener('mousedown', function(e) {
+        if (e.button !== 0) return;
+        /* Ignore if clicking inside context menu */
+        if (ctxMenu.contains(e.target)) return;
+        drag.on = true;
+        drag.sx = e.screenX;
+        drag.sy = e.screenY;
+        drag.moved = false;
+        hp.style.cursor = 'grabbing';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!drag.on) return;
+        var dx = e.screenX - drag.sx;
+        var dy = e.screenY - drag.sy;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+            drag.moved = true;
+            drag.sx = e.screenX;
+            drag.sy = e.screenY;
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.window_drag(dx, dy);
+            }
+        }
+    });
+
+    document.addEventListener('mouseup', function(e) {
+        if (!drag.on) return;
+        drag.on = false;
+        hp.style.cursor = 'grab';
+        if (!drag.moved) {
+            /* Click (no drag) → show context menu below HP bar */
+            snd('click');
+            showCtxMenu(10, 70);
+        }
+    });
+})();
+
+/* ═══ Right-click → context menu ═══ */
 document.getElementById('hp').addEventListener('contextmenu', function(e) {
     e.preventDefault();
     e.stopPropagation();
     snd('click');
-    /* Position: show above the click point if near bottom */
-    var menuH = 230;
     var x = Math.max(0, Math.min(e.clientX, window.innerWidth - 150));
-    var y = e.clientY;
-    if (y + menuH > window.innerHeight) {
-        y = Math.max(0, y - menuH);
-    }
-    ctxMenu.style.left = x + 'px';
-    ctxMenu.style.top  = y + 'px';
-    ctxMenu.classList.add('show');
+    var y = Math.min(e.clientY, window.innerHeight - 230);
+    showCtxMenu(x, Math.max(0, y));
 });
 
+/* ═══ Click outside → hide menu ═══ */
 document.addEventListener('click', function(e) {
-    if (!ctxMenu.contains(e.target)) {
-        ctxMenu.classList.remove('show');
+    if (!ctxMenu.contains(e.target) && ctxMenu.classList.contains('show')) {
+        hideCtxMenu();
     }
 });
 
+/* ═══ Menu item actions ═══ */
 ctxMenu.querySelectorAll('.cm-item').forEach(function(item) {
-    item.addEventListener('click', function() {
-        ctxMenu.classList.remove('show');
+    item.addEventListener('click', function(e) {
+        e.stopPropagation();
+        hideCtxMenu();
         snd('click');
         var action = this.getAttribute('data-action');
         if (window.pywebview && window.pywebview.api) {

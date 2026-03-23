@@ -385,9 +385,9 @@ class SAOPlayerPanel(tk.Frame):
         super().__init__(parent, bg=parent.cget('bg'), highlightthickness=0, **kw)
         self._active = False
         self._anim = Animator(self)
-        self._target_w = 260
-        self._top_h = 300
-        self._bottom_h = 130
+        self._target_w = 240
+        self._top_h = 240
+        self._bottom_h = 80
 
         # 用户资料
         self._username = username
@@ -396,6 +396,7 @@ class SAOPlayerPanel(tk.Frame):
         # 等级数据
         self._level = 1
         self._xp_percent = 0.0  # 当前经验百分比 (0~1)
+        self._xp_total = 0  # 累计 XP (用于 calc_level)
 
         # 播放数据
         self._file_name = "未选择文件"
@@ -484,10 +485,11 @@ class SAOPlayerPanel(tk.Frame):
         if self._active:
             self._redraw_bottom(self._target_w, self._bottom_h)
 
-    def update_level(self, level: int, xp_pct: float):
+    def update_level(self, level: int, xp_pct: float, xp_total: int = 0):
         """更新等级信息"""
         self._level = level
         self._xp_percent = xp_pct
+        self._xp_total = xp_total
         if self._active:
             self._redraw_top(self._target_w, self._top_h)
 
@@ -546,169 +548,39 @@ class SAOPlayerPanel(tk.Frame):
         if h < 60:
             return
 
-        # ═══════════════════════════════════════
-        #  HP 条 — 完全对标 SAO-UI HP 组件
-        # ═══════════════════════════════════════
-        # HP 组件 overall: 400px wide, 40px high (scaled to our w)
-        # 我们在面板宽度内实现缩放版
+        # ── 等级 (居中, 金色大字) ──
+        self._top.create_text(w // 2, 80,
+                              text=f'Lv. {self._level}',
+                              font=get_sao_font(20, True), fill='#f3af12')
 
-        hp_y = sep_y + 12  # HP 区域起始 y
-
-        # ── xt_left: 22px 宽的凹口矩形 (角色标识) ──
-        xt_left_w = 18
-        xt_left_h = 26
-        # clip-path 创造凹口: 外框矩形, 中间挖空小矩形
-        _hp_bg = '#8BA0C7'  # ≈ rgba(205,221,248,0.5) 在白底上的近似
-        self._top.create_rectangle(4, hp_y, 4 + xt_left_w, hp_y + xt_left_h,
-                                   fill=_hp_bg, outline='')
-        # 中间凹口 (25% to 75%)
-        notch_y0 = int(hp_y + xt_left_h * 0.25)
-        notch_y1 = int(hp_y + xt_left_h * 0.75)
-        self._top.create_rectangle(4, notch_y0, 4 + xt_left_w // 2, notch_y1,
-                                   fill='#ffffff', outline='')
-
-        # ── xt_right: 用户名显示区 (对标 clip-path 渐变背景) ──
-        name_x = 4 + xt_left_w + 2
-        name_w = w - name_x - 6
-        # 渐变背景 — 从 HP BG 渐变到白色
-        _bg_r, _bg_g, _bg_b = 139, 160, 199  # #8BA0C7
-        for i in range(max(1, int(name_w))):
-            t_val = i / max(1, name_w)
-            alpha = 0.5 if t_val < 0.5 else max(0, 0.5 * (1 - (t_val - 0.5) * 2))
-            gv = int(_bg_r * alpha + 255 * (1 - alpha))
-            gv2 = int(_bg_g * alpha + 255 * (1 - alpha))
-            gv3 = int(_bg_b * alpha + 255 * (1 - alpha))
-            self._top.create_line(name_x + i, hp_y, name_x + i, hp_y + 16,
-                                  fill=f'#{min(255,gv):02x}{min(255,gv2):02x}{min(255,gv3):02x}')
-
-        # 用户名 in HP bar
-        hp_name = self._username
-        if len(hp_name) > 12:
-            hp_name = hp_name[:10] + '…'
-        self._top.create_text(name_x + 6, hp_y + 8, text=hp_name,
-                              font=get_sao_font(8), fill='#e8e8e8', anchor='w')
-
-        if h < 100:
+        if h < 120:
             return
 
-        # ── HP bar (对标 .xt_border, SVG polygon 斜角形状) ──
-        bar_x = name_x
-        bar_y = hp_y + 20
-        bar_w = w - bar_x - 6
-        bar_h = 18
+        # ── 经验值 ──
+        from character_profile import calc_level as _cl
+        _lv, _cur_xp, _need_xp = _cl(
+            getattr(self, '_xp_total', 0) if hasattr(self, '_xp_total') else 0)
+        self._top.create_text(w // 2, 120,
+                              text=f'{_cur_xp} / {_need_xp}',
+                              font=get_sao_font(10), fill='#aaaaaa')
 
-        # SVG polygon: 0,0 260,0 255,16 124,16 120,23 0,23
-        # 比例缩放 + 简化为 polygon
-        # 右上角到右下角有 5px 斜切, 中间有一个台阶
-        cut = 4  # 右侧斜切
-        step_x = int(bar_w * 0.48)  # 台阶位置
-        step_h = 5   # 台阶高度
-
-        pts = [bar_x, bar_y,
-               bar_x + bar_w, bar_y,
-               bar_x + bar_w - cut, bar_y + bar_h - step_h,
-               bar_x + step_x, bar_y + bar_h - step_h,
-               bar_x + step_x - 3, bar_y + bar_h,
-               bar_x, bar_y + bar_h]
-        self._top.create_polygon(pts, outline='#dad7d7', fill='#ececec', width=1)
-
-        # 内部分隔线 (对标 .tb_line)
-        self._top.create_line(bar_x + 1, bar_y + 1, bar_x + bar_w - 1, bar_y + 1,
-                              fill='#d8d8d8', width=1)
-
-        # HP 填充 (对标 .xt_in + 颜色类)
-        fill_w = int((bar_w - 2) * self._hp_percent)
-        if fill_w > 0:
-            if self._hp_percent > 0.6:
-                fc1, fc2 = '#d3ea7c', '#9ad334'  # xt_in_green
-            elif self._hp_percent > 0.25:
-                fc1, fc2 = '#ebee70', '#f4fa49'  # xt_in_yellow
-            else:
-                fc1, fc2 = '#f88c7a', '#ef684e'  # xt_in_red
-
-            # 渐变填充 (从 fc1 到 fc2)
-            self._top.create_rectangle(bar_x + 1, bar_y + 2,
-                                       bar_x + 1 + fill_w, bar_y + bar_h - step_h - 1,
-                                       fill=fc2, outline='')
-            # 顶部高光
-            hl_w = min(fill_w, bar_w - 2)
-            self._top.create_line(bar_x + 2, bar_y + 3,
-                                  bar_x + 2 + hl_w, bar_y + 3,
-                                  fill=fc1, width=1)
-
-        # ── 数值显示 (对标 .number_xt) ──
-        # current/total 和 lv.N  — 半透明背景小标签
-        num_y = bar_y + bar_h + 2
-        
-        # HP数值 (current/total)
-        c_min, c_sec = divmod(int(self._time_current), 60)
-        t_min, t_sec = divmod(int(self._time_total), 60)
-        time_text = f'{c_min:02d}:{c_sec:02d}/{t_min:02d}:{t_sec:02d}'
-        
-        # 背景块 (对标 .number_xt > div background: var(--bgColor))
-        num_w1 = 80
-        num_w2 = 44
-        _num_bg = '#8BA0C7'  # ≈ rgba(205,221,248,0.5)
-        self._top.create_rectangle(bar_x + bar_w - num_w1 - num_w2 - 6, num_y,
-                                   bar_x + bar_w - num_w2 - 4, num_y + 16,
-                                   fill=_num_bg, outline='')
-        self._top.create_text(bar_x + bar_w - num_w2 - 4 - num_w1 // 2, num_y + 8,
-                              text=time_text,
-                              font=get_sao_font(7), fill='#e8e8e8')
-
-        # Lv.N
-        self._top.create_rectangle(bar_x + bar_w - num_w2 - 2, num_y,
-                                   bar_x + bar_w, num_y + 16,
-                                   fill=_num_bg, outline='')
-        self._top.create_text(bar_x + bar_w - num_w2 // 2 - 1, num_y + 8,
-                              text=f'Lv.{self._level}',
-                              font=get_sao_font(7, True), fill='#e8e8e8')
-
-        if h < 140:
-            return
-
-        # ── 曲目信息区 ──
-        info_y = num_y + 24
-        
-        # 文件名
-        display_file = self._file_name
-        if len(display_file) > 24:
-            display_file = display_file[:21] + '...'
-        self._top.create_text(w // 2, info_y, text=display_file,
-                              font=get_cjk_font(9), fill='#646364')
-
-        if h < 180:
-            return
-
-        # BPM (金色)
-        if self._bpm > 0:
-            self._top.create_text(w // 2, info_y + 22,
-                                  text=f'♪  BPM  {self._bpm:.0f}',
-                                  fill='#f3af12', font=get_sao_font(9))
-
-        # 速度 / 移调
-        if h > 200:
-            self._top.create_text(w // 2, info_y + 44,
-                                  text=f'x{self._speed:.2f}  ·  {self._transpose:+d}半音',
-                                  fill='#999999', font=get_sao_font(8))
-
-        # XP 经验条 (底部小条)
-        if h > 240:
-            xp_y = h - 20
-            xp_x = 15
-            xp_w = w - 30
-            xp_h = 4
-            self._top.create_rectangle(xp_x, xp_y, xp_x + xp_w, xp_y + xp_h,
-                                       fill='#ececec', outline='#dad7d7')
+        # ── 经验条 (细线) ──
+        if h > 140:
+            xp_y = 140
+            xp_x = 25
+            xp_w = w - 50
+            xp_h = 3
+            self._top.create_rectangle(xp_x, xp_y,
+                                       xp_x + xp_w, xp_y + xp_h,
+                                       fill='#ececec', outline='')
             xp_fill = int(xp_w * self._xp_percent)
             if xp_fill > 0:
-                self._top.create_rectangle(xp_x, xp_y, xp_x + xp_fill, xp_y + xp_h,
+                self._top.create_rectangle(xp_x, xp_y,
+                                           xp_x + xp_fill, xp_y + xp_h,
                                            fill='#f3af12', outline='')
-            self._top.create_text(w // 2, xp_y - 6, text=f'EXP',
-                                  fill='#cccccc', font=get_sao_font(6))
 
     def _redraw_bottom(self, w, h):
-        """对标 SAO-UI LeftInfo .bottom (灰色区域)"""
+        """对标 SAO-UI LeftInfo .bottom — 描述文字"""
         self._bottom.delete('all')
         if w < 40 or h < 15:
             return
@@ -717,7 +589,6 @@ class SAOPlayerPanel(tk.Frame):
         self._bottom.create_rectangle(0, 0, w, h, fill='#e5e3e3', outline='')
 
         # 下三角装饰 (对标 .bottom-triangle)
-        # clip-path: polygon(50% 100%, 100% 0, 0 0) — 尖头朝下
         self._bottom.create_polygon(30, 0, 37.5, -10, 45, 0,
                                     fill='#e5e3e3', outline='')
 
@@ -727,59 +598,11 @@ class SAOPlayerPanel(tk.Frame):
             self._bottom.create_line(0, i, w, i,
                                      fill=f'#{av:02x}{av:02x}{av:02x}', width=1)
 
-        # 描述文字 (对标 .des) — 职业或 "Welcome to SAO world"
-        desc = self._profession if self._profession else 'Welcome to SAO world'
-        self._bottom.create_text(w // 2, 20, text=desc,
-                                 font=get_cjk_font(9), fill='#777777')
-
-        if h < 50:
-            return
-
-        # 分隔线
-        self._bottom.create_line(15, 36, w - 15, 36, fill='#d0d0d0', width=1)
-
-        # 状态指示灯 (带辉光)
-        dot_color = '#3ad86c' if self._is_playing else '#d1d1d6'
-        if self._is_playing:
-            for gr in range(6, 0, -2):
-                ga = int(25 * (1 - gr / 6))
-                gc = f'#{int(ga * 0.5):02x}{int(ga * 2):02x}{int(ga * 0.8):02x}'
-                self._bottom.create_oval(18 - gr, 50 - gr, 18 + gr, 50 + gr,
-                                         fill=gc, outline='')
-        self._bottom.create_oval(14, 46, 23, 55, fill=dot_color, outline='')
-        if self._is_playing:
-            self._bottom.create_oval(16, 48, 19, 51, fill='#90ffb0', outline='')
-
-        status_color = '#333333' if self._is_playing else '#999999'
-        self._bottom.create_text(29, 51, text=self._status,
-                                 font=get_cjk_font(9), fill=status_color,
+        # 描述文字 (对标 .des, text-align:left, padding:15px 10px)
+        desc = self._profession if self._profession else '咲 Midi Player SAO Edition'
+        self._bottom.create_text(15, h // 2, text=desc,
+                                 font=get_cjk_font(10), fill='#777777',
                                  anchor='w')
-
-        if h > 75:
-            # 模式标签
-            self._bottom.create_text(14, 74, text=self._mode,
-                                     font=get_cjk_font(8), fill='#f3af12',
-                                     anchor='w')
-            # 演奏模式
-            _sm = self._shift_mode
-            _smc = '#428ce6' if _sm == '普通模式' else ('#1565c0' if 'SHIFT' in _sm else '#e65100')
-            self._bottom.create_text(w // 2, 74, text=_sm,
-                                     font=get_sao_font(7), fill=_smc, anchor='center')
-            # 延音踏板
-            sus_color = '#3ad86c' if self._sustain else '#cccccc'
-            sus_text = 'SUS ●' if self._sustain else 'SUS ○'
-            self._bottom.create_text(w - 12, 74, text=sus_text,
-                                     font=get_sao_font(8), fill=sus_color,
-                                     anchor='e')
-
-        if h > 100:
-            # 演奏统计摘要
-            from character_profile import load_profile
-            profile = load_profile()
-            songs = profile.get('songs_played', 0)
-            self._bottom.create_text(w // 2, 96,
-                                     text=f'已完成 {songs} 首曲目',
-                                     font=get_sao_font(7), fill='#bbbbbb')
 
 
 # ══════════════════════════════════════════════════════════
@@ -923,13 +746,12 @@ class SAOPlayerGUI:
         cv.pack(fill=tk.BOTH, expand=True)
         self._float_cv = cv
 
-        # ── 颜色 (对标 HP CSS 变量 — tkinter 无法做真正半透, 调暗底色模拟) ──
-        # CSS: --bgColor: rgba(205,221,248,0.5) — 半透明蓝, 在桌面上偏暗
-        # tkinter 用不透明色近似该效果, 使文字可读
-        BG = '#8BA0C7'       # ≈ rgba(205,221,248,0.5) over medium desktop
-        BG_HOVER = '#9AB0D4'  # hover 稍亮
-        BORDER_C = '#b0afaf'  # stroke: rgb(218,215,215) — 适配暗底
-        FONT_C = '#e8e8e8'    # 白灰文字, 对暗底可读
+        # ── 颜色 (对标 SAO-UI HP CSS 变量) ──
+        # CSS: --bgColor: rgba(205,221,248,0.5)
+        BG = '#9db5d0'       # ≈ rgba(205,221,248,0.5) — 匹配 SAOHPBar
+        BG_HOVER = '#b5cde0'  # hover 稍亮
+        BORDER_C = '#dad7d7'  # stroke: rgb(218,215,215)
+        FONT_C = '#e1dede'    # 白灰文字 — 匹配 SAO-UI CSS
 
         # ═══════════════════════════════════════
         #  .xt_left — 22×40, clip-path 凹口
@@ -964,8 +786,8 @@ class SAOPlayerGUI:
         name_area_h = xt_h   # 全高
 
         # 渐变填充 (从 BG 色渐变到透明色键)
-        # BG=#8BA0C7 = RGB(139,160,199)
-        bg_r, bg_g, bg_b = 139, 160, 199
+        # BG=#9db5d0 = RGB(157,181,208)
+        bg_r, bg_g, bg_b = 157, 181, 208
         trans_r, trans_g, trans_b = 1, 2, 1  # TRANS=#010201
         for i in range(name_area_w):
             t = i / name_area_w
@@ -1068,11 +890,14 @@ class SAOPlayerGUI:
         gap = 3
 
         # HP 数值背景
+        # 计算初始 XP 显示
+        _lv, _cur_xp, _need_xp = calc_level(self._xp)
+        _xp_text = f'{_cur_xp}/{_need_xp}'
         cv.create_rectangle(num_x, num_y, num_x + nw1, num_y + num_h,
                             fill=BG, outline='', tags='num_bg1')
         self._float_time_id = cv.create_text(
             num_x + nw1 - 5, num_y + num_h // 2,
-            text='0/0', font=get_sao_font(9), fill=FONT_C,
+            text=_xp_text, font=get_sao_font(9), fill=FONT_C,
             anchor='e', tags='num_time')
 
         # Lv 背景
@@ -1156,7 +981,10 @@ class SAOPlayerGUI:
         if self._destroyed or not self._breath_active:
             return
         if self._drag.get('dragging', False):
-            self.root.after(16, self._breath_step)
+            try:
+                self.root.after(16, self._breath_step)
+            except Exception:
+                pass
             return
         try:
             if not self._float.winfo_exists():
@@ -1168,7 +996,10 @@ class SAOPlayerGUI:
             self._float.geometry(f'+{self._breath_base_x + dx}+{self._breath_base_y + dy}')
         except Exception:
             pass
-        self.root.after(16, self._breath_step)
+        try:
+            self.root.after(16, self._breath_step)
+        except Exception:
+            pass
 
     def _stop_float_breath(self):
         self._breath_active = False
@@ -1211,7 +1042,10 @@ class SAOPlayerGUI:
                     pass
             panel._fdx = new_dx
             panel._fdy = new_dy
-            self.root.after(16, _step)
+            try:
+                self.root.after(16, _step)
+            except Exception:
+                pass
 
         panel._fdx = 0
         panel._fdy = 0
@@ -1257,9 +1091,9 @@ class SAOPlayerGUI:
         """对标 .XTBox:hover — xt_left 和 number_xt 变为 hover 色"""
         cv = self._float_cv
         try:
-            cv.itemconfig('xt_left', fill='#e5e7ec')
-            cv.itemconfig('num_bg1', fill='#e5e7ec')
-            cv.itemconfig('num_bg2', fill='#e5e7ec')
+            cv.itemconfig('xt_left', fill='#b5cde0')
+            cv.itemconfig('num_bg1', fill='#b5cde0')
+            cv.itemconfig('num_bg2', fill='#b5cde0')
             self._float.attributes('-alpha', 1.0)
         except Exception:
             pass
@@ -1268,9 +1102,9 @@ class SAOPlayerGUI:
         """恢复默认色"""
         cv = self._float_cv
         try:
-            cv.itemconfig('xt_left', fill='#cdddf8')
-            cv.itemconfig('num_bg1', fill='#cdddf8')
-            cv.itemconfig('num_bg2', fill='#cdddf8')
+            cv.itemconfig('xt_left', fill='#9db5d0')
+            cv.itemconfig('num_bg1', fill='#9db5d0')
+            cv.itemconfig('num_bg2', fill='#9db5d0')
             self._float.attributes('-alpha', 0.95)
         except Exception:
             pass
@@ -1340,7 +1174,10 @@ class SAOPlayerGUI:
             y = int(y0 + (y1 - y0) * et)
             self._float.geometry(f'+{x}+{y}')
             if t < 1.0:
-                self.root.after(16, tick)
+                try:
+                    self.root.after(16, tick)
+                except Exception:
+                    pass
         tick()
 
     def _lift_float_loop(self):
@@ -1352,36 +1189,30 @@ class SAOPlayerGUI:
                 self._float.lift()
         except Exception:
             pass
-        self.root.after(150, self._lift_float_loop)
+        try:
+            self.root.after(150, self._lift_float_loop)
+        except Exception:
+            pass
 
     # ══════════════════════════════════════════════
     #  SAO 菜单 = 主界面
     # ══════════════════════════════════════════════
     def _make_player_panel(self, parent):
-        """工厂: 为 SAO 菜单创建左侧玩家信息面板"""
+        """工厂: 为 SAO 菜单创建左侧信息面板"""
         panel = SAOPlayerPanel(parent,
                                username=self._username or 'Player',
                                profession=self._profession or '')
         self._player_panel = panel
-
-        # 同步当前状态
-        if self._current_file:
-            panel._file_name = os.path.basename(self._current_file)
-        panel._speed = self._speed
-        panel._transpose = self._transpose
-        panel._is_playing = self._playing
-        panel._status = "播放中" if self._playing else ("已暂停" if self._paused else "就绪")
-        mode = self.settings.get('mode_system', 'classic')
-        panel._mode = '经典60键' if mode == 'classic' else '扩展88键'
-        panel._sustain = self._sustain_active
 
         # 等级信息
         panel._level = self._level
         try:
             lv, cur_xp, need_xp = calc_level(self._xp)
             panel._xp_percent = cur_xp / max(1, need_xp)
+            panel._xp_total = self._xp
         except Exception:
             panel._xp_percent = 0.0
+            panel._xp_total = 0
 
         return panel
 
@@ -1470,7 +1301,10 @@ class SAOPlayerGUI:
         """浮动面板淡入 — 平滑 ease-out 动画, 并确保鱼眼叠加层运行"""
         # 面板打开时, 如果鱼眼尚未启动则启动
         if self._fisheye_ov is None:
-            self.root.after(100, self._start_fisheye_overlay)
+            try:
+                self.root.after(100, self._start_fisheye_overlay)
+            except Exception:
+                pass
 
         t0 = time.time()
         dur = duration_ms / 1000.0
@@ -1486,7 +1320,10 @@ class SAOPlayerGUI:
             et = 1 - (1 - t) ** 3  # ease_out
             panel.attributes('-alpha', target * et)
             if t < 1.0:
-                self.root.after(16, _step)
+                try:
+                    self.root.after(16, _step)
+                except Exception:
+                    pass
 
         _step()
 
@@ -1529,7 +1366,10 @@ class SAOPlayerGUI:
         if self._sao_menu.visible or self._any_panel_open():
             self._start_fisheye_overlay()
         else:
-            self.root.after(delay, lambda: self._start_fisheye_with_retry(retries - 1, delay))
+            try:
+                self.root.after(delay, lambda: self._start_fisheye_with_retry(retries - 1, delay))
+            except Exception:
+                pass
 
     def _any_panel_open(self):
         """检查是否有任何浮动面板处于打开且可见状态"""
@@ -1559,7 +1399,10 @@ class SAOPlayerGUI:
         self._maybe_stop_fisheye()
         if not self._destroyed:
             self._restore_focus()
-            self.root.after(400, self._start_float_breath)
+            try:
+                self.root.after(400, self._start_float_breath)
+            except Exception:
+                pass
 
     def _refresh_menu_if_open(self):
         """如果菜单打开, 刷新子菜单和面板"""
@@ -2724,7 +2567,10 @@ class SAOPlayerGUI:
                 ov.attributes('-alpha', a)
             except Exception:
                 pass
-            self.root.after(16, _fade)
+            try:
+                self.root.after(16, _fade)
+            except Exception:
+                pass
 
         _fade()
 
@@ -2767,7 +2613,10 @@ class SAOPlayerGUI:
                         self._float.attributes('-alpha', al)
                     except Exception:
                         pass
-                    self.root.after(16, entrance_tick)
+                    try:
+                        self.root.after(16, entrance_tick)
+                    except Exception:
+                        pass
                 elif dt < 0.45:
                     # 确保完全可见, 开始滑动
                     try:
@@ -3263,17 +3112,18 @@ class SAOPlayerGUI:
             lv, cur_xp, need_xp = calc_level(self._xp)
             xp_pct = cur_xp / max(1, need_xp)
             if self._player_panel:
-                self._player_panel.update_level(new_lv, xp_pct)
+                self._player_panel.update_level(new_lv, xp_pct, self._xp)
             # 升级特效
             if leveled_up:
                 self.root.after(300, lambda: LevelUpEffect.show(self.root, old_lv, new_lv))
-            # 更新悬浮面板上的曲目数和等级
+            # 更新悬浮面板上的等级和 XP
             try:
                 cv = self._float_cv
                 if cv.winfo_exists():
-                    cv.itemconfig(self._float_songs_id,
-                                  text=f'已完成 {self._songs_played} 首曲目')
-                    cv.itemconfig(self._float_level_id, text=f'Lv.{new_lv}')
+                    lv2, cur_xp2, need_xp2 = calc_level(self._xp)
+                    cv.itemconfig(self._float_time_id,
+                                  text=f'{cur_xp2}/{need_xp2}')
+                    cv.itemconfig(self._float_level_id, text=f'lv.{new_lv}')
             except Exception:
                 pass
         except Exception:
@@ -3419,7 +3269,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.2+3202\n\n"
+            "咲 Midi Player  SAO Edition\nv3.2.3+3203\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

@@ -168,7 +168,10 @@ class Animator:
             t = min(1.0, (time.time() - t0) / dur)
             callback(easing(t))
             if t < 1.0:
-                self._jobs[name] = self.widget.after(16, tick)
+                try:
+                    self._jobs[name] = self.widget.after(16, tick)
+                except Exception:
+                    self._jobs.pop(name, None)
             else:
                 self._jobs.pop(name, None)
                 if on_done:
@@ -366,6 +369,11 @@ class SAOMenuBar(tk.Frame):
     def _on_item_click(self, item):
         if not item.get('can_active', True):
             return
+        try:
+            from sao_sound import play_sound as _ps
+            _ps('click', volume=0.5)
+        except Exception:
+            pass
         if self._active_item and self._active_item.get('name') == item.get('name'):
             self._active_item = None
             for btn in self._buttons:
@@ -699,6 +707,11 @@ class SAOChildBar(tk.Frame):
 
         def enter(e, a=_anim):
             a.animate('hover', 150, lambda t: _update_hover(t))
+            try:
+                from sao_sound import play_sound as _ps
+                _ps('click', volume=0.3)
+            except Exception:
+                pass
 
         def leave(e, a=_anim, hs=_hover_state):
             start = hs['t']
@@ -709,7 +722,14 @@ class SAOChildBar(tk.Frame):
             widget.bind('<Leave>', leave)
             cmd = item.get('command')
             if cmd:
-                widget.bind('<Button-1>', lambda e, c=cmd: c())
+                def _click_with_sound(e, c=cmd):
+                    try:
+                        from sao_sound import play_sound as _ps
+                        _ps('click', volume=0.5)
+                    except Exception:
+                        pass
+                    c()
+                widget.bind('<Button-1>', _click_with_sound)
 
         # 入场动画: 从右侧滑入
         row.configure(width=0)
@@ -954,6 +974,11 @@ class SAOPopUpMenu:
             lw.set_active(True)
         name = item.get('name', '')
         if name in self.child_menus:
+            try:
+                from sao_sound import play_sound as _ps
+                _ps('submenu', volume=0.5)
+            except Exception:
+                pass
             self._child_bar.show_menu(name)
         else:
             self._child_bar.hide_menu()
@@ -1494,9 +1519,9 @@ void main() {
         """3阶段音效: LinkStart.SAO.Kirito → Startup.SAO.NerveGear → Popup.ALO.Welcome
 
         对应动画时间线:
-          Phase 1 (t=0.0s):  "LINK START!" 喊声 — 彩色隧道开始
-          Phase 2 (t=3.5s):  NerveGear 启动音 — 文字飞入
-          Phase 3 (t=5.2s):  ALO 欢迎音 — 蓝色隧道
+          Phase 1 (t=0.0s):  "LINK START!" 桐人喊声 — 彩色隧道开始
+          Phase 1 (t=1.5s):  NerveGear 启动音 — 隧道飞向中, 持续到 P2 结束
+          Phase 3 (t=5.2s):  ALO 欢迎音 — 蓝色隧道开始, 持续到 P4 结束
         """
         import threading
 
@@ -1517,10 +1542,10 @@ void main() {
                 except Exception as e:
                     print(f'[LinkStart] Sound ({name}) failed: {e}')
 
-        # Phase 1 (t=0): "LINK START!" — 入场
+        # Phase 1 (t=0): "LINK START!" 桐人 — 入场
         threading.Thread(target=lambda: _do_play('link_start'), daemon=True).start()
-        # Phase 2 (t=3.5s): NerveGear 启动音 — 文字阶段
-        threading.Timer(3.5, lambda: _do_play('nervegear')).start()
+        # Phase 1 (t=1.5s): NerveGear 启动音 — 紧跟桐人喊声, 隧道飞行中
+        threading.Timer(1.5, lambda: _do_play('nervegear')).start()
         # Phase 3 (t=5.2s): ALO 欢迎音 — 蓝色隧道
         threading.Timer(5.2, lambda: _do_play('alo_welcome')).start()
 
