@@ -472,7 +472,9 @@ function initPanel(type, state) {
             '<div class="stat-row"><span class="stat-label">BPM</span>' +
                 '<span class="stat-value" id="stat-bpm">—</span></div>' +
             '<div class="stat-row"><span class="stat-label">速度</span>' +
-                '<span class="stat-value" id="stat-speed">1.00×</span></div>';
+                '<span class="stat-value" id="stat-speed">1.00×</span></div>' +
+            '<div class="stat-row"><span class="stat-label">音域</span>' +
+                '<span class="stat-value" id="stat-kbmode">正常</span></div>';
     } else if (type === 'piano') {
         title.textContent = '⌨ 钢琴面板';
         _buildPiano();
@@ -511,6 +513,13 @@ function updatePanel(data) {
         if (data.mode) { var m=document.getElementById('stat-mode'); if(m) m.textContent=data.mode; }
         if (data.bpm !== undefined) { var b=document.getElementById('stat-bpm'); if(b) b.textContent=data.bpm>0?Math.round(data.bpm):'—'; }
         if (data.speed !== undefined) { var sp=document.getElementById('stat-speed'); if(sp) sp.textContent=data.speed.toFixed(2)+'×'; }
+        if (data.kb_mode !== undefined) {
+            var km=document.getElementById('stat-kbmode');
+            if (km) {
+                km.textContent = data.kb_mode;
+                km.style.color = data.kb_mode==='正常' ? '' : (data.kb_mode==='SHIFT ↑' ? '#3ad86c' : '#f3af12');
+            }
+        }
     }
 }
 

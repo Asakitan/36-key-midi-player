@@ -539,6 +539,28 @@ html, body {
     white-space: nowrap;
     pointer-events: none;
 }
+
+/* ═══ TV Off Overlay ═══ */
+#tv-off-overlay {
+    position: fixed;
+    inset: 0;
+    background: white;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0;
+    transform-origin: center 50%;
+}
+@keyframes tv-off-anim {
+    0%   { opacity: 0;    transform: scaleY(1)     scaleX(1);     filter: brightness(1); }
+    8%   { opacity: 0.95; transform: scaleY(1)     scaleX(1);     filter: brightness(2.8); }
+    30%  { opacity: 1;    transform: scaleY(0.04)  scaleX(1);     filter: brightness(3.5); }
+    58%  { opacity: 0.9;  transform: scaleY(0.012) scaleX(0.22);  filter: brightness(4.5); }
+    80%  { opacity: 0.4;  transform: scaleY(0.005) scaleX(0.04);  filter: brightness(6); }
+    100% { opacity: 0;    transform: scaleY(0)     scaleX(0);     filter: brightness(0); }
+}
+#tv-off-overlay.active {
+    animation: tv-off-anim 0.55s cubic-bezier(0.3, 0, 0.9, 1) forwards;
+}
 </style>
 </head>
 <body>
@@ -661,6 +683,9 @@ html, body {
 <!-- Current file display -->
 <div class="current-file" id="current-file"></div>
 <div class="current-file" style="bottom:5px;font-size:10px;color:rgba(255,255,255,0.3);font-family:Consolas,monospace;">F5 播放  F6 停止  F7 加速  F8 减速</div>
+
+<!-- TV Off Overlay -->
+<div id="tv-off-overlay"></div>
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
@@ -856,12 +881,19 @@ function closeMenu() {
     playSound('snd-dismiss');
     stopFisheyeBg();
 
+    /* TV 关电视动画 */
+    var tvoff = document.getElementById('tv-off-overlay');
+    tvoff.classList.remove('active');
+    void tvoff.offsetWidth;
+    tvoff.classList.add('active');
+
     overlay.classList.add('closing');
     setTimeout(function() {
         overlay.classList.remove('visible', 'closing');
+        tvoff.classList.remove('active');
         hideAllSubMenus();
         infoBox.classList.remove('show');
-    }, 400);
+    }, 550);
 }
 
 /* Click backdrop to close — route through Python so window hides properly */

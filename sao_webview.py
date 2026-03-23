@@ -1002,6 +1002,8 @@ class SAOWebViewGUI:
             'play_state': '播放中' if self._playing else ('已暂停' if self._paused else '就绪'),
             'mode': mode_label,
             'bpm': 0,
+            'kb_mode': {'normal': '正常', 'shift': 'SHIFT ↑', 'ctrl': 'CTRL ↓'}.get(
+                getattr(getattr(self.player, 'simulator', None), '_current_mode', 'normal'), '正常'),
         }
 
     def _sync_all_panels(self):
@@ -1109,12 +1111,14 @@ class SAOWebViewGUI:
             self._paused = True
             self._eval_hp('setPlayState("paused")')
             self._eval_menu('SAO.showToast("已暂停")')
+            self._sync_all_panels()
             return
         if self._paused:
             self.player.resume()
             self._paused = False
             self._eval_hp('setPlayState("playing")')
             self._eval_menu('SAO.showToast("继续播放")')
+            self._sync_all_panels()
             return
         if not self._current_file:
             self._eval_menu('SAO.showAlert("提示", "请先打开 MIDI 文件", false)')
@@ -1135,6 +1139,7 @@ class SAOWebViewGUI:
         self._playing = True
         self._paused = False
         self._eval_hp('setPlayState("playing")')
+        self._sync_all_panels()
 
     def _stop(self):
         self._folder_loop_active = False
@@ -1143,6 +1148,7 @@ class SAOWebViewGUI:
         self._paused = False
         self._eval_hp('setPlayState("idle")')
         self._eval_hp(f'updateHP(0, 100, {self._level})')
+        self._sync_all_panels()
 
     def _restart(self):
         if self._current_file:
@@ -1158,6 +1164,7 @@ class SAOWebViewGUI:
         self.settings.save()
         self._eval_menu(f'SAO.showToast("速度: {self._speed}x")')
         self._sync_menu_info()
+        self._sync_all_panels()
 
     def _speed_down(self):
         self._speed = max(0.3, round(self._speed - 0.1, 2))
@@ -1166,6 +1173,7 @@ class SAOWebViewGUI:
         self.settings.save()
         self._eval_menu(f'SAO.showToast("速度: {self._speed}x")')
         self._sync_menu_info()
+        self._sync_all_panels()
 
     def _transpose_up(self):
         self._transpose = min(12, self._transpose + 1)
@@ -1174,6 +1182,7 @@ class SAOWebViewGUI:
         self.settings.save()
         self._eval_menu(f'SAO.showToast("移调: {self._transpose:+d}")')
         self._sync_menu_info()
+        self._sync_all_panels()
 
     def _transpose_down(self):
         self._transpose = max(-12, self._transpose - 1)
@@ -1182,6 +1191,7 @@ class SAOWebViewGUI:
         self.settings.save()
         self._eval_menu(f'SAO.showToast("移调: {self._transpose:+d}")')
         self._sync_menu_info()
+        self._sync_all_panels()
 
     # ─── Toggle 开关 ───
     def _toggle_melody(self):
@@ -1335,6 +1345,7 @@ class SAOWebViewGUI:
     def _progress_loop(self):
         self._progress_current = 0.0
         self._progress_total = 0.0
+        _panel_tick = 0
         while True:
             time.sleep(0.15)
             try:
@@ -1351,6 +1362,11 @@ class SAOWebViewGUI:
                         self._eval_hp(f'updateHP({cur:.0f}, {total:.0f}, {self._level})')
                     except Exception:
                         pass
+            # 每 ~2 秒同步一次状态面板 (kb_mode 等动态字段)
+            _panel_tick += 1
+            if _panel_tick >= 14 and self._panel_wins:
+                _panel_tick = 0
+                self._sync_all_panels()
 
     def _save_position_loop(self):
         while True:
