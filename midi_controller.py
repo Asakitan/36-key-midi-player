@@ -1180,6 +1180,8 @@ class PianoRollWidget(tk.Frame):
         self._selected_notes: Set[Tuple] = set()
         # 是否已完成首次滚动定位
         self._initial_scroll_done = False
+        # 防抖定时器
+        self._redraw_timer = None
         self._build()
 
     def _build(self):
@@ -1209,7 +1211,7 @@ class PianoRollWidget(tk.Frame):
                            yscrollcommand=self._ys_set)
 
         # 绑定
-        self._rc.bind('<Configure>', lambda e: self._redraw())
+        self._rc.bind('<Configure>', lambda e: self._schedule_redraw())
         self._rc.bind('<MouseWheel>', self._on_wheel)
         self._rc.bind('<Control-MouseWheel>', self._on_zoom)
         self._rc.bind('<ButtonPress-1>', self._on_mouse_down)
@@ -1499,8 +1501,26 @@ class PianoRollWidget(tk.Frame):
 
     # --- 绘制 ---
 
+    def _schedule_redraw(self):
+        """防抖：连续 Configure 事件只触发一次 _redraw"""
+        if self._redraw_timer is not None:
+            self.after_cancel(self._redraw_timer)
+        self._redraw_timer = self.after(30, self._do_redraw)
+
+    def _do_redraw(self):
+        self._redraw_timer = None
+        self._redraw()
+
     def _redraw(self):
         if not self._notes:
+            return
+        # 跳过未映射或零尺寸的 canvas（布局未完成时）
+        try:
+            if self._rc.winfo_width() < 10 or self._rc.winfo_height() < 10:
+                # 延迟到 canvas 有尺寸后再画
+                self.after(50, self._redraw)
+                return
+        except Exception:
             return
         C = self.C
         lo, hi = self._lo, self._hi
@@ -2769,14 +2789,13 @@ class MIDIControllerDialog(tk.Toplevel):
         user_delta = piano_transpose - auto_offset   # 用户在自动结果之上的额外微调
         self.player.set_transpose(user_delta)
 
-        # 保存通道设置到全局 settings
+        # 构建通道配置（用于回调，不再写入全局 settings，防止跨歌曲串扰）
         ch_settings = {}
         for ch, vs in self._ch_vars.items():
             ch_settings[str(ch)] = {
                 'enabled': vs['enabled'].get(),
                 'transpose': vs['transpose'].get(),
             }
-        self.settings.set('channel_settings', ch_settings)
 
         # 回调通知主 GUI (global_transpose 为用户移调量, 不含自动偏移)
         if self._on_apply:

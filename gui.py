@@ -2053,12 +2053,8 @@ class ControlPanel(tk.Frame):
                 self.player.set_transpose(0)
                 self.settings.set('last_file', filepath)
                 self.player.mapper.clear_channel_settings()
-                saved_ch = self.settings.get('channel_settings', {})
-                if saved_ch:
-                    for ch_str, ch_cfg in saved_ch.items():
-                        ch = int(ch_str)
-                        self.player.mapper.set_channel_enabled(ch, ch_cfg.get('enabled', True))
-                        self.player.mapper.set_channel_transpose(ch, ch_cfg.get('transpose', 0))
+                # 不再从全局 channel_settings 恢复（那是上一首歌的设置）
+                # 如果有歌曲级别的设置会在 _load_song_settings 中恢复
                 coverage = self.player.get_coverage_info()
                 chord_info = self.player.get_chord_info()
                 if hasattr(self.player.parser, 'get_channels_info'):
