@@ -3294,35 +3294,55 @@ class MidiPlayer:
             if img_w < 2 or img_h < 2:
                 return
 
-            # 三等分垂直区域，分别对应 钢琴(normal)/高八度(shift)/低八度(ctrl)
+            # 三等分垂直区域: 钢琴(row0) / 高八度(row1) / 低八度(row2)
+            # 钢琴(row0)在所有模式下都是亮的，所以只看 row1 和 row2：
+            #   normal: row1 暗, row2 暗
+            #   shift:  row1 亮, row2 暗
+            #   ctrl:   row1 暗, row2 亮
             slice_h = img_h // 3
-            mode_order = ['normal', 'shift', 'ctrl']
-            brightness = []
+            row_brightness = []
             for i in range(3):
                 y0 = i * slice_h
                 y1 = (i + 1) * slice_h
                 region = img.crop((0, y0, img_w, y1))
                 pixels = list(region.getdata())
                 if not pixels:
-                    brightness.append(0)
+                    row_brightness.append(0)
                     continue
                 avg_r = sum(p[0] for p in pixels) / len(pixels)
                 avg_g = sum(p[1] for p in pixels) / len(pixels)
                 avg_b = sum(p[2] for p in pixels) / len(pixels)
-                brightness.append(avg_r + avg_g + avg_b)
+                row_brightness.append(avg_r + avg_g + avg_b)
 
-            # 亮度差异太小时不做判断（截图区域可能不正确）
-            max_b = max(brightness)
-            min_b = min(brightness)
-            if max_b - min_b < 15:   # 亮度差小于 15/765，认为无法区分
+            b_shift = row_brightness[1]  # 高八度行亮度
+            b_ctrl  = row_brightness[2]  # 低八度行亮度
+            # 取 row0（钢琴行，始终亮）作为 "亮" 的参考基线
+            b_base  = row_brightness[0]
+            # 如果 row0 也不亮，说明截图区域不对，跳过
+            if b_base < 30:
                 return
 
-            detected_mode = mode_order[brightness.index(max_b)]
-            current_mode  = self.simulator._current_mode
+            # 判定阈值：某行亮度达到 row0 的 70% 视为"亮"
+            threshold = b_base * 0.70
+            shift_bright = b_shift >= threshold
+            ctrl_bright  = b_ctrl  >= threshold
+
+            if shift_bright and not ctrl_bright:
+                detected_mode = 'shift'
+            elif ctrl_bright and not shift_bright:
+                detected_mode = 'ctrl'
+            elif not shift_bright and not ctrl_bright:
+                detected_mode = 'normal'
+            else:
+                # 两行都亮 → 异常状态，不做判断
+                return
+
+            current_mode = self.simulator._current_mode
 
             if detected_mode != current_mode:
-                print(f"[防漂移] 屏幕检测: 游戏显示 {detected_mode}，代码认为 {current_mode}，执行纠正。"
-                      f"亮度: {[f'{b:.0f}' for b in brightness]}")
+                print(f"[防漂移] 屏幕检测: 游戏={detected_mode}，代码={current_mode}，执行纠正。"
+                      f" 亮度: 钢琴={b_base:.0f} 高八度={b_shift:.0f} 低八度={b_ctrl:.0f}"
+                      f" 阈值={threshold:.0f}")
                 # 强制纠正：先回 normal，再到目标
                 self.simulator._mode_toggle_count = 0
                 self.simulator._current_mode = detected_mode  # 以屏幕为准
