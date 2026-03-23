@@ -18,6 +18,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('icon.ico', '.'),
+        ('linkstart.mp3', '.'),
     ],
     hiddenimports=[
         'mido',

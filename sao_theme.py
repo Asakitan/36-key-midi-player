@@ -1483,6 +1483,28 @@ void main() {
         self.root = root
         self.on_done = on_done
         self._overlay = None
+        self._sound_player = None
+
+    # ════════════════════════════════════════════════════════
+    #  Link Start 音效播放
+    # ════════════════════════════════════════════════════════
+    def _play_sound(self):
+        """在后台线程中播放 linkstart.mp3 音效"""
+        import threading
+        def _do_play():
+            try:
+                _snd = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'linkstart.mp3')
+                if not os.path.isfile(_snd):
+                    return
+                import pygame
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+                snd = pygame.mixer.Sound(_snd)
+                self._sound_player = snd
+                snd.play()
+            except Exception as e:
+                print(f'[LinkStart] Sound play failed: {e}')
+        threading.Thread(target=_do_play, daemon=True).start()
 
     # ════════════════════════════════════════════════════════
     #  启动
@@ -1493,6 +1515,9 @@ void main() {
         self._cx, self._cy = sw // 2, sh // 2
         self._sw, self._sh = sw, sh
         self._diag = math.hypot(sw, sh)
+
+        # ── 播放 Link Start 音效 ──
+        self._play_sound()
 
         # ── 创建全屏顶层窗口 ──
         self._overlay = tk.Toplevel(self.root)
