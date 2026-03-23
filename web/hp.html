@@ -219,6 +219,65 @@ body {
     background: #e0e0e0;
     margin: 2px 6px;
 }
+
+/* ═══ Level Up Overlay ═══ */
+@keyframes lv-bg-anim {
+    0%   { background: rgba(0,0,0,0); }
+    8%   { background: rgba(243,175,18,0.85); }
+    22%  { background: rgba(255,255,255,0.80); }
+    35%  { background: rgba(26,26,26,0.88); }
+    78%  { background: rgba(26,26,26,0.35); }
+    100% { background: rgba(26,26,26,0); }
+}
+@keyframes lv-text-anim {
+    0%   { transform: scale(0.05); opacity: 0; }
+    30%  { transform: scale(1.10); opacity: 1; }
+    42%  { transform: scale(0.95); }
+    55%  { transform: scale(1.00); opacity: 1; }
+    80%  { transform: scale(1.00); opacity: 0.95; }
+    100% { transform: scale(1.00); opacity: 0; }
+}
+#lv-overlay {
+    display: none;
+    position: fixed;
+    left: -10px;
+    top: -8px;
+    width: 430px;
+    height: 280px;
+    z-index: 999;
+    pointer-events: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    overflow: hidden;
+}
+#lv-overlay.show {
+    display: flex;
+    animation: lv-bg-anim 2.6s ease forwards;
+}
+#lv-overlay .lv-content {
+    text-align: center;
+    animation: lv-text-anim 2.6s ease forwards;
+    animation-delay: 0.08s;
+    opacity: 0;
+}
+.lv-title {
+    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-size: 38px;
+    font-weight: bold;
+    color: #f3af12;
+    text-shadow: 0 0 24px rgba(243,175,18,0.95), 0 2px 8px rgba(0,0,0,0.95);
+    letter-spacing: 4px;
+    line-height: 1;
+}
+.lv-num {
+    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-size: 22px;
+    color: #ffffff;
+    margin-top: 10px;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.95);
+    letter-spacing: 2px;
+}
 </style>
 </head>
 <body>
@@ -243,6 +302,14 @@ body {
         <polygon points="0,0 260,0 255,16 124,16 120,23 0,23"
                  style="fill:none;stroke:rgb(218,215,215);stroke-width:1;"/>
     </svg>
+</div>
+
+<!-- Level Up Overlay -->
+<div id="lv-overlay">
+    <div class="lv-content">
+        <div class="lv-title">LEVEL UP!</div>
+        <div class="lv-num" id="lv-num">Lv.1 → Lv.2</div>
+    </div>
 </div>
 
 <!-- Context Menu -->
@@ -399,6 +466,18 @@ ctxMenu.querySelectorAll('.cm-item').forEach(function(item) {
         }
     });
 });
+
+/* ═══ Level Up Animation ═══ */
+var _lvTimer = null;
+function showLevelUp(oldLv, newLv) {
+    var ov = document.getElementById('lv-overlay');
+    document.getElementById('lv-num').textContent = 'Lv.' + oldLv + ' → Lv.' + newLv;
+    ov.classList.remove('show');
+    void ov.offsetWidth;  /* reflow 重启动画 */
+    ov.classList.add('show');
+    if (_lvTimer) clearTimeout(_lvTimer);
+    _lvTimer = setTimeout(function() { ov.classList.remove('show'); }, 2700);
+}
 </script>
 </body>
 </html>

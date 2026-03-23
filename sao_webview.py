@@ -727,7 +727,7 @@ class SAOWebViewGUI:
             self._ensure_hp_on_top()
         threading.Thread(target=_hide, daemon=True).start()
 
-    def _capture_current_monitor_b64(self, quality=55):
+    def _capture_current_monitor_b64(self, quality=85):
         """截取 HP 窗口所在显示器 → JPEG base64 (低分辨率快速截图,
         distortion 由浏览器端 WebGL shader 实时 60fps 渲染)."""
         try:
@@ -1263,13 +1263,24 @@ class SAOWebViewGUI:
             # 更新 HP 条显示 XP (空闲时显示经验值)
             self._eval_hp(f'updateHP({cur}, {need}, {lv})')
             if leveled_up:
-                self._play_sound('alert')
-                self._eval_menu(f'SAO.showAlert("LEVEL UP!", "Lv.{old_lv} → Lv.{new_lv}", false)')
+                # 升级音效 (与 sao_gui.py 一致)
                 if self._sound_ok:
                     try:
                         self._sao_sound.play_levelup_sfx()
                     except Exception:
-                        pass
+                        self._play_sound('alert')
+                else:
+                    self._play_sound('alert')
+                # HP 悬浮窗升级特效: 展开 Region + CSS 动画 overlay
+                self._set_hp_region(True)
+                self._eval_hp(f'showLevelUp({old_lv}, {new_lv})')
+                def _restore_region():
+                    time.sleep(2.8)
+                    self._set_hp_region(False)
+                threading.Thread(target=_restore_region, daemon=True).start()
+                # 若菜单开着, 同时在菜单中显示 Toast
+                if self._menu_visible:
+                    self._eval_menu(f'SAO.showToast("LEVEL UP!  Lv.{old_lv} → Lv.{new_lv}", 3000)')
             self._sync_menu_info()
         except Exception:
             pass
