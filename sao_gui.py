@@ -3086,10 +3086,12 @@ class SAOPlayerGUI:
         self._update_float_status()
 
         # ── 经验值 & 升级 ──
+        _leveled_up = False
         song_dur = self._float_progress_pct * self.player._total_time if hasattr(self.player, '_total_time') else 0
         try:
             profile = load_profile()
             profile, leveled_up, old_lv, new_lv = add_song_xp(profile, song_dur)
+            _leveled_up = leveled_up
             self._level = new_lv
             self._xp = profile.get('xp', 0)
             self._songs_played = profile.get('songs_played', 0)
@@ -3123,7 +3125,9 @@ class SAOPlayerGUI:
             self._visualizer.stop()
         self._refresh_menu_if_open()
         if self._folder_loop_active:
-            self.root.after(500, self._play_next_folder_song)
+            # 升级时等动画结束 (2.5s) + 1s 再继续，否则 0.5s
+            delay = 3500 if _leveled_up else 500
+            self.root.after(delay, self._play_next_folder_song)
 
     def _restore_focus(self):
         try:

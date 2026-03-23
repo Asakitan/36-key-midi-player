@@ -1304,11 +1304,13 @@ class SAOWebViewGUI:
         self._eval_hp('setPlayState("idle")')
 
         # 经验值
+        _leveled_up = False
         try:
             from character_profile import load_profile, add_song_xp, calc_level
             profile = load_profile()
             duration = getattr(self, '_progress_total', 0)
             profile, leveled_up, old_lv, new_lv = add_song_xp(profile, duration)
+            _leveled_up = leveled_up
             self._level = new_lv
             self._xp = profile.get('xp', 0)
             self._songs_played = profile.get('songs_played', 0)
@@ -1339,11 +1341,11 @@ class SAOWebViewGUI:
         except Exception:
             pass
 
-        # 文件夹循环
+        # 文件夹循环 (升级时等动画结束再继续)
         if self._folder_loop_active and self._folder_loop_files:
             self._folder_loop_index = (self._folder_loop_index + 1) % len(self._folder_loop_files)
             self._load_file(self._folder_loop_files[self._folder_loop_index])
-            time.sleep(1.0)
+            time.sleep(3.7 if _leveled_up else 1.0)  # 升级动画 2.7s + 1s 缓冲
             self._toggle_play()
 
     # ─── 后台线程 ───
