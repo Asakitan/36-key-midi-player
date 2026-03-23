@@ -1,6 +1,6 @@
 """
 SAO-UI WebView GUI (Hybrid)
-- HP 悬浮窗: pywebview (Win32/.NET 色键透明)
+- HP 悬浮窗: pywebview (transparent=True 原生透明)
 - SAO 菜单: pywebview (全屏, 含鱼眼特效)
 - LinkStart: SAOLinkStart (tkinter, GPU渲染)
 - 音效: sao_sound (pygame.mixer)
@@ -179,19 +179,20 @@ class SAOWebAPI:
         self._g = gui
 
     def toggle_menu(self):
-        self._g._toggle_menu()
+        # 必须在新线程中执行，不能阻塞 pywebview JS 回调线程
+        threading.Thread(target=self._g._toggle_menu, daemon=True).start()
 
     def context_action(self, action: str):
-        self._g._context_action(action)
+        threading.Thread(target=self._g._context_action, args=(action,), daemon=True).start()
 
     def menu_action(self, action: str):
-        self._g._menu_action(action)
+        threading.Thread(target=self._g._menu_action, args=(action,), daemon=True).start()
 
     def alert_ok(self):
         pass
 
     def play_sound(self, name: str):
-        self._g._play_sound(name)
+        threading.Thread(target=self._g._play_sound, args=(name,), daemon=True).start()
 
     def get_state(self):
         """供 JS 查询当前状态 (JSON 格式)"""
@@ -222,6 +223,9 @@ class SAOWebViewGUI:
         from character_profile import load_profile, calc_level
 
         self.settings = SettingsManager()
+        # 记录当前 UI 模式
+        self.settings.set('ui_mode', 'webview')
+        self.settings.save()
         self.player = MidiPlayer()
         self.player.set_mode_system(self.settings.get('mode_system', 'classic'))
 
@@ -300,15 +304,14 @@ class SAOWebViewGUI:
         fx = self.settings.get('float_x', 100)
         fy = self.settings.get('float_y', 50)
 
-        # HP 悬浮窗 — 430×500 (上部 HP 栏可见, 其余色键透明, 给右键菜单留空间)
+        # HP 悬浮窗 — transparent=True 由 pywebview 原生处理透明
         self.hp_win = webview.create_window(
             '♪ SAO HP', hp_url,
-            width=430, height=500,
+            width=430, height=280,
             x=fx, y=fy,
             frameless=True,
             easy_drag=False,           # 自行处理拖拽 (CSS app-region)
-            transparent=False,
-            background_color='#010001',
+            transparent=True,
             on_top=True,
             js_api=self._api,
         )
@@ -322,9 +325,6 @@ class SAOWebViewGUI:
             hidden=True,
             js_api=self._api,
         )
-
-        # 透明事件
-        self.hp_win.events.loaded += self._setup_hp_transparency
 
         webview.start(self._on_webview_started, debug=False)
 
@@ -357,30 +357,7 @@ class SAOWebViewGUI:
         except Exception as e:
             print(f"[SAO] LinkStart skipped: {e}")
 
-    # ─── 透明设置 ───
-    def _setup_hp_transparency(self):
-        """HP 窗口加载完成后设置色键透明"""
-        # 方案 1: .NET (WinForms TransparencyKey + WebView2 DefaultBackgroundColor)
-        try:
-            form = self.hp_win.native
-            if form and _setup_dotnet_transparency(form):
-                print("[SAO] ✓ .NET transparency OK")
-                return
-        except Exception as e:
-            print(f"[SAO] .NET method failed: {e}")
-
-        # 方案 2: ctypes Win32 LWA_COLORKEY
-        try:
-            form = self.hp_win.native
-            if form and hasattr(form, 'Handle'):
-                hwnd = form.Handle.ToInt32()
-                _make_transparent_ctypes(hwnd)
-                print("[SAO] ✓ ctypes transparency applied")
-                return
-        except Exception as e:
-            print(f"[SAO] ctypes method failed: {e}")
-
-        print("[SAO] ✗ transparency not available")
+    # ─── 透明设置 (pywebview transparent=True 自动处理) ───
 
     # ─── WebView 就绪 ───
     def _on_webview_started(self):
@@ -433,13 +410,19 @@ class SAOWebViewGUI:
         # 鱼眼背景 (非阻塞)
         threading.Thread(target=self._push_fisheye_background, daemon=True).start()
 
-        self.menu_win.show()
+        try:
+            self.menu_win.show()
+        except Exception:
+            pass
         try:
             self.menu_win.maximize()
         except Exception:
             pass
-        time.sleep(0.1)
-        self._eval_menu('SAO.openMenu(500, 300)')
+        # 非阻塞延迟初始化菜单动画
+        def _init_menu():
+            time.sleep(0.15)
+            self._eval_menu('SAO.openMenu(500, 300)')
+        threading.Thread(target=_init_menu, daemon=True).start()
 
     def _close_menu(self):
         self._menu_visible = False

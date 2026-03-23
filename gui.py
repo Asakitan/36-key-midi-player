@@ -349,7 +349,7 @@ def get_icon_path():
 class CustomTitleBar(tk.Frame):
     """自定义无边框窗口标题栏 - 扁平暗色设计"""
 
-    def __init__(self, parent, root, title="咲 Midi Player", version="v3.2.1+3201",
+    def __init__(self, parent, root, title="咲 Midi Player", version="v3.2.2+3202",
                  on_close=None, **kwargs):
         super().__init__(parent, bg=ModernColors.TITLEBAR, height=36, **kwargs)
         self.root = root
@@ -3154,6 +3154,9 @@ class MidiPlayerGUI:
 
         self.is_topmost = False
         self.settings = SettingsManager()
+        # 记录当前 UI 模式
+        self.settings.set('ui_mode', 'old')
+        self.settings.save()
         # 恢复主题 (在创建 UI 之前应用，使所有控件使用正确颜色)
         _saved_theme = self.settings.get('theme', 'dark')
         ModernColors.apply_theme(_saved_theme)
@@ -3226,7 +3229,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                                        title="咲 Midi Player", version="v3.2.1+3201",
+                                        title="咲 Midi Player", version="v3.2.2+3202",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 

@@ -558,8 +558,9 @@ class SAOPlayerPanel(tk.Frame):
         xt_left_w = 18
         xt_left_h = 26
         # clip-path 创造凹口: 外框矩形, 中间挖空小矩形
+        _hp_bg = '#8BA0C7'  # ≈ rgba(205,221,248,0.5) 在白底上的近似
         self._top.create_rectangle(4, hp_y, 4 + xt_left_w, hp_y + xt_left_h,
-                                   fill='#cdddf8', outline='')
+                                   fill=_hp_bg, outline='')
         # 中间凹口 (25% to 75%)
         notch_y0 = int(hp_y + xt_left_h * 0.25)
         notch_y1 = int(hp_y + xt_left_h * 0.75)
@@ -569,28 +570,23 @@ class SAOPlayerPanel(tk.Frame):
         # ── xt_right: 用户名显示区 (对标 clip-path 渐变背景) ──
         name_x = 4 + xt_left_w + 2
         name_w = w - name_x - 6
-        # 渐变背景 (linear-gradient to right, bgColor 50%, transparent)
+        # 渐变背景 — 从 HP BG 渐变到白色
+        _bg_r, _bg_g, _bg_b = 139, 160, 199  # #8BA0C7
         for i in range(max(1, int(name_w))):
             t_val = i / max(1, name_w)
-            if t_val < 0.5:
-                alpha = int(128)  # rgba(205,221,248,0.5)
-            else:
-                alpha = int(128 * (1 - (t_val - 0.5) * 2))
-            gv = 205 + int((255 - 205) * (1 - alpha / 128))
-            gv2 = 221 + int((255 - 221) * (1 - alpha / 128))
-            gv3 = 248 + int((255 - 248) * (1 - alpha / 128))
-            gv = min(255, gv)
-            gv2 = min(255, gv2)
-            gv3 = min(255, gv3)
+            alpha = 0.5 if t_val < 0.5 else max(0, 0.5 * (1 - (t_val - 0.5) * 2))
+            gv = int(_bg_r * alpha + 255 * (1 - alpha))
+            gv2 = int(_bg_g * alpha + 255 * (1 - alpha))
+            gv3 = int(_bg_b * alpha + 255 * (1 - alpha))
             self._top.create_line(name_x + i, hp_y, name_x + i, hp_y + 16,
-                                  fill=f'#{gv:02x}{gv2:02x}{gv3:02x}')
+                                  fill=f'#{min(255,gv):02x}{min(255,gv2):02x}{min(255,gv3):02x}')
 
         # 用户名 in HP bar
         hp_name = self._username
         if len(hp_name) > 12:
             hp_name = hp_name[:10] + '…'
         self._top.create_text(name_x + 6, hp_y + 8, text=hp_name,
-                              font=('Segoe UI', 8), fill='#e1dede', anchor='w')
+                              font=get_sao_font(8), fill='#e8e8e8', anchor='w')
 
         if h < 100:
             return
@@ -652,20 +648,21 @@ class SAOPlayerPanel(tk.Frame):
         # 背景块 (对标 .number_xt > div background: var(--bgColor))
         num_w1 = 80
         num_w2 = 44
+        _num_bg = '#8BA0C7'  # ≈ rgba(205,221,248,0.5)
         self._top.create_rectangle(bar_x + bar_w - num_w1 - num_w2 - 6, num_y,
                                    bar_x + bar_w - num_w2 - 4, num_y + 16,
-                                   fill='#dfe8f4', outline='')
+                                   fill=_num_bg, outline='')
         self._top.create_text(bar_x + bar_w - num_w2 - 4 - num_w1 // 2, num_y + 8,
                               text=time_text,
-                              font=('Segoe UI', 7), fill='#e1dede')
+                              font=get_sao_font(7), fill='#e8e8e8')
 
-        # Lv.N  
+        # Lv.N
         self._top.create_rectangle(bar_x + bar_w - num_w2 - 2, num_y,
                                    bar_x + bar_w, num_y + 16,
-                                   fill='#dfe8f4', outline='')
+                                   fill=_num_bg, outline='')
         self._top.create_text(bar_x + bar_w - num_w2 // 2 - 1, num_y + 8,
                               text=f'Lv.{self._level}',
-                              font=('Segoe UI', 7, 'bold'), fill='#e1dede')
+                              font=get_sao_font(7, True), fill='#e8e8e8')
 
         if h < 140:
             return
@@ -678,7 +675,7 @@ class SAOPlayerPanel(tk.Frame):
         if len(display_file) > 24:
             display_file = display_file[:21] + '...'
         self._top.create_text(w // 2, info_y, text=display_file,
-                              font=('Microsoft YaHei UI', 9), fill='#646364')
+                              font=get_cjk_font(9), fill='#646364')
 
         if h < 180:
             return
@@ -687,13 +684,13 @@ class SAOPlayerPanel(tk.Frame):
         if self._bpm > 0:
             self._top.create_text(w // 2, info_y + 22,
                                   text=f'♪  BPM  {self._bpm:.0f}',
-                                  fill='#f3af12', font=('Segoe UI', 9))
+                                  fill='#f3af12', font=get_sao_font(9))
 
         # 速度 / 移调
         if h > 200:
             self._top.create_text(w // 2, info_y + 44,
                                   text=f'x{self._speed:.2f}  ·  {self._transpose:+d}半音',
-                                  fill='#999999', font=('Segoe UI', 8))
+                                  fill='#999999', font=get_sao_font(8))
 
         # XP 经验条 (底部小条)
         if h > 240:
@@ -708,7 +705,7 @@ class SAOPlayerPanel(tk.Frame):
                 self._top.create_rectangle(xp_x, xp_y, xp_x + xp_fill, xp_y + xp_h,
                                            fill='#f3af12', outline='')
             self._top.create_text(w // 2, xp_y - 6, text=f'EXP',
-                                  fill='#cccccc', font=('Segoe UI', 6))
+                                  fill='#cccccc', font=get_sao_font(6))
 
     def _redraw_bottom(self, w, h):
         """对标 SAO-UI LeftInfo .bottom (灰色区域)"""
@@ -733,7 +730,7 @@ class SAOPlayerPanel(tk.Frame):
         # 描述文字 (对标 .des) — 职业或 "Welcome to SAO world"
         desc = self._profession if self._profession else 'Welcome to SAO world'
         self._bottom.create_text(w // 2, 20, text=desc,
-                                 font=('Microsoft YaHei UI', 9), fill='#888888')
+                                 font=get_cjk_font(9), fill='#777777')
 
         if h < 50:
             return
@@ -755,24 +752,24 @@ class SAOPlayerPanel(tk.Frame):
 
         status_color = '#333333' if self._is_playing else '#999999'
         self._bottom.create_text(29, 51, text=self._status,
-                                 font=('Microsoft YaHei UI', 9), fill=status_color,
+                                 font=get_cjk_font(9), fill=status_color,
                                  anchor='w')
 
         if h > 75:
             # 模式标签
             self._bottom.create_text(14, 74, text=self._mode,
-                                     font=('Microsoft YaHei UI', 8), fill='#f3af12',
+                                     font=get_cjk_font(8), fill='#f3af12',
                                      anchor='w')
             # 演奏模式
             _sm = self._shift_mode
             _smc = '#428ce6' if _sm == '普通模式' else ('#1565c0' if 'SHIFT' in _sm else '#e65100')
             self._bottom.create_text(w // 2, 74, text=_sm,
-                                     font=('Segoe UI', 7), fill=_smc, anchor='center')
+                                     font=get_sao_font(7), fill=_smc, anchor='center')
             # 延音踏板
             sus_color = '#3ad86c' if self._sustain else '#cccccc'
             sus_text = 'SUS ●' if self._sustain else 'SUS ○'
             self._bottom.create_text(w - 12, 74, text=sus_text,
-                                     font=('Segoe UI', 8), fill=sus_color,
+                                     font=get_sao_font(8), fill=sus_color,
                                      anchor='e')
 
         if h > 100:
@@ -782,7 +779,7 @@ class SAOPlayerPanel(tk.Frame):
             songs = profile.get('songs_played', 0)
             self._bottom.create_text(w // 2, 96,
                                      text=f'已完成 {songs} 首曲目',
-                                     font=('Segoe UI', 7), fill='#bbbbbb')
+                                     font=get_sao_font(7), fill='#bbbbbb')
 
 
 # ══════════════════════════════════════════════════════════
@@ -805,6 +802,9 @@ class SAOPlayerGUI:
         self.root.title("咲 Midi Player SAO Edition")
 
         self.settings = SettingsManager()
+        # 记录当前 UI 模式 — 下次启动时使用
+        self.settings.set('ui_mode', 'sao')
+        self.settings.save()
         self.player = MidiPlayer()
         saved_mode = self.settings.get('mode_system', 'classic')
         self.player.set_mode_system(saved_mode)
@@ -1110,7 +1110,7 @@ class SAOPlayerGUI:
         self._float_ctx = tk.Menu(self._float, tearoff=0, bg='#ffffff',
                                   fg='#333333', activebackground='#f3af12',
                                   activeforeground='#ffffff',
-                                  font=('Microsoft YaHei UI', 9))
+                                  font=get_cjk_font(9))
         self._float_ctx.add_command(label='◆ 打开 SAO 菜单', command=self._toggle_sao_menu)
         self._float_ctx.add_separator()
         self._float_ctx.add_command(label='▶ 播放/暂停', command=self._toggle_play)
@@ -1618,7 +1618,7 @@ class SAOPlayerGUI:
         hdr.pack(fill=tk.X)
         hdr.pack_propagate(False)
         tk.Label(hdr, text='◆ Piano', bg='#f5f5f7', fg='#646364',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=8)
+                 font=get_sao_font(8)).pack(side=tk.LEFT, padx=8)
         close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
                              font=('Consolas', 11), cursor='hand2')
         close_lbl.pack(side=tk.RIGHT, padx=6)
@@ -1687,7 +1687,7 @@ class SAOPlayerGUI:
         hdr.pack(fill=tk.X)
         hdr.pack_propagate(False)
         tk.Label(hdr, text='◉ 状态', bg='#f5f5f7', fg='#646364',
-                 font=('Segoe UI', 8, 'bold')).pack(side=tk.LEFT, padx=8)
+                 font=get_sao_font(8, True)).pack(side=tk.LEFT, padx=8)
         close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
                              font=('Consolas', 11), cursor='hand2')
         close_lbl.pack(side=tk.RIGHT, padx=6)
@@ -1703,43 +1703,43 @@ class SAOPlayerGUI:
         mode_row = tk.Frame(body, bg='#ffffff')
         mode_row.pack(fill=tk.X, pady=3)
         tk.Label(mode_row, text='模式', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT)
+                 font=get_sao_font(8)).pack(side=tk.LEFT)
         self._status_mode_lbl = tk.Label(mode_row, text=self._get_mode_text(),
                                           bg='#ffffff', fg='#f3af12',
-                                          font=('Microsoft YaHei UI', 9, 'bold'))
+                                          font=get_cjk_font(9, True))
         self._status_mode_lbl.pack(side=tk.RIGHT)
 
         # 键位模式行 (normal/shift/ctrl)
         shift_row = tk.Frame(body, bg='#ffffff')
         shift_row.pack(fill=tk.X, pady=3)
         tk.Label(shift_row, text='键位切换', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT)
+                 font=get_sao_font(8)).pack(side=tk.LEFT)
         _sm_labels = {'normal': '普通模式', 'shift': 'SHIFT 高音',
                       'ctrl': 'CTRL 低音', 'lt': 'LT 极低', 'gt': 'GT 极高'}
         _sm_text = _sm_labels.get(self._shift_mode, self._shift_mode)
         self._status_shift_lbl = tk.Label(shift_row, text=_sm_text,
                                            bg='#ffffff', fg='#2196f3',
-                                           font=('Segoe UI', 9, 'bold'))
+                                           font=get_sao_font(9, True))
         self._status_shift_lbl.pack(side=tk.RIGHT)
 
         # 延音行
         sus_row = tk.Frame(body, bg='#ffffff')
         sus_row.pack(fill=tk.X, pady=3)
         tk.Label(sus_row, text='延音踏板', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT)
+                 font=get_sao_font(8)).pack(side=tk.LEFT)
         self._status_sus_dot = tk.Canvas(sus_row, width=12, height=12,
                                           bg='#ffffff', highlightthickness=0)
         self._status_sus_dot.pack(side=tk.RIGHT, padx=(4, 0))
         self._status_sus_lbl = tk.Label(sus_row, text='OFF',
                                          bg='#ffffff', fg='#bbbbbb',
-                                         font=('Segoe UI', 8, 'bold'))
+                                         font=get_sao_font(8, True))
         self._status_sus_lbl.pack(side=tk.RIGHT)
 
         # BPM行
         bpm_row = tk.Frame(body, bg='#ffffff')
         bpm_row.pack(fill=tk.X, pady=3)
         tk.Label(bpm_row, text='BPM', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT)
+                 font=get_sao_font(8)).pack(side=tk.LEFT)
         bpm_val = getattr(getattr(self.player, 'parser', None), 'bpm', 0)
         self._status_bpm_lbl = tk.Label(bpm_row,
                                          text=f'{bpm_val:.0f}' if bpm_val else '—',
@@ -1751,7 +1751,7 @@ class SAOPlayerGUI:
         spd_row = tk.Frame(body, bg='#ffffff')
         spd_row.pack(fill=tk.X, pady=3)
         tk.Label(spd_row, text='速度', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT)
+                 font=get_sao_font(8)).pack(side=tk.LEFT)
         self._status_spd_lbl = tk.Label(spd_row, text=f'{self._speed:.2f}×',
                                          bg='#ffffff', fg='#333333',
                                          font=('Consolas', 10))
@@ -1850,7 +1850,7 @@ class SAOPlayerGUI:
         hdr.pack(fill=tk.X)
         hdr.pack_propagate(False)
         tk.Label(hdr, text='◆ Visualizer', bg='#f5f5f7', fg='#646364',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=8)
+                 font=get_sao_font(8)).pack(side=tk.LEFT, padx=8)
         close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
                              font=('Consolas', 11), cursor='hand2')
         close_lbl.pack(side=tk.RIGHT, padx=6)
@@ -1922,7 +1922,7 @@ class SAOPlayerGUI:
         hdr.pack(fill=tk.X)
         hdr.pack_propagate(False)
         tk.Label(hdr, text='⚙ 控制面板', bg='#f5f5f7', fg='#646364',
-                 font=('Segoe UI', 8, 'bold')).pack(side=tk.LEFT, padx=8)
+                 font=get_sao_font(8, True)).pack(side=tk.LEFT, padx=8)
         close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
                               font=('Consolas', 11), cursor='hand2')
         close_lbl.pack(side=tk.RIGHT, padx=6)
@@ -1946,7 +1946,7 @@ class SAOPlayerGUI:
             lbl = tk.Label(parent, text=text,
                            bg='#f3af12' if active else '#eeeeee',
                            fg='#ffffff' if active else '#999999',
-                           font=('Microsoft YaHei UI', 8, 'bold'),
+                           font=get_cjk_font(8, True),
                            padx=8, pady=2, cursor='hand2', relief=tk.FLAT)
             lbl.bind('<Button-1>', lambda e: command())
             return lbl
@@ -1955,7 +1955,7 @@ class SAOPlayerGUI:
         row_mode = tk.Frame(body, bg='#ffffff')
         row_mode.pack(fill=tk.X, pady=(2, 3))
         tk.Label(row_mode, text='键位', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8), width=5, anchor='w').pack(side=tk.LEFT)
+                 font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
         cur_mode = self.settings.get('mode_system', 'classic')
         p60 = pill(row_mode, '60键 CTRL/SHIFT', cur_mode == 'classic',  lambda: self._set_mode('classic'))
         p60.pack(side=tk.LEFT, padx=(0, 4))
@@ -1969,7 +1969,7 @@ class SAOPlayerGUI:
         row_part = tk.Frame(body, bg='#ffffff')
         row_part.pack(fill=tk.X, pady=2)
         tk.Label(row_part, text='音部', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8), width=5, anchor='w').pack(side=tk.LEFT)
+                 font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
         pm = pill(row_part, '✓ 主旋律' if self._melody_on else '✗ 主旋律', self._melody_on, self._toggle_melody)
         pm.pack(side=tk.LEFT, padx=(0, 4))
         pb = pill(row_part, '✓ 低音部' if self._bass_on else '✗ 低音部', self._bass_on, self._toggle_bass)
@@ -1980,7 +1980,7 @@ class SAOPlayerGUI:
         row_dens = tk.Frame(body, bg='#ffffff')
         row_dens.pack(fill=tk.X, pady=2)
         tk.Label(row_dens, text='伴奏密度', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8), anchor='w').pack(side=tk.LEFT)
+                 font=get_sao_font(8), anchor='w').pack(side=tk.LEFT)
         dens_var = tk.DoubleVar(value=self._bass_density)
         dens_scale = tk.Scale(row_dens, from_=0.2, to=1.0, resolution=0.1,
                               orient=tk.HORIZONTAL, variable=dens_var,
@@ -2001,7 +2001,7 @@ class SAOPlayerGUI:
         row_spd = tk.Frame(body, bg='#ffffff')
         row_spd.pack(fill=tk.X, pady=2)
         tk.Label(row_spd, text='速度', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8), width=5, anchor='w').pack(side=tk.LEFT)
+                 font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
         btn_sm = tk.Label(row_spd, text='−', bg='#eeeeee', fg='#646364',
                           font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
         btn_sm.pack(side=tk.LEFT)
@@ -2019,7 +2019,7 @@ class SAOPlayerGUI:
         row_tr = tk.Frame(body, bg='#ffffff')
         row_tr.pack(fill=tk.X, pady=2)
         tk.Label(row_tr, text='移调', bg='#ffffff', fg='#999999',
-                 font=('Segoe UI', 8), width=5, anchor='w').pack(side=tk.LEFT)
+                 font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
         btn_tm = tk.Label(row_tr, text='−', bg='#eeeeee', fg='#646364',
                           font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
         btn_tm.pack(side=tk.LEFT)
@@ -2032,7 +2032,7 @@ class SAOPlayerGUI:
         btn_tp.pack(side=tk.LEFT)
         btn_tp.bind('<Button-1>', lambda e: self._transpose_up())
         btn_rst = tk.Label(row_tr, text='重置', bg='#eeeeee', fg='#646364',
-                           font=('Segoe UI', 8), padx=6, pady=2, cursor='hand2')
+                           font=get_sao_font(8), padx=6, pady=2, cursor='hand2')
         btn_rst.pack(side=tk.LEFT, padx=(6, 0))
         btn_rst.bind('<Button-1>', lambda e: self._auto_transpose())
         self._control_panel._tr_lbl = tr_lbl
@@ -2058,7 +2058,7 @@ class SAOPlayerGUI:
                       self._glissando, self._toggle_glissando)
         gl_lbl.pack(side=tk.LEFT, padx=(0, 6))
         midi_btn = tk.Label(row_opt2, text='MIDI通道…', bg='#eeeeee', fg='#646364',
-                            font=('Segoe UI', 8), padx=8, pady=2, cursor='hand2')
+                            font=get_sao_font(8), padx=8, pady=2, cursor='hand2')
         midi_btn.pack(side=tk.LEFT)
         midi_btn.bind('<Button-1>', lambda e: self._show_channel_settings())
         self._control_panel._gl_lbl = gl_lbl
@@ -3419,7 +3419,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.1+3201\n\n"
+            "咲 Midi Player  SAO Edition\nv3.2.2+3202\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

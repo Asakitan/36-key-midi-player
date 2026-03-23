@@ -21,6 +21,7 @@ import struct
 from PIL import Image, ImageDraw, ImageFilter, ImageTk, ImageEnhance, ImageChops
 from typing import Optional, Callable, List, Dict, Tuple
 import numpy as np
+from sao_sound import get_sao_font as _sao_font, get_cjk_font as _cjk_font
 
 try:
     import moderngl
@@ -91,8 +92,8 @@ class SAOColors:
     # 通用
     WHITE = '#ffffff'
     WHITE85 = '#ffffffd9'
-    FONT_SAO = ('Segoe UI', 11)
-    FONT_ROUND = ('Microsoft YaHei UI', 10)
+    FONT_SAO = ('Segoe UI', 11)      # fallback; use _sao_font() at runtime
+    FONT_ROUND = ('Microsoft YaHei UI', 10)  # fallback; use _cjk_font() at runtime
 
     # ── 深色应用背景 (SAO 菜单之下的播放器壳) ──
     APP_BG = '#0a0e14'
@@ -268,10 +269,10 @@ class SAOCircleButton(tk.Canvas):
         fs = max(8, int(16 * self._size / self.SIZE))
         try:
             self.create_text(cx, cy, text=self.icon_text,
-                             fill=icon_color, font=('Segoe UI Symbol', fs))
+                             fill=icon_color, font=_sao_font(fs))
         except Exception:
             self.create_text(cx, cy, text='●',
-                             fill=icon_color, font=('Segoe UI', fs))
+                             fill=icon_color, font=_sao_font(fs))
 
     def _on_enter(self, e=None):
         self._hovering = True
@@ -548,7 +549,7 @@ class SAOLeftInfo(tk.Frame):
         self._top.create_polygon(w, h * 0.77, w + 18, h * 0.77 + 7, w, h * 0.77 + 14,
                                  fill='#ffffff', outline='')
         self._top.create_text(w // 2, 30, text=self.username,
-                              font=('Microsoft YaHei UI', 13), fill='#333333')
+                              font=_cjk_font(13), fill='#333333')
         if h > 50:
             # 分隔线: 渐变效果
             for i in range(3):
@@ -564,7 +565,7 @@ class SAOLeftInfo(tk.Frame):
         self._bottom.create_polygon(30, 0, 30 + 7, -10, 30 + 15, 0,
                                     fill='#e5e3e3', outline='')
         self._bottom.create_text(10, 15, text=self.description,
-                                 font=('Microsoft YaHei UI', 9), fill='#555',
+                                 font=_cjk_font(9), fill='#555',
                                  anchor='nw', width=w - 20)
 
 
@@ -665,12 +666,12 @@ class SAOChildBar(tk.Frame):
 
         icon_lbl = tk.Label(row, text=item.get('icon', ''),
                             bg='#ffffff', fg='#555555',
-                            font=('Segoe UI Symbol', 12))
+                            font=_sao_font(12))
         icon_lbl.pack(side=tk.LEFT, padx=(8, 5))
 
         text_lbl = tk.Label(row, text=item.get('label', ''),
                             bg='#ffffff', fg=SAOColors.CHILD_TEXT,
-                            font=('Microsoft YaHei UI', 10), anchor='w')
+                            font=_cjk_font(10), anchor='w')
         text_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 右侧箭头 (hover 时显示)
@@ -1093,7 +1094,7 @@ class SAODialog:
 
         title_lbl = tk.Label(header, text='', bg='#ffffff',
                              fg=SAOColors.ALERT_TITLE_FG,
-                             font=('Segoe UI', 13, 'bold'))
+                             font=_sao_font(13, True))
         title_lbl.pack(expand=True)
 
         tk.Frame(main_box, bg='#e0e0e0', height=1).pack(fill=tk.X)
@@ -1106,7 +1107,7 @@ class SAODialog:
 
         content_lbl = tk.Label(content, text='', bg='#eae9e9',
                                fg='#888888',
-                               font=('Microsoft YaHei UI', 10),
+                               font=_cjk_font(10),
                                wraplength=final_w - 48, justify='center')
         content_lbl.pack(expand=True)
 
@@ -1342,7 +1343,7 @@ class SAOHPBar(tk.Canvas):
         # 用户名区域
         self.create_rectangle(25, 0, 120, h, fill=bg_color, outline='')
         self.create_text(72, h // 2, text=self.username,
-                         fill='#e1dede', font=('Segoe UI', 9))
+                         fill='#e1dede', font=_sao_font(9))
 
         # HP 条区域
         bar_x = 125
@@ -1375,10 +1376,10 @@ class SAOHPBar(tk.Canvas):
         # 数值
         self.create_text(bar_x + bar_w * 0.6, h - 2,
                          text=f'{self._display_current}/{self._total}',
-                         fill='#e1dede', font=('Segoe UI', 7), anchor='s')
+                         fill='#e1dede', font=_sao_font(7), anchor='s')
         self.create_text(bar_x + bar_w * 0.85, h - 2,
                          text=f'Lv.{self._level}',
-                         fill='#e1dede', font=('Segoe UI', 7), anchor='s')
+                         fill='#e1dede', font=_sao_font(7), anchor='s')
 
 
 # ──────────────────── LINK START 动画 ────────────────────
@@ -1487,37 +1488,41 @@ void main() {
         self._sound_player = None
 
     # ════════════════════════════════════════════════════════
-    #  Link Start 音效播放
+    #  Link Start 音效播放 (3阶段)
     # ════════════════════════════════════════════════════════
     def _play_sound(self):
-        """在后台线程中播放 LinkStart 音效"""
+        """3阶段音效: LinkStart.SAO.Kirito → Startup.SAO.NerveGear → Popup.ALO.Welcome
+
+        对应动画时间线:
+          Phase 1 (t=0.0s):  "LINK START!" 喊声 — 彩色隧道开始
+          Phase 2 (t=3.5s):  NerveGear 启动音 — 文字飞入
+          Phase 3 (t=5.2s):  ALO 欢迎音 — 蓝色隧道
+        """
         import threading
-        def _do_play():
+
+        def _do_play(name):
             try:
-                # 优先使用 sao_sound 模块 (已处理路径映射)
+                from sao_sound import play_sound as _ps
+                _ps(name, volume=0.8)
+            except Exception:
                 try:
-                    from sao_sound import play_sound as _ps
-                    _ps('link_start', volume=0.8)
-                    return
-                except Exception:
-                    pass
-                # fallback: 直接查找音效文件
-                _base = os.path.dirname(os.path.abspath(__file__))
-                for _name in ('assets/sounds/LinkStart.SAO.Kirito.mp3',
-                              'assets/sounds/Startup.SAO.NerveGear.mp3',
-                              'linkstart.mp3'):
-                    _snd = os.path.join(_base, _name)
-                    if os.path.isfile(_snd):
+                    _base = os.path.dirname(os.path.abspath(__file__))
+                    from sao_sound import SAO_SOUNDS
+                    fname = SAO_SOUNDS.get(name, '')
+                    if fname and os.path.isfile(fname):
                         import pygame
                         if not pygame.mixer.get_init():
                             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
-                        snd = pygame.mixer.Sound(_snd)
-                        self._sound_player = snd
-                        snd.play()
-                        return
-            except Exception as e:
-                print(f'[LinkStart] Sound play failed: {e}')
-        threading.Thread(target=_do_play, daemon=True).start()
+                        pygame.mixer.Sound(fname).play()
+                except Exception as e:
+                    print(f'[LinkStart] Sound ({name}) failed: {e}')
+
+        # Phase 1 (t=0): "LINK START!" — 入场
+        threading.Thread(target=lambda: _do_play('link_start'), daemon=True).start()
+        # Phase 2 (t=3.5s): NerveGear 启动音 — 文字阶段
+        threading.Timer(3.5, lambda: _do_play('nervegear')).start()
+        # Phase 3 (t=5.2s): ALO 欢迎音 — 蓝色隧道
+        threading.Timer(5.2, lambda: _do_play('alo_welcome')).start()
 
     # ════════════════════════════════════════════════════════
     #  启动
@@ -2567,7 +2572,7 @@ class SAOFilePicker(tk.Toplevel):
 
         title_lbl = tk.Label(header, text=title, bg=self._BG2,
                              fg='#646364',
-                             font=('Segoe UI', 11, 'bold'))
+                             font=_sao_font(11, True))
         title_lbl.pack(side=tk.LEFT, padx=8)
 
         # 关闭 ×
@@ -2593,10 +2598,10 @@ class SAOFilePicker(tk.Toplevel):
         path_row.pack_propagate(False)
 
         tk.Label(path_row, text='▸', bg=self._BG, fg=self._ACCENT2,
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=(8, 2), pady=4)
+                 font=_sao_font(8)).pack(side=tk.LEFT, padx=(8, 2), pady=4)
         self._path_lbl = tk.Label(path_row, text='', bg=self._BG,
                                   fg=self._TEXT_DIM,
-                                  font=('Segoe UI', 8), anchor='w')
+                                  font=_sao_font(8), anchor='w')
         self._path_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=4)
 
         # ── 列表区 ──
@@ -2618,7 +2623,7 @@ class SAOFilePicker(tk.Toplevel):
         self._listbox = tk.Listbox(
             list_frame,
             bg=self._BG2, fg=self._FILE_FG,
-            font=('Microsoft YaHei UI', 9),
+            font=_cjk_font(9),
             selectbackground=self._SEL_BG,
             selectforeground=self._SEL_FG,
             highlightthickness=0, bd=0,
@@ -2639,7 +2644,7 @@ class SAOFilePicker(tk.Toplevel):
         fname_row.pack(fill=tk.X, padx=6)
         fname_row.pack_propagate(False)
         self._fname_lbl = tk.Label(fname_row, text='', bg=self._BG,
-                                   fg=self._ACCENT, font=('Microsoft YaHei UI', 9),
+                                   fg=self._ACCENT, font=_cjk_font(9),
                                    anchor='w')
         self._fname_lbl.pack(fill=tk.X, padx=4, pady=4)
         self._listbox.bind('<<ListboxSelect>>', self._on_select)
@@ -2663,7 +2668,7 @@ class SAOFilePicker(tk.Toplevel):
             sel_dir_cv.create_oval(11, 11, 25, 25, fill='#4caf50', outline='')
             sel_dir_cv.bind('<Button-1>', lambda e: self._confirm_dir())
             tk.Label(btn_frame, text='选择此文件夹', bg=self._BG2, fg='#999999',
-                     font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=(0, 16))
+                     font=_sao_font(8)).pack(side=tk.LEFT, padx=(0, 16))
 
         # 确认 (蓝圆)
         ok_cv = tk.Canvas(btn_frame, width=36, height=36,
@@ -2675,7 +2680,7 @@ class SAOFilePicker(tk.Toplevel):
         ok_cv.bind('<Button-1>', lambda e: self._confirm())
 
         tk.Label(btn_frame, text='确认', bg=self._BG2, fg='#999999',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=(0, 20))
+                 font=_sao_font(8)).pack(side=tk.LEFT, padx=(0, 20))
 
         # 取消 (红圆)
         cancel_cv = tk.Canvas(btn_frame, width=36, height=36,
@@ -2688,7 +2693,7 @@ class SAOFilePicker(tk.Toplevel):
         cancel_cv.bind('<Button-1>', lambda e: self._cancel())
 
         tk.Label(btn_frame, text='取消', bg=self._BG2, fg='#999999',
-                 font=('Segoe UI', 8)).pack(side=tk.LEFT)
+                 font=_sao_font(8)).pack(side=tk.LEFT)
 
     def _start_drag(self, e):
         self._drag['x'] = e.x_root
@@ -2982,7 +2987,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.2.1+3201", on_close=None, **kw):
+                 version="v3.2.2+3202", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close

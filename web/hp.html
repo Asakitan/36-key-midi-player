@@ -11,11 +11,11 @@
 @font-face { font-family: 'sao'; src: url('../assets/fonts/SAOUI.ttf'); }
 @font-face { font-family: 'yuanJWD'; src: url('../assets/fonts/ZhuZiAYuanJWD.ttf'); }
 
-/* ═══ Body — color-keyed transparent background ═══
-   RGB(1,0,1) is our Win32 LWA_COLORKEY color.
-   All pixels with this EXACT color become transparent + click-through. */
+/* ═══ Body — native pywebview transparency ═══
+   transparent=True in pywebview handles the background.
+   All non-content areas become transparent. */
 html, body {
-    background: rgb(1, 0, 1);
+    background: transparent;
     user-select: none;
     -webkit-user-select: none;
     margin: 0;
