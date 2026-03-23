@@ -452,6 +452,26 @@ class SAOWebViewGUI:
         except Exception:
             pass
 
+    # ─── 任务栏图标 ───
+    def _set_window_icon(self, title: str):
+        """通过 Win32 为指定窗口设置任务栏/标题栏图标."""
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
+            IMAGE_ICON = 1
+            LR_LOADFROMFILE = 0x10
+            LR_DEFAULTSIZE = 0x40
+            WM_SETICON = 0x80
+            hwnd = ctypes.windll.user32.FindWindowW(None, title)
+            if not hwnd:
+                return
+            hicon = ctypes.windll.user32.LoadImageW(
+                None, icon_path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE)
+            if hicon:
+                ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, 0, hicon)  # ICON_SMALL
+                ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, 1, hicon)  # ICON_BIG
+        except Exception as e:
+            print(f'[SAO] set icon: {e}')
+
     # ─── 点击穿透 ───
     def _setup_click_through(self):
         """限制 HP 窗口可交互区域 — 只保留 HP 条, 透明区域鼠标穿透."""
@@ -529,6 +549,9 @@ class SAOWebViewGUI:
             self._setup_click_through()
             # WebView2 透明背景 (防止白底)
             self._apply_webview2_transparency()
+            # 任务栏图标
+            self._set_window_icon('♪ SAO HP')
+            self._set_window_icon('SAO Menu')
         threading.Timer(0.5, _init).start()
 
         # 后台线程
@@ -651,16 +674,7 @@ class SAOWebViewGUI:
         self._sync_menu_info()
         self._play_sound('menu_open')
 
-        # ── 先截图推送, 防止首次打开灰屏 ──
-        self._push_fisheye_background()
-
-        # 实时鱼眼背景循环 (非阻塞, 代数防重复)
-        self._fisheye_active = True
-        self._fisheye_gen += 1
-        gen = self._fisheye_gen
-        threading.Thread(target=self._fisheye_loop, args=(gen,), daemon=True).start()
-
-        # 恢复窗口透明度, 以防上次关闭时已置 alpha=0
+        # alpha=0 静默显示窗口, 避免 WebView2 白底闪烁
         try:
             _hwnd2 = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
             if _hwnd2:
@@ -668,7 +682,7 @@ class SAOWebViewGUI:
                 _ex2 = ctypes.windll.user32.GetWindowLongW(_hwnd2, GWL_EXSTYLE)
                 if not (_ex2 & WS_EX_LAYERED):
                     ctypes.windll.user32.SetWindowLongW(_hwnd2, GWL_EXSTYLE, _ex2 | WS_EX_LAYERED)
-                ctypes.windll.user32.SetLayeredWindowAttributes(_hwnd2, 0, 255, LWA_ALPHA)
+                ctypes.windll.user32.SetLayeredWindowAttributes(_hwnd2, 0, 0, LWA_ALPHA)
         except Exception:
             pass
         try:
@@ -681,10 +695,31 @@ class SAOWebViewGUI:
             pass
         # HP 栏保持在菜单窗口上方
         self._ensure_hp_on_top()
-        # 非阻塞延迟初始化菜单动画
+
+        # window 已显示后推送鱼眼背景 (JS 现在可执行)
+        self._push_fisheye_background()
+
+        # 实时鱼眼背景循环 (非阻塞, 代数防重复)
+        self._fisheye_active = True
+        self._fisheye_gen += 1
+        gen = self._fisheye_gen
+        threading.Thread(target=self._fisheye_loop, args=(gen,), daemon=True).start()
+
+        # 延迟开菜单动画, 再渐显窗口 (此时鱼眼已在渲染)
         def _init_menu():
-            time.sleep(0.15)
+            time.sleep(0.12)
             self._eval_menu('SAO.openMenu(500, 300)')
+            time.sleep(0.04)  # 让鱼眼 canvas 先渲染一帧
+            try:
+                hwnd = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
+                if hwnd:
+                    LWA_ALPHA = 2
+                    for step in range(1, 9):   # ~120ms 渐显
+                        ctypes.windll.user32.SetLayeredWindowAttributes(
+                            hwnd, 0, int(255 * step / 8), LWA_ALPHA)
+                        time.sleep(0.015)
+            except Exception:
+                pass
         threading.Thread(target=_init_menu, daemon=True).start()
 
     def _close_menu(self):
@@ -727,7 +762,7 @@ class SAOWebViewGUI:
             self._ensure_hp_on_top()
         threading.Thread(target=_hide, daemon=True).start()
 
-    def _capture_current_monitor_b64(self, quality=85):
+    def _capture_current_monitor_b64(self, quality=100):
         """截取 HP 窗口所在显示器 → JPEG base64 (低分辨率快速截图,
         distortion 由浏览器端 WebGL shader 实时 60fps 渲染)."""
         try:
@@ -871,7 +906,7 @@ class SAOWebViewGUI:
 
     def _push_fisheye_background(self):
         """截图当前屏幕 → 推送到菜单 JS (WebGL 做 60fps 鱼眼渲染)"""
-        b64 = self._capture_current_monitor_b64(quality=35)
+        b64 = self._capture_current_monitor_b64()  # 使用默认 quality=55
         if b64:
             js = f'SAO.setFisheyeBg("data:image/jpeg;base64,{b64}")'
             self._eval_menu(js)

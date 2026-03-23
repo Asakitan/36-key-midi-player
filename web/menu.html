@@ -620,16 +620,16 @@ html, body {
 
             <!-- Play Controls sub-menu -->
             <ul class="child-menu" id="sub-playCtrl" data-group="playCtrl">
-                <li data-action="play"><i>▶</i><span>播放 / 暂停</span><small class="shortcut">Ctrl+⇧+Space</small></li>
-                <li data-action="stop"><i>■</i><span>停止</span><small class="shortcut">Ctrl+⇧+S</small></li>
-                <li data-action="speedup"><i>▲</i><span>加速 (+0.1)</span><small class="shortcut">Ctrl+⇧+→</small></li>
-                <li data-action="speeddown"><i>▼</i><span>减速 (-0.1)</span><small class="shortcut">Ctrl+⇧+←</small></li>
+                <li data-action="play"><i>▶</i><span>播放 / 暂停</span><small class="shortcut">F5</small></li>
+                <li data-action="stop"><i>■</i><span>停止</span><small class="shortcut">F6</small></li>
+                <li data-action="speedup"><i>▲</i><span>加速 (+0.1)</span><small class="shortcut">F7</small></li>
+                <li data-action="speeddown"><i>▼</i><span>减速 (-0.1)</span><small class="shortcut">F8</small></li>
                 <li data-action="restart"><i>↻</i><span>重新开始</span></li>
             </ul>
 
             <!-- File sub-menu -->
             <ul class="child-menu" id="sub-fileMenu" data-group="fileMenu">
-                <li data-action="open"><i>📄</i><span>打开文件</span><small class="shortcut">Ctrl+⇧+O</small></li>
+                <li data-action="open"><i>📄</i><span>打开文件</span></li>
                 <li data-action="folder"><i>📁</i><span>文件夹循环</span></li>
             </ul>
 
@@ -639,8 +639,8 @@ html, body {
                 <li data-action="toggle_bass"><i>🎸</i><span>伴奏</span><span class="badge on" id="badge-bass">ON</span></li>
                 <li data-action="toggle_directc"><i>🔑</i><span>C调直转</span><span class="badge off" id="badge-directc">OFF</span></li>
                 <li data-action="toggle_glissando"><i>🎶</i><span>结尾滑奏</span><span class="badge off" id="badge-glissando">OFF</span></li>
-                <li data-action="transpose_up"><i>⬆</i><span>升调 (+1)</span><small class="shortcut">Ctrl+⇧+↑</small></li>
-                <li data-action="transpose_down"><i>⬇</i><span>降调 (-1)</span><small class="shortcut">Ctrl+⇧+↓</small></li>
+                <li data-action="transpose_up"><i>⬆</i><span>升调 (+1)</span></li>
+                <li data-action="transpose_down"><i>⬇</i><span>降调 (-1)</span></li>
             </ul>
 
             <!-- Panels sub-menu -->
@@ -660,7 +660,7 @@ html, body {
 
 <!-- Current file display -->
 <div class="current-file" id="current-file"></div>
-<div class="current-file" style="bottom:5px;font-size:10px;color:rgba(255,255,255,0.3);font-family:Consolas,monospace;">Ctrl+⇧+M 呼出/关闭菜单</div>
+<div class="current-file" style="bottom:5px;font-size:10px;color:rgba(255,255,255,0.3);font-family:Consolas,monospace;">F5 播放  F6 停止  F7 加速  F8 减速</div>
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
