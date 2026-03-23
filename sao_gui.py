@@ -788,6 +788,32 @@ class SAOPlayerGUI:
         ]
         cv.create_polygon(xr_pts, fill=BG, outline='', tags='xt_right_bg')
 
+        # ── 右侧渐隐 (模拟 CSS linear-gradient to right ... rgba(220,212,212,0)) ──
+        # 在 xt_right 多边形的右半部分覆盖渐变色条, BG → TRANS
+        # 范围: 右侧 50% (xr_x + xr_w//2 到 xr_x + xr_w)
+        # 分三个区域: 顶部条(oy ~ bar_y), 底部右(bar_y+PH ~ oy+BH*0.80), 最底部(oy+BH*0.80 ~ oy+BH)
+        bg_r, bg_g, bg_b = 0x9d, 0xb5, 0xd0  # BG = #9db5d0
+        tr_r, tr_g, tr_b = 0x01, 0x02, 0x01  # TRANS = #010201
+        fade_start = xr_x + xr_w // 2  # 50% 开始渐变
+        fade_end   = xr_x + xr_w       # 100% 完全透明
+        n_strips = 16
+        for i in range(n_strips):
+            t = i / max(1, n_strips - 1)
+            # 非线性: 后半快速渐隐
+            t2 = t * t
+            r = int(bg_r + (tr_r - bg_r) * t2)
+            g = int(bg_g + (tr_g - bg_g) * t2)
+            b = int(bg_b + (tr_b - bg_b) * t2)
+            c = f'#{r:02x}{g:02x}{b:02x}'
+            sx = fade_start + int((fade_end - fade_start) * i / n_strips)
+            ex = fade_start + int((fade_end - fade_start) * (i + 1) / n_strips) + 1
+            # 顶部条 (oy 到 oy + BH*0.22)
+            cv.create_rectangle(sx, oy, ex, oy + int(BH * 0.22),
+                                fill=c, outline='', tags='xt_fade')
+            # 底部右 (oy + BH*0.60 到 oy + BH*0.80)
+            cv.create_rectangle(sx, oy + int(BH * 0.60), ex, oy + int(BH * 0.80),
+                                fill=c, outline='', tags='xt_fade')
+
         # 名字文本 (xt_right > span, padding-left: 10px, 在左侧 column 内居中)
         display_name = self._username if self._username else 'Player'
         if len(display_name) > 8:
@@ -3228,7 +3254,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.9+3209\n\n"
+            "咲 Midi Player  SAO Edition\nv3.3.0+3300\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
