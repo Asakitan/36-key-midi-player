@@ -707,17 +707,11 @@ class SAOPlayerGUI:
     #  悬浮触发按钮 — 纯 SAO-UI HP 组件 (对标 HP/src/index.vue)
     # ══════════════════════════════════════════════
     def _create_floating_widget(self):
-        """创建 SAO-UI HP 组件风格常驻悬浮控件.
-
-        严格对标 SAO-UI packages/HP 的 CSS/HTML 结构:
-        - .XTBox: 400×40, display:flex, drop-shadow
-        - .xt_left: 22px, clip-path 凹口
-        - .xt_right: flex:1, gradient, clip-path, 用户名
-        - .xt_border + SVG: 260×23 多边形 HP 条
-        - .number_xt: 150×20, 右下数值 (current/total, lv.N)
+        """SAO-UI HP 组件 — 重排布局:
+        [HP条框全宽顶行] [咋名字框右侧] [XP/Lv 数字 底行]
         """
-        # ── 尺寸 (1:1 对标 SAO-UI HP .XTBox) ──
-        FW, FH = 400, 60   # 40px HP + 20px number labels
+        # ── 尺寸 ──
+        FW, FH = 420, 60
         self._fw, self._fh = FW, FH
 
         TRANS = '#010201'
@@ -746,178 +740,114 @@ class SAOPlayerGUI:
         cv.pack(fill=tk.BOTH, expand=True)
         self._float_cv = cv
 
-        # ── 颜色 (对标 SAO-UI HP CSS 变量) ──
-        # CSS: --bgColor: rgba(205,221,248,0.5)
-        BG = '#9db5d0'       # ≈ rgba(205,221,248,0.5) — 匹配 SAOHPBar
-        BG_HOVER = '#b5cde0'  # hover 稍亮
-        BORDER_C = '#dad7d7'  # stroke: rgb(218,215,215)
-        FONT_C = '#e1dede'    # 白灰文字 — 匹配 SAO-UI CSS
+        BG      = '#9db5d0'   # 背景色
+        BORDER_C = '#c8c6c6'  # 边框色 (65% 白)
+        FONT_C  = '#e1dede'   # 文字色
+        BAR_BG  = '#2c3040'   # HP 条内底色
 
         # ═══════════════════════════════════════
-        #  .xt_left — 22×40, clip-path 凹口
+        #  HP 条 (顶行全宽, x=4..316, y=4..28)
         # ═══════════════════════════════════════
-        # clip-path: polygon(0% 25%,50% 25%,50% 75%,0% 75%,0% 100%,100% 100%,100% 0%,0% 0%)
-        # 效果: 左侧 0-50% 宽度在 25%-75% 高度处被挖空
-        xt_w, xt_h = 22, 40
-        # 用两个矩形 + 一个覆盖 (模拟挖空)
-        # 外框
-        cv.create_rectangle(0, 0, xt_w, xt_h, fill=BG, outline='', tags='xt_left')
-        # 挖空: 左半 25%-75% 区域用透明色覆盖
-        notch_x1 = int(xt_w * 0.50)
-        notch_y0 = int(xt_h * 0.25)
-        notch_y1 = int(xt_h * 0.75)
-        cv.create_rectangle(0, notch_y0, notch_x1, notch_y1,
-                            fill=TRANS, outline='', tags='xt_left_notch')
+        bar_x, bar_y = 4, 6
+        # 多边形: (0,0)→2══(312,0)→(307,16)→(157,16)→(153,24)→(0,24)
+        PW = 312   # 全宽
+        PH = 24    # 全高
+        PS = 157   # 台阶内角 x
+        PT = 16    # 台阶高度
+
+        # 1) 内部深色背景
+        bar_pts = [
+            bar_x,      bar_y,
+            bar_x+PW,   bar_y,
+            bar_x+PW-5, bar_y+PT,
+            bar_x+PS,   bar_y+PT,
+            bar_x+PS-4, bar_y+PH,
+            bar_x,      bar_y+PH,
+        ]
+        cv.create_polygon(bar_pts, fill=BAR_BG, outline='', tags='hp_bg')
+
+        # 2) HP 填充矩形 (初始隐藏)
+        self._hp_bar_x    = bar_x + 2
+        self._hp_bar_y    = bar_y + 2
+        self._hp_bar_right     = bar_x + PW - 7    # 上半最大 x
+        self._hp_bar_bot_top   = bar_y + PT - 1    # 上半最大 y
+        self._hp_bar_bot_full  = bar_y + PH - 1    # 下半最大 y
+        self._hp_bar_step_x    = bar_x + PS - 6    # 台阶 x
+
+        self._float_hp_fill_top = cv.create_rectangle(
+            -1, -1, -1, -1, fill='#9ad334', outline='', tags='hp_fill')
+        self._float_hp_fill_bot = cv.create_rectangle(
+            -1, -1, -1, -1, fill='#9ad334', outline='', tags='hp_fill')
+
+        # 3) 外边框 (屏幕直接画线, 最可靠)
+        def bline(x0, y0, x1, y1):
+            cv.create_line(x0, y0, x1, y1, fill=BORDER_C, width=2)
+        bline(bar_x,      bar_y,      bar_x+PW,      bar_y)
+        bline(bar_x+PW,   bar_y,      bar_x+PW-5,    bar_y+PT)
+        bline(bar_x+PW-5, bar_y+PT,   bar_x+PS,      bar_y+PT)
+        bline(bar_x+PS,   bar_y+PT,   bar_x+PS-4,    bar_y+PH)
+        bline(bar_x+PS-4, bar_y+PH,   bar_x,         bar_y+PH)
+        bline(bar_x,      bar_y+PH,   bar_x,         bar_y)
+
+        # 4) 内分隔线 (1px, 层叠在填充之上)
+        cv.create_line(bar_x+2, bar_y+1,     bar_x+PW-2, bar_y+1,
+                       fill=BORDER_C, width=1, tags='hp_inner')
+        cv.create_line(bar_x+2, bar_y+PH-2,  bar_x+PS-7, bar_y+PH-2,
+                       fill=BORDER_C, width=1, tags='hp_inner')
+        cv.create_line(bar_x+PS+1, bar_y+PT-2, bar_x+PW-7, bar_y+PT-2,
+                       fill=BORDER_C, width=1, tags='hp_inner')
 
         # ═══════════════════════════════════════
-        #  .xt_right — 名称渐变区
+        #  名字框 (右侧, x=325..415, y=4..40) — xt_left 风格
         # ═══════════════════════════════════════
-        # flex:1, gradient from bgColor 50% to transparent
-        # clip-path: polygon(75px 22%, 100% 22%, 100% 0%, 0% 0%, 0 100%,
-        #                    210px 100%, 210px 80%, 100% 80%, 100% 60%,
-        #                    200px 60%, 195px 77%, 75px 77%)
-        # 原始宽度 = 400-22-3 = 375px
-        # 这个 clip-path 意味着:
-        #   名称文字区: x=0..75, y=0..100% (全高)
-        #   HP 条入口: 复杂的台阶形状
-        # 简化: 只画名称区域 (x=25..100, y=0..40*77%≈31)
-        name_x = xt_w + 3  # margin-right: 3px
-        name_area_w = 75     # 名称区宽度 (对标 xt_right span max-width:72px)
-        name_area_h = xt_h   # 全高
+        nx, ny, nw, nh = 324, 4, 90, 38
+        cv.create_rectangle(nx, ny, nx+nw, ny+nh, fill=BG, outline='')
+        # 左侧凹口 (匹配 xt_left)
+        cv.create_rectangle(nx, ny + int(nh*0.25), nx + int(nw*0.25),
+                            ny + int(nh*0.75), fill=TRANS, outline='')
 
-        # 渐变填充 (从 BG 色渐变到透明色键)
-        # BG=#9db5d0 = RGB(157,181,208)
-        bg_r, bg_g, bg_b = 157, 181, 208
-        trans_r, trans_g, trans_b = 1, 2, 1  # TRANS=#010201
-        for i in range(name_area_w):
-            t = i / name_area_w
-            alpha = 0.5 if t < 0.5 else max(0, 0.5 * (1 - (t - 0.5) * 2))
-            r = int(bg_r * alpha + trans_r * (1 - alpha))
-            g = int(bg_g * alpha + trans_g * (1 - alpha))
-            b = int(bg_b * alpha + trans_b * (1 - alpha))
-            clr = f'#{max(2,r):02x}{max(2,g):02x}{max(2,b):02x}'
-            cv.create_line(name_x + i, 0, name_x + i, name_area_h,
-                           fill=clr,
-                           tags='xt_right_grad')
-
-        # 用户名 (对标 .xt_right > span, text-align:center, max-width:72px)
         display_name = self._username if self._username else 'Player'
         if len(display_name) > 8:
             display_name = display_name[:7] + '…'
         self._float_title_id = cv.create_text(
-            name_x + name_area_w // 2, xt_h // 2,
-            text=display_name,
-            fill=FONT_C, font=get_sao_font(10), tags='xt_right_name')
+            nx + nw//2 + 6, ny + nh//2,
+            text=display_name, fill=FONT_C, font=get_sao_font(10))
 
         # ═══════════════════════════════════════
-        #  .xt_border + SVG 多边形 — HP 条 (260×23)
+        #  XP / Lv 数字 (底行)
         # ═══════════════════════════════════════
-        # position: absolute; left:100px; top:8px;
-        bar_x = 100  # left:100px
-        bar_y = 8    # top:8px
-        bar_w = 260
-        bar_h = 23
-
-        # ── 1) 多边形背景填充 (最底层, 提供 HP 条深色底) ──
-        bar_bg_pts = [
-            bar_x,       bar_y,
-            bar_x + 260, bar_y,
-            bar_x + 255, bar_y + 16,
-            bar_x + 124, bar_y + 16,
-            bar_x + 120, bar_y + 23,
-            bar_x,       bar_y + 23,
-        ]
-        cv.create_polygon(bar_bg_pts, fill='#3a3e4a', outline='', tags='hp_bg')
-
-        # ── 2) HP 填充条 (初始隐藏, 播放时从 0 填充到满) ──
-        self._hp_bar_x = bar_x + 2
-        self._hp_bar_y = bar_y + 2
-        self._hp_bar_right = bar_x + 254
-        self._hp_bar_bot_top = bar_y + 15
-        self._hp_bar_bot_full = bar_y + 22
-        self._hp_bar_step_x = bar_x + 120
-
-        self._float_hp_fill_top = cv.create_rectangle(
-            -1, -1, -1, -1,
-            fill='#9ad334', outline='', tags='hp_fill')
-        self._float_hp_fill_bot = cv.create_rectangle(
-            -1, -1, -1, -1,
-            fill='#9ad334', outline='', tags='hp_fill')
-
-        # ── 3) 内部水平分隔线 (在填充之上) ──
-        cv.create_line(bar_x + 2, bar_y + 1, bar_x + 258, bar_y + 1,
-                       fill=BORDER_C, width=1, tags='hp_inner')
-        cv.create_line(bar_x + 2, bar_y + 22, bar_x + 119, bar_y + 22,
-                       fill=BORDER_C, width=1, tags='hp_inner')
-        cv.create_line(bar_x + 124, bar_y + 15, bar_x + 254, bar_y + 15,
-                       fill=BORDER_C, width=1, tags='hp_inner')
-
-        # ── 4) 左侧竖线 (.xt_border_left) ──
-        cv.create_line(bar_x + 1, bar_y + 1, bar_x + 1, bar_y + bar_h - 1,
-                       fill=BORDER_C, width=1, tags='hp_inner')
-
-        # ── 5) 外边框 (最高层, 逐段绘制确保可见) ──
-        cv.create_line(bar_x, bar_y, bar_x + 260, bar_y,
-                       fill=BORDER_C, width=2, tags='hp_outer')
-        cv.create_line(bar_x + 260, bar_y, bar_x + 255, bar_y + 16,
-                       fill=BORDER_C, width=2, tags='hp_outer')
-        cv.create_line(bar_x + 255, bar_y + 16, bar_x + 124, bar_y + 16,
-                       fill=BORDER_C, width=2, tags='hp_outer')
-        cv.create_line(bar_x + 124, bar_y + 16, bar_x + 120, bar_y + 23,
-                       fill=BORDER_C, width=2, tags='hp_outer')
-        cv.create_line(bar_x + 120, bar_y + 23, bar_x, bar_y + 23,
-                       fill=BORDER_C, width=2, tags='hp_outer')
-        cv.create_line(bar_x, bar_y + 23, bar_x, bar_y,
-                       fill=BORDER_C, width=2, tags='hp_outer')
-
-        # ═══════════════════════════════════════
-        #  .number_xt — 数值标签 (current/total, lv.N)
-        # ═══════════════════════════════════════
-        # position:absolute; top:90%; left:60%; width:150px; height:20px
-        num_x = int(FW * 0.60)  # left: 60%
-        num_y = int(40 * 0.90)  # top: 90% of 40px = 36
-        num_w = 150
-        num_h = 20
-
-        # div:nth-child(1) width:69%  (≈103px)
-        # div:nth-child(2) width:30%  (≈45px)
-        nw1 = int(num_w * 0.69)  # 103
-        nw2 = int(num_w * 0.30)  # 45
-        gap = 3
-
-        # HP 数值背景
-        # 计算初始 XP 显示
         _lv, _cur_xp, _need_xp = calc_level(self._xp)
-        _xp_text = f'{_cur_xp}/{_need_xp}'
-        cv.create_rectangle(num_x, num_y, num_x + nw1, num_y + num_h,
-                            fill=BG, outline='', tags='num_bg1')
+        num_y = 42
+        xp_x, xp_w = 174, 140
+        lv_x, lv_w = xp_x + xp_w + 3, 52
+
+        cv.create_rectangle(xp_x, num_y, xp_x+xp_w, num_y+16,
+                            fill=BG, outline='')
         self._float_time_id = cv.create_text(
-            num_x + nw1 - 5, num_y + num_h // 2,
-            text=_xp_text, font=get_sao_font(9), fill=FONT_C,
-            anchor='e', tags='num_time')
+            xp_x+xp_w-5, num_y+8,
+            text=f'{_cur_xp}/{_need_xp}',
+            font=get_sao_font(9), fill=FONT_C, anchor='e')
 
-        # Lv 背景
-        lv_x = num_x + nw1 + gap
-        cv.create_rectangle(lv_x, num_y, lv_x + nw2, num_y + num_h,
-                            fill=BG, outline='', tags='num_bg2')
+        cv.create_rectangle(lv_x, num_y, lv_x+lv_w, num_y+16,
+                            fill=BG, outline='')
         self._float_level_id = cv.create_text(
-            lv_x + nw2 - 5, num_y + num_h // 2,
-            text=f'lv.{self._level}', font=get_sao_font(9), fill=FONT_C,
-            anchor='e', tags='num_lv')
+            lv_x+lv_w-5, num_y+8,
+            text=f'lv.{self._level}',
+            font=get_sao_font(9), fill=FONT_C, anchor='e')
 
-        # ── 兼容性: 隐藏的 dummy 元素 (供 update 方法安全引用) ──
-        self._float_fname_id = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_pbar_id = cv.create_rectangle(-1, -1, -1, -1, tags='_dum')
-        self._float_pb_coords = (0, 0, 0, 0)
-        self._float_status_dot = cv.create_oval(-1, -1, -1, -1, tags='_dum')
+        # ── 兼容性 dummy 元素 ──
+        self._float_fname_id    = cv.create_text(-100, -100, text='', tags='_dum')
+        self._float_pbar_id     = cv.create_rectangle(-1, -1, -1, -1, tags='_dum')
+        self._float_pb_coords   = (0, 0, 0, 0)
+        self._float_status_dot  = cv.create_oval(-1, -1, -1, -1, tags='_dum')
         self._float_status_text = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_play_icon = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_songs_id = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_mode_id = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_sustain_id = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_hp_fill = self._float_hp_fill_top  # 主引用
-        self._float_hp_coords = (0, 0, 0, 0)
-        self._float_btn_tags = []
+        self._float_play_icon   = cv.create_text(-100, -100, text='', tags='_dum')
+        self._float_songs_id    = cv.create_text(-100, -100, text='', tags='_dum')
+        self._float_mode_id     = cv.create_text(-100, -100, text='', tags='_dum')
+        self._float_sustain_id  = cv.create_text(-100, -100, text='', tags='_dum')
+        self._float_hp_fill     = self._float_hp_fill_top
+        self._float_hp_coords   = (0, 0, 0, 0)
+        self._float_btn_tags    = []
 
         # ── 拖拽 / 点击 交互 ──
         self._drag = {'x': 0, 'y': 0, 'dragging': False}
@@ -3265,7 +3195,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.5+3205\n\n"
+            "咲 Midi Player  SAO Edition\nv3.2.6+3206\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
