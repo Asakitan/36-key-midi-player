@@ -12,35 +12,60 @@ block_cipher = None
 # 获取当前目录
 spec_dir = os.path.dirname(os.path.abspath(SPEC))
 
+# pywebview 自带 PyInstaller hook (自动打包 WebView2 DLL 和 JS 文件)
+import webview as _wv
+_wv_hook = os.path.join(os.path.dirname(_wv.__file__), '__pyinstaller')
+
 a = Analysis(
     ['main.py'],
     pathex=[spec_dir],
     binaries=[],
     datas=[
         ('icon.ico', '.'),
-        ('linkstart.mp3', '.'),
         ('web', 'web'),
         ('assets', 'assets'),
         ('soundfonts', 'soundfonts'),
-        ('settings.json', '.'),
     ],
     hiddenimports=[
+        # MIDI
         'mido',
         'mido.backends',
         'mido.backends.rtmidi',
+        # 键盘
         'keyboard',
         'pynput',
         'pynput.keyboard',
         'pynput.keyboard._win32',
-        'json',
-        'webview',
+        'pynput.mouse',
+        'pynput.mouse._win32',
+        # 图像
         'PIL',
         'PIL.Image',
         'PIL.ImageGrab',
-        'numpy',
+        'PIL.ImageFilter',
         'mss',
+        'mss.windows',
+        # 音频
         'pygame',
         'pygame.mixer',
+        'winsound',
+        # OpenGL
+        'moderngl',
+        'moderngl.mgl',
+        # WebView
+        'webview',
+        'webview.platforms.edgechromium',
+        'webview.platforms.winforms',
+        'webview.guilib',
+        'webview.http',
+        # .NET / pythonnet (pywebview EdgeChromium 依赖)
+        'clr',
+        'clr_loader',
+        'pythonnet',
+        # numpy
+        'numpy',
+        'numpy.core',
+        # 项目模块
         'sao_gui',
         'sao_webview',
         'sao_theme',
@@ -52,8 +77,14 @@ a = Analysis(
         'player',
         'config',
         'gui',
+        # 标准库
+        'json',
+        'ctypes',
+        'threading',
+        'http.server',
+        'http.client',
     ],
-    hookspath=[],
+    hookspath=[_wv_hook],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
