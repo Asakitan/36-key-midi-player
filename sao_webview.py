@@ -325,11 +325,35 @@ class SAOWebViewGUI:
         self._hp_hwnd = 0
         self._ctx_menu_active = False
         self._fisheye_active = False
+        self._fisheye_gen = 0  # 鱼眼循环代数 (防止多线程重复)
         self._panel_wins = {}  # panel_type -> webview window
 
         # 回调
         self.player.on_progress = self._on_progress
         self.player.on_playback_end = self._on_playback_end
+        self.player.on_note_play = self._on_note_play
+
+    # ─── 音符回调 → 面板 ───
+    def _on_note_play(self, key, note, is_chord=False):
+        """Player 触发音符 → 推送到 piano / viz 面板."""
+        try:
+            dur = int(min(2000, max(100, note.duration * 1000)))
+            vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8
+            midi_note = note.note
+            piano_win = self._panel_wins.get('piano')
+            if piano_win:
+                try:
+                    piano_win.evaluate_js(f'Panel.noteOn({midi_note},{vel:.2f},{dur})')
+                except Exception:
+                    pass
+            viz_win = self._panel_wins.get('viz')
+            if viz_win:
+                try:
+                    viz_win.evaluate_js(f'Panel.vizTrigger("{self._safe_js(key)}",{vel:.2f})')
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     # ─── 音效 ───
     def _play_sound(self, name: str):
@@ -506,9 +530,11 @@ class SAOWebViewGUI:
         self._sync_menu_info()
         self._play_sound('menu_open')
 
-        # 实时鱼眼背景循环 (非阻塞)
+        # 实时鱼眼背景循环 (非阻塞, 代数防重复)
         self._fisheye_active = True
-        threading.Thread(target=self._fisheye_loop, daemon=True).start()
+        self._fisheye_gen += 1
+        gen = self._fisheye_gen
+        threading.Thread(target=self._fisheye_loop, args=(gen,), daemon=True).start()
 
         try:
             self.menu_win.show()
@@ -540,10 +566,12 @@ class SAOWebViewGUI:
         threading.Timer(0.4, _hide).start()
 
     def _capture_current_monitor_b64(self, quality=50):
-        """截取 HP 窗口所在显示器 → JPEG base64 (无桶形畸变, CSS 动画实现鱼眼)."""
+        """截取 HP 窗口所在显示器 → GPU barrel distortion → JPEG base64.
+        优先使用 moderngl GPU 加速, 失败 fallback 到 numpy, 最终 fallback 到无畸变."""
         try:
             import base64 as b64mod, io
             from PIL import Image
+            import numpy as np
 
             hx = self.hp_win.x if self.hp_win else 0
             hy = self.hp_win.y if self.hp_win else 0
@@ -563,11 +591,14 @@ class SAOWebViewGUI:
                 from PIL import ImageGrab
                 img = ImageGrab.grab()
 
-            # 缩小以加快速度
+            # 缩小以加快 GPU/numpy 处理速度
             w, h = img.size
             scale = min(800 / w, 450 / h, 1.0)
             if scale < 1.0:
                 img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+            # GPU barrel distortion (moderngl)
+            img = self._apply_barrel_distortion(img)
 
             buf = io.BytesIO()
             img.save(buf, format='JPEG', quality=quality)
@@ -576,6 +607,122 @@ class SAOWebViewGUI:
             print(f"[SAO] monitor capture: {e}")
             return None
 
+    # ── GPU barrel distortion (moderngl) ──
+    _gl_ctx = None
+    _gl_prog = None
+    _gl_vao = None
+    _gl_tex = None
+    _gl_fbo = None
+    _gl_size = (0, 0)
+
+    def _init_gl(self, w: int, h: int):
+        """初始化 / 重建 moderngl standalone context for barrel distortion."""
+        import moderngl
+        if self._gl_ctx is None:
+            self._gl_ctx = moderngl.create_standalone_context()
+        ctx = self._gl_ctx
+
+        vert_src = '''
+        #version 330
+        in vec2 in_vert;
+        in vec2 in_texcoord;
+        out vec2 uv;
+        void main() {
+            gl_Position = vec4(in_vert, 0.0, 1.0);
+            uv = in_texcoord;
+        }
+        '''
+        frag_src = '''
+        #version 330
+        uniform sampler2D tex;
+        uniform float strength;
+        in vec2 uv;
+        out vec4 fragColor;
+        void main() {
+            vec2 center = vec2(0.5, 0.5);
+            vec2 d = uv - center;
+            float r = length(d);
+            float bind = length(center);
+            float power = 1.0 + strength;
+            vec2 nuv = center + normalize(d) * tan(r * power) * bind / tan(bind * power);
+            if (nuv.x < 0.0 || nuv.x > 1.0 || nuv.y < 0.0 || nuv.y > 1.0)
+                fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            else
+                fragColor = texture(tex, nuv);
+        }
+        '''
+        self._gl_prog = ctx.program(vertex_shader=vert_src, fragment_shader=frag_src)
+        self._gl_prog['strength'] = 0.55
+
+        verts = np.array([
+            -1, -1, 0, 0,
+             1, -1, 1, 0,
+            -1,  1, 0, 1,
+             1,  1, 1, 1,
+        ], dtype='f4')
+        vbo = ctx.buffer(verts)
+        self._gl_vao = ctx.simple_vertex_array(self._gl_prog, vbo, 'in_vert', 'in_texcoord')
+
+        self._gl_tex = ctx.texture((w, h), 3)
+        self._gl_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self._gl_fbo = ctx.framebuffer(color_attachments=[ctx.texture((w, h), 3)])
+        self._gl_size = (w, h)
+
+    def _apply_barrel_distortion(self, img):
+        """Apply barrel distortion via moderngl GPU, fallback to numpy if unavailable."""
+        import numpy as np
+        from PIL import Image
+        w, h = img.size
+
+        # ── GPU path ──
+        try:
+            import moderngl  # noqa: F811
+            if self._gl_ctx is None or self._gl_size != (w, h):
+                self._init_gl(w, h)
+            arr = np.array(img)  # (H, W, 3)
+            arr_flip = np.flipud(arr)  # OpenGL expects bottom-up
+            self._gl_tex.write(arr_flip.tobytes())
+            self._gl_tex.use(0)
+            self._gl_fbo.use()
+            self._gl_ctx.clear()
+            self._gl_vao.render(mode=6)  # TRIANGLE_STRIP
+            raw = self._gl_fbo.color_attachments[0].read()
+            out = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 3)
+            out = np.flipud(out)
+            return Image.fromarray(out)
+        except Exception:
+            pass
+
+        # ── numpy fallback (bilinear interpolation) ──
+        try:
+            strength = 0.55
+            arr = np.array(img, dtype=np.float32)
+            cy, cx = h / 2.0, w / 2.0
+            Y, X = np.mgrid[0:h, 0:w]
+            dx = (X - cx) / cx
+            dy = (Y - cy) / cy
+            r = np.sqrt(dx * dx + dy * dy)
+            r = np.clip(r, 1e-8, None)
+            bind_r = np.sqrt(1.0 + (cy / cx) ** 2)
+            power = 1.0 + strength
+            factor = np.tan(r * power) * bind_r / np.tan(bind_r * power) / r
+            nx = ((dx * factor + 1.0) * cx).astype(np.float32)
+            ny = ((dy * factor + 1.0) * cy).astype(np.float32)
+            mask = (nx >= 0) & (nx < w - 1) & (ny >= 0) & (ny < h - 1)
+            x0 = np.clip(nx.astype(np.int32), 0, w - 2)
+            y0 = np.clip(ny.astype(np.int32), 0, h - 2)
+            fx = nx - x0; fy = ny - y0
+            fx3 = fx[:, :, None]; fy3 = fy[:, :, None]
+            out = (arr[y0, x0] * (1 - fx3) * (1 - fy3) +
+                   arr[y0, x0 + 1] * fx3 * (1 - fy3) +
+                   arr[y0 + 1, x0] * (1 - fx3) * fy3 +
+                   arr[y0 + 1, x0 + 1] * fx3 * fy3)
+            result = np.zeros_like(arr, dtype=np.uint8)
+            result[mask] = out[mask].astype(np.uint8)
+            return Image.fromarray(result)
+        except Exception:
+            return img  # 无畸变 fallback
+
     def _push_fisheye_background(self):
         """截图当前屏幕 → 推送到菜单 JS (CSS 动画提供 60fps 鱼眼效果)"""
         b64 = self._capture_current_monitor_b64(quality=50)
@@ -583,9 +730,10 @@ class SAOWebViewGUI:
             js = f'SAO.setFisheyeBg("data:image/jpeg;base64,{b64}")'
             self._eval_menu(js)
 
-    def _fisheye_loop(self):
-        """实时刷新背景 — 菜单打开期间每 1 秒更新截图, CSS 动画实现 60fps"""
-        while self._fisheye_active and self._menu_visible:
+    def _fisheye_loop(self, gen: int):
+        """实时刷新背景 — 菜单打开期间每 1 秒更新截图, CSS 动画实现 60fps.
+        gen: 代数标记, 如果新循环启动, 旧循环自动退出."""
+        while self._fisheye_active and self._menu_visible and gen == self._fisheye_gen:
             self._push_fisheye_background()
             time.sleep(1)
 
@@ -607,9 +755,9 @@ class SAOWebViewGUI:
 
         sizes = {
             'control': (280, 210),
-            'piano': (520, 125),
+            'piano': (700, 120),
             'status': (220, 195),
-            'viz': (210, 360),
+            'viz': (240, 400),
         }
         w, h = sizes.get(panel_type, (280, 200))
 

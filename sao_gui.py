@@ -841,17 +841,6 @@ class SAOPlayerGUI:
         cv.create_line(bar_x + 1, bar_y + 1, bar_x + 1, bar_y + bar_h - 1,
                        fill=BORDER_C, width=1, tags='xt_border_left')
 
-        # 上方水平线 (.tb_line)
-        cv.create_line(bar_x + 2, bar_y + 1, bar_x + 258, bar_y + 1,
-                       fill=BORDER_C, width=1, tags='tb_line_top')
-
-        # 下方水平线 (.tb_line)
-        # 遵循多边形形状: 从 x=0 到 x=120 在 y=22, 从 x=124 到 x=255 在 y=15
-        cv.create_line(bar_x + 2, bar_y + 22, bar_x + 119, bar_y + 22,
-                       fill=BORDER_C, width=1, tags='tb_line_bot1')
-        cv.create_line(bar_x + 124, bar_y + 15, bar_x + 254, bar_y + 15,
-                       fill=BORDER_C, width=1, tags='tb_line_bot2')
-
         # .xt_in — HP 填充条 (绿/黄/红渐变)
         # 填充区域在 tb_line 之间, 即 y: bar_y+2 到 bar_y+15 (上半部分)
         # 和 y: bar_y+2 到 bar_y+22 (左半部分 x<120)
@@ -873,6 +862,19 @@ class SAOPlayerGUI:
             self._hp_bar_x, self._hp_bar_bot_top,
             self._hp_bar_step_x, self._hp_bar_bot_full,
             fill='#9ad334', outline='', tags='hp_fill_bot')
+
+        # 上方水平线 (.tb_line) — 在填充之上渲染
+        cv.create_line(bar_x + 2, bar_y + 1, bar_x + 258, bar_y + 1,
+                       fill=BORDER_C, width=1, tags='tb_line_top')
+
+        # 下方水平线 (.tb_line) — 在填充之上渲染
+        cv.create_line(bar_x + 2, bar_y + 22, bar_x + 119, bar_y + 22,
+                       fill=BORDER_C, width=1, tags='tb_line_bot1')
+        cv.create_line(bar_x + 124, bar_y + 15, bar_x + 254, bar_y + 15,
+                       fill=BORDER_C, width=1, tags='tb_line_bot2')
+
+        # SVG 多边形边框 — 最顶层渲染
+        cv.tag_raise('svg_border')
 
         # ═══════════════════════════════════════
         #  .number_xt — 数值标签 (current/total, lv.N)
@@ -3269,7 +3271,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.4+3204\n\n"
+            "咲 Midi Player  SAO Edition\nv3.2.5+3205\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

@@ -52,9 +52,10 @@ html, body {
 }
 .panel-close:hover { color: #e53935; background: rgba(229,57,53,0.1); }
 
-.panel-body { padding: 8px 10px; }
+.panel-body { padding: 0; overflow: hidden; }
 
 /* ═══ Control panel ═══ */
+.ctrl-body { padding: 8px 10px; }
 .ctrl-row {
     display: flex;
     align-items: center;
@@ -105,6 +106,7 @@ html, body {
 .ctrl-toggle:hover { opacity: 0.85; }
 
 /* ═══ Status panel ═══ */
+.stat-body { padding: 8px 10px; }
 .stat-row {
     display: flex;
     justify-content: space-between;
@@ -125,38 +127,51 @@ html, body {
 .stat-dot.on { background: #3ad86c; box-shadow: 0 0 4px rgba(58,216,108,0.5); }
 .stat-dot.off { background: #e0e0e0; }
 
-/* ═══ Piano panel ═══ */
-.piano-container {
-    display: flex;
-    height: 70px;
+/* ═══ Piano panel — 5 octaves SAO style ═══ */
+.piano-wrap {
     position: relative;
-}
-.piano-key {
-    flex: 1;
+    height: 80px;
+    overflow: hidden;
     background: #fff;
-    border: 1px solid #d8d8d8;
-    border-radius: 0 0 3px 3px;
-    transition: background 0.08s;
+}
+.piano-whites {
+    display: flex;
+    height: 100%;
+}
+.pw {
+    flex: 1;
+    background: #f0f0f0;
+    border-right: 1px solid #ddd;
+    transition: background 0.06s;
     min-width: 0;
 }
-.piano-key.pressed { background: rgba(154,211,52,0.6); }
-.piano-key.black-key {
-    background: #444;
-    flex: 0.6;
-    height: 60%;
-    border-radius: 0 0 2px 2px;
-    margin: 0 -4px;
-    z-index: 1;
-    border: none;
-}
-.piano-key.black-key.pressed { background: rgba(243,175,18,0.8); }
+.pw:last-child { border-right: none; }
 
-/* ═══ Visualizer panel ═══ */
-.viz-canvas {
+.piano-blacks {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 55%;
+    pointer-events: none;
+}
+.pb {
+    position: absolute;
+    width: 1.5%;
+    height: 100%;
+    background: #444;
+    border-radius: 0 0 2px 2px;
+    transition: background 0.06s;
+    z-index: 2;
+}
+
+/* ═══ Visualizer — canvas bars ═══ */
+.viz-wrap {
     width: 100%;
     height: 100%;
-    background: #fafafa;
-    border-radius: 3px;
+}
+.viz-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
 }
 </style>
 </head>
@@ -176,7 +191,6 @@ var panelType = '';
 (function() {
     var hdr = document.getElementById('panel-header');
     var drag = { on: false, sx: 0, sy: 0 };
-
     hdr.addEventListener('mousedown', function(e) {
         if (e.target.id === 'panel-close') return;
         drag.on = true;
@@ -184,7 +198,6 @@ var panelType = '';
         drag.sy = e.screenY;
         hdr.style.cursor = 'grabbing';
     });
-
     document.addEventListener('mousemove', function(e) {
         if (!drag.on) return;
         var dx = e.screenX - drag.sx;
@@ -195,35 +208,222 @@ var panelType = '';
             window.pywebview.api.window_drag(dx, dy);
         }
     });
-
     document.addEventListener('mouseup', function() {
         drag.on = false;
         document.getElementById('panel-header').style.cursor = 'grab';
     });
 })();
 
-/* ═══ Close ═══ */
 document.getElementById('panel-close').addEventListener('click', function() {
-    if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.close_panel();
-    }
+    if (window.pywebview && window.pywebview.api) window.pywebview.api.close_panel();
 });
 
-/* ═══ Action helper ═══ */
 function doAction(action) {
-    if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.panel_action(action);
+    if (window.pywebview && window.pywebview.api) window.pywebview.api.panel_action(action);
+}
+
+/* ═══════════════════════════════════════════════
+   Piano — 5 octaves (C2-C7), SAO gold highlight
+   Ported from SAOMiniPiano (sao_gui.py)
+   ═══════════════════════════════════════════════ */
+var _pianoActive = {};
+var OCTAVES = 5;
+var TOTAL_WHITES = OCTAVES * 7;
+var BLACK_AFTER = [1,1,0,1,1,1,0];
+
+function _buildPiano() {
+    var body = document.getElementById('panel-body');
+    body.innerHTML = '<div class="piano-wrap">' +
+        '<div class="piano-whites" id="pw-row"></div>' +
+        '<div class="piano-blacks" id="pb-row"></div></div>';
+    var wr = document.getElementById('pw-row');
+    for (var i = 0; i < TOTAL_WHITES; i++) {
+        var d = document.createElement('div');
+        d.className = 'pw';
+        d.id = 'pw' + i;
+        wr.appendChild(d);
     }
+    var br = document.getElementById('pb-row');
+    for (var oct = 0; oct < OCTAVES; oct++) {
+        for (var j = 0; j < 7; j++) {
+            if (!BLACK_AFTER[j]) continue;
+            var wi = oct * 7 + j;
+            var pct = ((wi + 1) / TOTAL_WHITES) * 100;
+            var d2 = document.createElement('div');
+            d2.className = 'pb';
+            d2.id = 'pb' + oct + '_' + j;
+            d2.style.left = (pct - 0.75) + '%';
+            br.appendChild(d2);
+        }
+    }
+}
+
+var W_MAP = {0:0, 2:1, 4:2, 5:3, 7:4, 9:5, 11:6};
+var B_MAP = {1:0, 3:1, 6:3, 8:4, 10:5};
+
+function _lerpColor(a, b, t) {
+    var ar = parseInt(a.slice(1,3),16), ag = parseInt(a.slice(3,5),16), ab2 = parseInt(a.slice(5,7),16);
+    var br2 = parseInt(b.slice(1,3),16), bg = parseInt(b.slice(3,5),16), bb = parseInt(b.slice(5,7),16);
+    var r = Math.round(ar+(br2-ar)*t), g = Math.round(ag+(bg-ag)*t), bl = Math.round(ab2+(bb-ab2)*t);
+    return '#'+((1<<24)+(r<<16)+(g<<8)+bl).toString(16).slice(1);
+}
+
+function pianoNoteOn(midi_note, velocity, duration_ms) {
+    var offset = midi_note - 36;
+    if (offset < 0 || offset >= OCTAVES * 12) return;
+    var oct = Math.floor(offset / 12);
+    var semi = offset % 12;
+    var tag, bright, normal;
+    if (semi in W_MAP) {
+        tag = 'pw' + (oct * 7 + W_MAP[semi]);
+        bright = '#f3af12'; normal = '#f0f0f0';
+    } else if (semi in B_MAP) {
+        tag = 'pb' + oct + '_' + B_MAP[semi];
+        bright = '#dea620'; normal = '#444444';
+    } else return;
+
+    if (_pianoActive[midi_note]) clearTimeout(_pianoActive[midi_note]);
+    var el = document.getElementById(tag);
+    if (!el) return;
+    el.style.background = bright;
+
+    var STEPS = 8, interval = Math.max(25, Math.floor(duration_ms / STEPS)), step = 0;
+    function fade() {
+        step++;
+        if (step > STEPS) { el.style.background = ''; delete _pianoActive[midi_note]; return; }
+        el.style.background = _lerpColor(bright, normal, step / STEPS);
+        _pianoActive[midi_note] = setTimeout(fade, interval);
+    }
+    _pianoActive[midi_note] = setTimeout(fade, interval);
+}
+
+function pianoReset() {
+    for (var k in _pianoActive) clearTimeout(_pianoActive[k]);
+    _pianoActive = {};
+    document.querySelectorAll('.pw,.pb').forEach(function(e) { e.style.background = ''; });
+}
+
+/* ═══════════════════════════════════════════════
+   Visualizer — 36-bar horizontal chart (Canvas)
+   Ported from gui.py MidiVisualizer
+   ═══════════════════════════════════════════════ */
+var NUM_BARS = 36, BAR_DECAY = 0.90;
+var _barVals = new Float32Array(NUM_BARS);
+var _barPeaks = new Float32Array(NUM_BARS);
+var _hueOffset = 0, _beatBright = 0;
+var _vizRunning = false, _vizCanvas = null, _vizCtx = null;
+var BG = [26,26,30];
+
+var KEY_BAR = {
+    'z':0,'1':1,'x':2,'2':3,'c':4,'v':5,'3':6,'b':7,'4':8,'n':9,'5':10,'m':11,
+    'a':12,'6':13,'s':14,'7':15,'d':16,'f':17,'8':18,'g':19,'9':20,'h':21,'0':22,'j':23,
+    'q':24,'i':25,'w':26,'o':27,'e':28,'r':29,'p':30,'t':31,'[':32,'y':33,']':34,'u':35
+};
+
+function _hsv(h,s,v) {
+    h=((h%360)+360)%360;
+    var hi=Math.floor(h/60)%6, f=h/60-Math.floor(h/60);
+    var p=v*(1-s), q=v*(1-f*s), t2=v*(1-(1-f)*s);
+    var rgb=[[v,t2,p],[q,v,p],[p,v,t2],[p,q,v],[t2,p,v],[v,p,q]][hi];
+    return [Math.round(rgb[0]*255),Math.round(rgb[1]*255),Math.round(rgb[2]*255)];
+}
+
+function _barCol(i) {
+    var hue=(15+i/(NUM_BARS-1)*220+_hueOffset)%360;
+    return _hsv(hue,0.88,Math.max(0.05,Math.min(1,0.6+0.35*_beatBright)));
+}
+function _barGlow(i) {
+    var hue=(15+i/(NUM_BARS-1)*220+_hueOffset)%360;
+    return _hsv(hue,0.55,1);
+}
+
+function _buildViz() {
+    var body = document.getElementById('panel-body');
+    body.innerHTML = '<div class="viz-wrap"><canvas class="viz-canvas" id="viz-canvas"></canvas></div>';
+    _vizCanvas = document.getElementById('viz-canvas');
+    setTimeout(function() {
+        var rect = _vizCanvas.parentElement.getBoundingClientRect();
+        _vizCanvas.width = Math.floor(rect.width);
+        _vizCanvas.height = Math.floor(rect.height);
+        _vizCtx = _vizCanvas.getContext('2d');
+        _vizRunning = true;
+        _vizAnimate();
+    }, 60);
+}
+
+function vizTrigger(key, velocity) {
+    var k = key.toLowerCase();
+    if (k in KEY_BAR) {
+        _barVals[KEY_BAR[k]] = Math.min(1, velocity);
+        _barPeaks[KEY_BAR[k]] = Math.min(1, velocity);
+        _beatBright = Math.min(1, _beatBright + 0.4);
+    }
+}
+
+function _vizAnimate() {
+    if (!_vizRunning) return;
+    for (var i = 0; i < NUM_BARS; i++) {
+        _barVals[i] *= BAR_DECAY;
+        if (_barVals[i] < 0.008) _barVals[i] = 0;
+        _barPeaks[i] *= 0.97;
+        if (_barPeaks[i] < _barVals[i]) _barPeaks[i] = _barVals[i];
+    }
+    _hueOffset = (_hueOffset + 0.3) % 360;
+    if (_beatBright > 0) _beatBright = Math.max(0, _beatBright - 0.04);
+    _drawBars();
+    requestAnimationFrame(_vizAnimate);
+}
+
+function _drawBars() {
+    var c=_vizCtx, w=_vizCanvas.width, h=_vizCanvas.height;
+    if (!c||w<2||h<2) return;
+    c.fillStyle='#1a1a1e'; c.fillRect(0,0,w,h);
+    var pad=3, uH=h-pad*2, uW=w-pad*2, bH=uH/NUM_BARS, mW=uW-2;
+    for (var i=0;i<NUM_BARS;i++){
+        var y=pad+(NUM_BARS-1-i)*bH, val=_barVals[i], pk=_barPeaks[i], col=_barCol(i), gl=_barGlow(i);
+        if(pk>=0.015){
+            var pw=Math.floor(pk*mW), sg=Math.min(8,Math.max(3,pw/6|0)), sw=pw/sg;
+            for(var s=0;s<sg;s++){
+                var t=s/Math.max(1,sg-1), br=0.06+0.18*Math.pow(t,1.3);
+                c.fillStyle='rgb('+Math.floor(BG[0]+(col[0]-BG[0])*br)+','+
+                    Math.floor(BG[1]+(col[1]-BG[1])*br)+','+Math.floor(BG[2]+(col[2]-BG[2])*br)+')';
+                c.fillRect(pad+(s*sw|0),y,Math.ceil(sw)+1,bH-1);
+            }
+        }
+        if(val>=0.008){
+            var bw=Math.floor(val*mW); if(bw<1)continue;
+            var sg2=Math.min(16,Math.max(6,bw/4|0)), sw2=bw/sg2;
+            for(var s2=0;s2<sg2;s2++){
+                var t2=s2/Math.max(1,sg2-1), br2=0.12+0.88*Math.pow(t2,1.6);
+                c.fillStyle='rgb('+Math.floor(BG[0]+(col[0]-BG[0])*br2)+','+
+                    Math.floor(BG[1]+(col[1]-BG[1])*br2)+','+Math.floor(BG[2]+(col[2]-BG[2])*br2)+')';
+                c.fillRect(pad+(s2*sw2|0),y,Math.ceil(sw2)+1,bH-1);
+            }
+            var tip=pad+bw, gln=Math.min(18,Math.max(4,bw/5|0));
+            for(var gi=0;gi<4;gi++){
+                var tg=gi/3, gx=tip-gln+(gi*gln/4|0);
+                if(gx<pad)continue;
+                c.fillStyle='rgb('+Math.min(255,col[0]+(gl[0]-col[0])*tg|0)+','+
+                    Math.min(255,col[1]+(gl[1]-col[1])*tg|0)+','+Math.min(255,col[2]+(gl[2]-col[2])*tg|0)+')';
+                c.fillRect(gx,y,Math.ceil(gln/4)+1,bH-1);
+            }
+        }
+    }
+}
+
+function vizReset() {
+    _barVals.fill(0); _barPeaks.fill(0); _beatBright=0; _hueOffset=0;
 }
 
 /* ═══ Init panel by type ═══ */
 function initPanel(type, state) {
     panelType = type;
     var title = document.getElementById('panel-title');
-    var body = document.getElementById('panel-body');
 
     if (type === 'control') {
         title.textContent = '⚙ 控制面板';
+        var body = document.getElementById('panel-body');
+        body.className = 'panel-body ctrl-body';
         body.innerHTML =
             '<div class="ctrl-row">' +
                 '<span class="ctrl-label">速度</span>' +
@@ -248,7 +448,9 @@ function initPanel(type, state) {
             '</div>';
     } else if (type === 'status') {
         title.textContent = '◉ 状态面板';
-        body.innerHTML =
+        var body2 = document.getElementById('panel-body');
+        body2.className = 'panel-body stat-body';
+        body2.innerHTML =
             '<div class="stat-row"><span class="stat-label">延音</span>' +
                 '<span class="stat-value" id="stat-sustain"><span class="stat-dot off"></span>OFF</span></div>' +
             '<div class="stat-row"><span class="stat-label">状态</span>' +
@@ -261,26 +463,10 @@ function initPanel(type, state) {
                 '<span class="stat-value" id="stat-speed">1.00×</span></div>';
     } else if (type === 'piano') {
         title.textContent = '⌨ 钢琴面板';
-        /* 2 octaves: C D E F G A B pattern with black keys */
-        var html = '<div class="piano-container">';
-        var pattern = [0,1,0,1,0,0,1,0,1,0,1,0]; /* 0=white 1=black */
-        for (var oct = 0; oct < 2; oct++) {
-            for (var i = 0; i < 12; i++) {
-                var note = oct * 12 + i;
-                if (pattern[i]) {
-                    html += '<div class="piano-key black-key" data-note="' + note + '"></div>';
-                } else {
-                    html += '<div class="piano-key" data-note="' + note + '"></div>';
-                }
-            }
-        }
-        html += '<div class="piano-key" data-note="24"></div>'; /* final C */
-        html += '</div>';
-        body.innerHTML = html;
+        _buildPiano();
     } else if (type === 'viz') {
         title.textContent = '≡ 可视化';
-        body.innerHTML = '<canvas class="viz-canvas" id="viz-canvas" width="190" height="300"></canvas>';
-        initViz();
+        _buildViz();
     }
 
     if (state) updatePanel(state);
@@ -295,68 +481,34 @@ function updatePanel(data) {
             if (el) el.textContent = data.speed.toFixed(2) + '×';
         }
         if (data.transpose !== undefined) {
-            var el = document.getElementById('val-transpose');
-            if (el) el.textContent = (data.transpose >= 0 ? '+' : '') + data.transpose;
+            var el2 = document.getElementById('val-transpose');
+            if (el2) el2.textContent = (data.transpose >= 0 ? '+' : '') + data.transpose;
         }
-        ['melody', 'bass', 'directc', 'glissando'].forEach(function(k) {
+        ['melody','bass','directc','glissando'].forEach(function(k) {
             if (data[k] !== undefined) {
-                var el = document.getElementById('tog-' + k);
-                if (el) el.className = 'ctrl-toggle ' + (data[k] ? 'on' : 'off');
+                var el3 = document.getElementById('tog-' + k);
+                if (el3) el3.className = 'ctrl-toggle ' + (data[k] ? 'on' : 'off');
             }
         });
     } else if (panelType === 'status') {
         if (data.sustain !== undefined) {
-            var el = document.getElementById('stat-sustain');
-            if (el) el.innerHTML = '<span class="stat-dot ' + (data.sustain ? 'on' : 'off') +
-                '"></span>' + (data.sustain ? 'ON' : 'OFF');
+            var s = document.getElementById('stat-sustain');
+            if (s) s.innerHTML = '<span class="stat-dot '+(data.sustain?'on':'off')+'"></span>'+(data.sustain?'ON':'OFF');
         }
-        if (data.play_state) {
-            var el = document.getElementById('stat-play');
-            if (el) el.textContent = data.play_state;
-        }
-        if (data.mode) {
-            var el = document.getElementById('stat-mode');
-            if (el) el.textContent = data.mode;
-        }
-        if (data.bpm !== undefined) {
-            var el = document.getElementById('stat-bpm');
-            if (el) el.textContent = data.bpm > 0 ? Math.round(data.bpm) : '—';
-        }
-        if (data.speed !== undefined) {
-            var el = document.getElementById('stat-speed');
-            if (el) el.textContent = data.speed.toFixed(2) + '×';
-        }
+        if (data.play_state) { var p=document.getElementById('stat-play'); if(p) p.textContent=data.play_state; }
+        if (data.mode) { var m=document.getElementById('stat-mode'); if(m) m.textContent=data.mode; }
+        if (data.bpm !== undefined) { var b=document.getElementById('stat-bpm'); if(b) b.textContent=data.bpm>0?Math.round(data.bpm):'—'; }
+        if (data.speed !== undefined) { var sp=document.getElementById('stat-speed'); if(sp) sp.textContent=data.speed.toFixed(2)+'×'; }
     }
-}
-
-/* ═══ Piano key updates ═══ */
-function pressKeys(notes) {
-    document.querySelectorAll('.piano-key').forEach(function(k) { k.classList.remove('pressed'); });
-    if (notes && notes.length) {
-        notes.forEach(function(n) {
-            var el = document.querySelector('.piano-key[data-note="' + n + '"]');
-            if (el) el.classList.add('pressed');
-        });
-    }
-}
-
-/* ═══ Simple viz placeholder ═══ */
-function initViz() {
-    var canvas = document.getElementById('viz-canvas');
-    if (!canvas) return;
-    var ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#f0f0f0';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#ccc';
-    ctx.font = '13px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('可视化面板', canvas.width/2, canvas.height/2);
 }
 
 window.Panel = {
     init: initPanel,
     update: updatePanel,
-    pressKeys: pressKeys,
+    noteOn: pianoNoteOn,
+    noteReset: pianoReset,
+    vizTrigger: vizTrigger,
+    vizReset: vizReset,
 };
 </script>
 </body>
