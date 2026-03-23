@@ -502,7 +502,7 @@ class MIDIPreviewPlayer:
             self._mci_tmp_dir,
             f'muted_{id(self)}.mid')
         try:
-            mid = mido.MidiFile(src)
+            mid = mido.MidiFile(src, clip=True)
             for track in mid.tracks:
                 for i, msg in enumerate(track):
                     if (hasattr(msg, 'channel')
@@ -625,7 +625,7 @@ class MIDIPreviewPlayer:
         try:
             # 计算 MIDI 总长度
             try:
-                mid_info = mido.MidiFile(midi_path)
+                mid_info = mido.MidiFile(midi_path, clip=True)
                 self._total_time = max(mid_info.length, 0.1)
             except Exception:
                 self._total_time = 0.0
@@ -715,7 +715,7 @@ class MIDIPreviewPlayer:
 
     def _play_fs(self, midi_path: str, start_time: float, gen: int):
         try:
-            mid = mido.MidiFile(midi_path)
+            mid = mido.MidiFile(midi_path, clip=True)
         except Exception as e:
             print(f"[预览] MIDI 加载失败: {e}")
             if self._play_gen == gen:
@@ -1440,7 +1440,7 @@ class PianoRollWidget(tk.Frame):
         if not midi_path or not os.path.exists(midi_path):
             return
         try:
-            mid = mido.MidiFile(midi_path)
+            mid = mido.MidiFile(midi_path, clip=True)
             self._duration = mid.length if mid.length > 0 else 1.0
             tempo = 500000
             tpb = mid.ticks_per_beat
@@ -1666,7 +1666,7 @@ class MIDIAnalyzer:
     def _parse(self):
         """解析 MIDI 文件，收集每通道信息"""
         try:
-            mid = mido.MidiFile(self.midi_path)
+            mid = mido.MidiFile(self.midi_path, clip=True)
         except Exception as e:
             print(f"[MIDIAnalyzer] 解析失败: {e}")
             return
@@ -2307,19 +2307,29 @@ class MIDIControllerDialog(tk.Toplevel):
     def _init_preview(self):
         """异步初始化预览播放器"""
         sf = self.settings.get('soundfont_path', None)
+        # 若 settings 没有记录，尝试自动找本地 SF2
+        if not sf or not os.path.exists(sf):
+            sf = find_soundfont()
+            if sf:
+                # 找到后立即持久化，下次重启直接使用
+                self.settings.set('soundfont_path', sf)
         ok = self._preview.init(sf)
         if ok:
+            # 成功后确保路径已保存
+            if self._preview._soundfont_path:
+                self.settings.set('soundfont_path', self._preview._soundfont_path)
             self._backend_label.configure(
                 text=self._preview.backend_name, fg=self.C.ACCENT_GREEN)
         else:
             if self._preview._fs_ok:
-                msg = 'FluidSynth就绪 — 点击🎵选择SoundFont(.sf2)以启用高品质'
+                sf_hint = f' (已找到 {os.path.basename(sf)})' if sf else ''
+                msg = f'FluidSynth就绪{sf_hint} — 点击🎵选择SoundFont(.sf2)以启用高品质'
                 self._backend_label.configure(
                     text=msg, fg=self.C.ACCENT_ORANGE)
             elif self._preview._mci_ok:
-                # WinMCI 检测到但 init 未被调用 (应该不会发生)
+                sf_hint = f'  |  SF2已就绪: {os.path.basename(sf)}，点击获取钢琴音源安装FluidSynth' if sf else ''
                 self._backend_label.configure(
-                    text='Windows GS 合成器就绪', fg=self.C.ACCENT_CYAN)
+                    text=f'Windows GS 合成器{sf_hint}', fg=self.C.ACCENT_CYAN)
             else:
                 self._backend_label.configure(
                     text='Pygame (系统MIDI合成器)', fg=self.C.TEXT_SECONDARY)
@@ -2854,7 +2864,7 @@ class MIDIControllerDialog(tk.Toplevel):
 
     def _do_save_midi(self, src: str, dst: str):
         """执行 MIDI 文件保存 (静音 + 移调)"""
-        mid = mido.MidiFile(src)
+        mid = mido.MidiFile(src, clip=True)
         piano_tp = self.piano.get_transpose()
 
         for track in mid.tracks:
