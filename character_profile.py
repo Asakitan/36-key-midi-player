@@ -10,6 +10,7 @@
 """
 
 import os
+import sys
 import json
 import ctypes
 import time
@@ -58,8 +59,9 @@ SKILL_TO_ROLE = {
     199902:  '岩盾',
 }
 
-# 配置文件路径
-_PROFILE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'player_profile.json')
+# 配置文件路径（打包后使用 exe 所在目录，开发时使用脚本目录）
+_base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+_PROFILE_FILE = os.path.join(_base_dir, 'player_profile.json')
 
 # ═══════════════════════════════════════════════
 #  配置管理

@@ -142,8 +142,12 @@ def _capture_fisheye_base64(strength: float = 0.25, quality: int = 60) -> Option
 # ════════════════════════════════════════════════
 class SettingsManager:
     def __init__(self):
-        self._path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), 'settings.json')
+        # 打包后使用 exe 所在目录, 开发时使用脚本目录
+        if getattr(sys, 'frozen', False):
+            base = os.path.dirname(sys.executable)
+        else:
+            base = os.path.dirname(os.path.abspath(__file__))
+        self._path = os.path.join(base, 'settings.json')
         self._data = {}
         self._load()
 
