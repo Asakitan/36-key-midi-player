@@ -356,6 +356,19 @@ html, body {
     font-size: 14px;
 }
 
+.child-menu li .shortcut {
+    font-size: 9px;
+    color: rgba(160, 158, 158, 0.7);
+    margin-left: auto;
+    margin-right: 8px;
+    white-space: nowrap;
+    font-family: 'Consolas', 'Courier New', monospace;
+    letter-spacing: 0;
+}
+.child-menu li:hover .shortcut {
+    color: rgba(255, 255, 255, 0.6);
+}
+
 /* ═══ Status indicator in child items ═══ */
 .child-menu li .badge {
     font-size: 10px;
@@ -607,16 +620,16 @@ html, body {
 
             <!-- Play Controls sub-menu -->
             <ul class="child-menu" id="sub-playCtrl" data-group="playCtrl">
-                <li data-action="play"><i>▶</i><span>播放 / 暂停</span></li>
-                <li data-action="stop"><i>■</i><span>停止</span></li>
-                <li data-action="speedup"><i>▲</i><span>加速 (+0.1)</span></li>
-                <li data-action="speeddown"><i>▼</i><span>减速 (-0.1)</span></li>
+                <li data-action="play"><i>▶</i><span>播放 / 暂停</span><small class="shortcut">Ctrl+⇧+Space</small></li>
+                <li data-action="stop"><i>■</i><span>停止</span><small class="shortcut">Ctrl+⇧+S</small></li>
+                <li data-action="speedup"><i>▲</i><span>加速 (+0.1)</span><small class="shortcut">Ctrl+⇧+→</small></li>
+                <li data-action="speeddown"><i>▼</i><span>减速 (-0.1)</span><small class="shortcut">Ctrl+⇧+←</small></li>
                 <li data-action="restart"><i>↻</i><span>重新开始</span></li>
             </ul>
 
             <!-- File sub-menu -->
             <ul class="child-menu" id="sub-fileMenu" data-group="fileMenu">
-                <li data-action="open"><i>📄</i><span>打开文件</span></li>
+                <li data-action="open"><i>📄</i><span>打开文件</span><small class="shortcut">Ctrl+⇧+O</small></li>
                 <li data-action="folder"><i>📁</i><span>文件夹循环</span></li>
             </ul>
 
@@ -626,8 +639,8 @@ html, body {
                 <li data-action="toggle_bass"><i>🎸</i><span>伴奏</span><span class="badge on" id="badge-bass">ON</span></li>
                 <li data-action="toggle_directc"><i>🔑</i><span>C调直转</span><span class="badge off" id="badge-directc">OFF</span></li>
                 <li data-action="toggle_glissando"><i>🎶</i><span>结尾滑奏</span><span class="badge off" id="badge-glissando">OFF</span></li>
-                <li data-action="transpose_up"><i>⬆</i><span>升调 (+1)</span></li>
-                <li data-action="transpose_down"><i>⬇</i><span>降调 (-1)</span></li>
+                <li data-action="transpose_up"><i>⬆</i><span>升调 (+1)</span><small class="shortcut">Ctrl+⇧+↑</small></li>
+                <li data-action="transpose_down"><i>⬇</i><span>降调 (-1)</span><small class="shortcut">Ctrl+⇧+↓</small></li>
             </ul>
 
             <!-- Panels sub-menu -->
@@ -647,6 +660,7 @@ html, body {
 
 <!-- Current file display -->
 <div class="current-file" id="current-file"></div>
+<div class="current-file" style="bottom:5px;font-size:10px;color:rgba(255,255,255,0.3);font-family:Consolas,monospace;">Ctrl+⇧+M 呼出/关闭菜单</div>
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
@@ -725,11 +739,14 @@ function _initFisheyeGL() {
         'varying vec2 uv;uniform sampler2D tex;uniform float str;uniform float t;' +
         'void main(){' +
         '  vec2 c=uv-0.5;float r2=dot(c,c);' +
-        '  float s=str*(1.0+0.12*sin(t*0.6));' +   /* breathing oscillation */
+        '  float s=str*(1.0+0.25*sin(t*0.8));' +           /* stronger breathing */
         '  vec2 d=uv+c*s*r2;' +
-        '  float ox=0.003*sin(t*0.4);float oy=0.002*cos(t*0.35);' +  /* drift */
+        '  float ox=0.008*sin(t*0.5);float oy=0.006*cos(t*0.45);' +  /* stronger drift */
         '  vec4 col=texture2D(tex,d+vec2(ox,oy));' +
-        '  col.rgb*=0.92-r2*0.25+0.04*sin(t*0.3);' +   /* vignette + brightness pulse */
+        '  float vig=0.88-r2*0.35+0.08*sin(t*0.35);' +    /* dynamic vignette */
+        '  col.rgb*=vig;' +
+        '  col.r*=1.0+0.04*sin(t*0.7);' +                  /* subtle red pulse */
+        '  col.b*=1.0+0.03*cos(t*0.6);' +                  /* subtle blue pulse */
         '  gl_FragColor=col;' +
         '}');
     gl.compileShader(fs);

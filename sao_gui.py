@@ -757,26 +757,44 @@ class SAOPlayerGUI:
         # ═══════════════════════════════════════
         xt_w = 22
         cv.create_rectangle(ox, oy, ox + xt_w, oy + BH,
-                            fill=BG, outline='')
+                            fill=BG, outline='', tags='xt_left')
         # 中心凹口 (clip-path: 0% 25%, 50% 25%, 50% 75%, 0% 75%)
         cv.create_rectangle(ox, oy + BH // 4,
                             ox + xt_w // 2, oy + BH * 3 // 4,
                             fill=TRANS, outline='')
 
         # ═══════════════════════════════════════
-        #  2. xt_right 背景 (名字区域, 从 xt_left 到 HP 条左边)
+        #  2. xt_right 背景 (完整 clip-path 多边形, 含 HP 条周围延伸)
+        #     CSS clip-path: polygon(75px 22%, 100% 22%, 100% 0%, 0% 0%,
+        #       0 100%, 210px 100%, 210px 80%, 100% 80%,
+        #       100% 60%, 200px 60%, 195px 77%, 75px 77%)
+        #     xt_right: flex:1 → w=375, h=40, starts at x=25 in XTBox
         # ═══════════════════════════════════════
-        xr_x = ox + xt_w + 3   # margin-right: 3px → 31
-        xr_end = ox + 100       # HP 条起始 = 106, 背景到 106
-        cv.create_rectangle(xr_x, oy, xr_end, oy + BH,
-                            fill=BG, outline='')
+        xr_x = ox + xt_w + 3       # 31 (xt_right left edge)
+        xr_w = BW - xt_w - 3       # 375 (xt_right width)
+        xr_pts = [
+            xr_x + 75,  oy + int(BH * 0.22),     # (106, ~13) HP bar左上
+            xr_x + xr_w, oy + int(BH * 0.22),    # (406, ~13) 顶部右延伸
+            xr_x + xr_w, oy,                      # (406, 4)   右上角
+            xr_x,        oy,                      # (31, 4)    左上角
+            xr_x,        oy + BH,                 # (31, 44)   左下角
+            xr_x + 210,  oy + BH,                 # (241, 44)  底部延伸
+            xr_x + 210,  oy + int(BH * 0.80),     # (241, 36)  底部→右侧
+            xr_x + xr_w, oy + int(BH * 0.80),    # (406, 36)  右下延伸
+            xr_x + xr_w, oy + int(BH * 0.60),    # (406, 28)  右中
+            xr_x + 200,  oy + int(BH * 0.60),     # (231, 28)  台阶
+            xr_x + 195,  oy + int(BH * 0.77),     # (226, ~35) 斜切
+            xr_x + 75,   oy + int(BH * 0.77),     # (106, ~35) HP bar左下
+        ]
+        cv.create_polygon(xr_pts, fill=BG, outline='', tags='xt_right_bg')
 
-        # 名字文本 (xt_right > span, padding-left: 10px)
+        # 名字文本 (xt_right > span, padding-left: 10px, 在左侧 column 内居中)
         display_name = self._username if self._username else 'Player'
         if len(display_name) > 8:
             display_name = display_name[:7] + '…'
+        name_cx = (xr_x + xr_x + 75) // 2  # 左列中心 ≈ 68
         self._float_title_id = cv.create_text(
-            (xr_x + xr_end) // 2, oy + BH // 2,
+            name_cx, oy + BH // 2,
             text=display_name, fill=FONT_C, font=get_sao_font(11))
 
         # ═══════════════════════════════════════
@@ -834,7 +852,7 @@ class SAOPlayerGUI:
         lv_w = int(150 * 0.30)        # 45
 
         cv.create_rectangle(num_x, num_y, num_x + xp_w, num_y + 18,
-                            fill=BG, outline='')
+                            fill=BG, outline='', tags='num_bg1')
         self._float_time_id = cv.create_text(
             num_x + xp_w - 5, num_y + 9,
             text=f'{_cur_xp}/{_need_xp}',
@@ -842,7 +860,7 @@ class SAOPlayerGUI:
 
         lv_x = num_x + xp_w + 3
         cv.create_rectangle(lv_x, num_y, lv_x + lv_w, num_y + 18,
-                            fill=BG, outline='')
+                            fill=BG, outline='', tags='num_bg2')
         self._float_level_id = cv.create_text(
             lv_x + lv_w - 5, num_y + 9,
             text=f'lv.{self._level}',
@@ -888,7 +906,7 @@ class SAOPlayerGUI:
         self._float_ctx.add_separator()
         self._float_ctx.add_command(label='◈ 隐藏/显示面板', command=self._toggle_hide_all_panels)
         self._float_ctx.add_command(label='◇ WebView UI', command=self._switch_to_webview_ui)
-        self._float_ctx.add_command(label='↺ Old School UI', command=self._switch_to_old_ui)
+        self._float_ctx.add_command(label='↺ Old UI', command=self._switch_to_old_ui)
         self._float_ctx.add_command(label='✕ 退出', command=self._on_close)
         def _show_ctx_menu(e):
             self._ctx_menu_open = True
@@ -1027,10 +1045,11 @@ class SAOPlayerGUI:
             self._toggle_sao_menu()
 
     def _float_enter(self, e):
-        """对标 .XTBox:hover — xt_left 和 number_xt 变为 hover 色"""
+        """对标 .XTBox:hover — xt_left/xt_right/number_xt 变为 hover 色"""
         cv = self._float_cv
         try:
             cv.itemconfig('xt_left', fill='#b5cde0')
+            cv.itemconfig('xt_right_bg', fill='#b5cde0')
             cv.itemconfig('num_bg1', fill='#b5cde0')
             cv.itemconfig('num_bg2', fill='#b5cde0')
             self._float.attributes('-alpha', 0.93)
@@ -1042,6 +1061,7 @@ class SAOPlayerGUI:
         cv = self._float_cv
         try:
             cv.itemconfig('xt_left', fill='#9db5d0')
+            cv.itemconfig('xt_right_bg', fill='#9db5d0')
             cv.itemconfig('num_bg1', fill='#9db5d0')
             cv.itemconfig('num_bg2', fill='#9db5d0')
             self._float.attributes('-alpha', 0.82)
@@ -3208,7 +3228,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.8+3208\n\n"
+            "咲 Midi Player  SAO Edition\nv3.2.9+3209\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

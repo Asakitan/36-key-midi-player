@@ -477,6 +477,24 @@ class SAOWebViewGUI:
         except Exception:
             pass
 
+    def _set_window_alpha(self, title, alpha):
+        """Win32 LWA_ALPHA — 设置窗口整体透明度 (0.0~1.0)."""
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, title)
+            if not hwnd:
+                return
+            GWL_EXSTYLE = -20
+            WS_EX_LAYERED = 0x00080000
+            LWA_ALPHA = 0x00000002
+            ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            if not (ex & WS_EX_LAYERED):
+                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED)
+            alpha_byte = int(max(0, min(255, alpha * 255)))
+            user32.SetLayeredWindowAttributes(hwnd, 0, alpha_byte, LWA_ALPHA)
+        except Exception:
+            pass
+
     # ─── WebView 就绪 ───
     def _on_webview_started(self):
         # 初始化 HP
@@ -549,6 +567,11 @@ class SAOWebViewGUI:
     #  菜单
     # ════════════════════════════════════════
     def _toggle_menu(self):
+        # 防抖: 500ms 冷却期
+        now = time.time()
+        if hasattr(self, '_menu_cd') and now - self._menu_cd < 0.6:
+            return
+        self._menu_cd = now
         if self._menu_visible:
             self._close_menu()
         else:
@@ -558,6 +581,9 @@ class SAOWebViewGUI:
         self._menu_visible = True
         self._sync_menu_info()
         self._play_sound('menu_open')
+
+        # ── 先截图推送, 防止首次打开灰屏 ──
+        self._push_fisheye_background()
 
         # 实时鱼眼背景循环 (非阻塞, 代数防重复)
         self._fisheye_active = True
@@ -586,17 +612,32 @@ class SAOWebViewGUI:
         self._fisheye_active = False  # 停止鱼眼刷新
         self._play_sound('menu_close')
         self._eval_menu('SAO.closeMenu()')
-        # 非阻塞延迟隐藏 — 用 threading.Timer 代替 time.sleep
+
         def _hide():
+            time.sleep(0.4)
+            try:
+                self.menu_win.restore()  # 取消最大化
+            except Exception:
+                pass
+            time.sleep(0.05)
             try:
                 self.menu_win.hide()
             except Exception:
                 pass
-        threading.Timer(0.4, _hide).start()
+            # Win32: 确保菜单窗口彻底隐藏, 不拦截点击
+            try:
+                hwnd = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+            except Exception:
+                pass
+            # 恢复 HP 窗口焦点 & 置顶
+            self._ensure_hp_on_top()
+        threading.Thread(target=_hide, daemon=True).start()
 
-    def _capture_current_monitor_b64(self, quality=55):
-        """截取 HP 窗口所在显示器 → JPEG base64 (不做 barrel distortion,
-        distortion 由浏览器端 WebGL shader 实时渲染, 真正 60fps)."""
+    def _capture_current_monitor_b64(self, quality=35):
+        """截取 HP 窗口所在显示器 → JPEG base64 (低分辨率快速截图,
+        distortion 由浏览器端 WebGL shader 实时 60fps 渲染)."""
         try:
             import base64 as b64mod, io
             from PIL import Image
@@ -619,9 +660,9 @@ class SAOWebViewGUI:
                 from PIL import ImageGrab
                 img = ImageGrab.grab()
 
-            # 缩小 (浏览器端 WebGL 做畸变, 无需高分辨率)
+            # 缩到 480p 以加快 encode+传输 (WebGL 拉伸不影响鱼眼效果)
             w, h = img.size
-            scale = min(960 / w, 540 / h, 1.0)
+            scale = min(640 / w, 360 / h, 1.0)
             if scale < 1.0:
                 img = img.resize((int(w * scale), int(h * scale)), Image.BILINEAR)
 
@@ -737,22 +778,20 @@ class SAOWebViewGUI:
             return img  # 无畸变 fallback
 
     def _push_fisheye_background(self):
-        """截图当前屏幕 → 推送到菜单 JS (CSS 动画提供 60fps 鱼眼效果)"""
-        b64 = self._capture_current_monitor_b64(quality=50)
+        """截图当前屏幕 → 推送到菜单 JS (WebGL 做 60fps 鱼眼渲染)"""
+        b64 = self._capture_current_monitor_b64(quality=35)
         if b64:
             js = f'SAO.setFisheyeBg("data:image/jpeg;base64,{b64}")'
             self._eval_menu(js)
 
     def _fisheye_loop(self, gen: int):
-        """后台截屏循环 — 菜单打开期间截屏推送到浏览器 WebGL.
-        浏览器端 WebGL shader 以 60fps 实时渲染 barrel distortion.
-        Python 端只需 ~4fps 更新截图 (桌面变化不快)."""
+        """后台截屏循环 — ~15fps 截屏推送, 浏览器 WebGL 以 60fps 实时渲染."""
         import time as _time
         while self._fisheye_active and self._menu_visible and gen == self._fisheye_gen:
             t0 = _time.time()
             self._push_fisheye_background()
             elapsed = _time.time() - t0
-            sleep_t = max(0.05, 0.25 - elapsed)   # ~4fps 截屏, WebGL 做 60fps 渲染
+            sleep_t = max(0.01, 0.066 - elapsed)   # ~15fps 截屏刷新
             _time.sleep(sleep_t)
 
     # ─── 面板管理 ───
@@ -814,6 +853,8 @@ class SAOWebViewGUI:
                 win.evaluate_js(f'Panel.init("{panel_type}", {json.dumps(state)})')
             except Exception:
                 pass
+            # 面板窗口 0.95 透明度 (Win32 LWA_ALPHA)
+            self._set_window_alpha(f'SAO {panel_type}', 0.95)
         threading.Thread(target=_init, daemon=True).start()
 
     def _get_panel_state(self):
