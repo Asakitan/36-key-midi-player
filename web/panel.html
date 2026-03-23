@@ -8,15 +8,21 @@
 @font-face { font-family: 'yuanJWD'; src: url('../assets/fonts/ZhuZiAYuanJWD.ttf'); }
 
 html, body {
+    height: 100%;
     background: transparent;
     margin: 0; padding: 0;
     user-select: none;
     -webkit-user-select: none;
     overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.2s;
 }
 
 .panel {
     margin: 4px;
+    height: calc(100% - 8px);
+    display: flex;
+    flex-direction: column;
     background: rgba(255, 255, 255, 0.95);
     border-radius: 4px;
     box-shadow: 0 2px 16px rgba(0,0,0,0.18);
@@ -52,7 +58,7 @@ html, body {
 }
 .panel-close:hover { color: #e53935; background: rgba(229,57,53,0.1); }
 
-.panel-body { padding: 0; overflow: hidden; }
+.panel-body { padding: 0; overflow: hidden; flex: 1; min-height: 0; }
 
 /* ═══ Control panel ═══ */
 .ctrl-body { padding: 8px 10px; }
@@ -418,6 +424,8 @@ function vizReset() {
 /* ═══ Init panel by type ═══ */
 function initPanel(type, state) {
     panelType = type;
+    document.documentElement.style.opacity = '1';
+    document.body.style.opacity = '1';
     var title = document.getElementById('panel-title');
 
     if (type === 'control') {

@@ -707,8 +707,9 @@ class SAOPlayerGUI:
     #  悬浮触发按钮 — 纯 SAO-UI HP 组件 (对标 HP/src/index.vue)
     # ══════════════════════════════════════════════
     def _create_floating_widget(self):
-        """SAO-UI HP 组件 — 重排布局:
-        [HP条框全宽顶行] [咋名字框右侧] [XP/Lv 数字 底行]
+        """SAO-UI HP 组件 — 布局 (参考图3):
+        [xt凹口 16px][名字框 86px][HP条右延伸 316px]
+        [                  XP / Lv 数字 底行 右对齐         ]
         """
         # ── 尺寸 ──
         FW, FH = 420, 60
@@ -740,20 +741,38 @@ class SAOPlayerGUI:
         cv.pack(fill=tk.BOTH, expand=True)
         self._float_cv = cv
 
-        BG      = '#9db5d0'   # 背景色
-        BORDER_C = '#c8c6c6'  # 边框色 (65% 白)
-        FONT_C  = '#e1dede'   # 文字色
-        BAR_BG  = '#2c3040'   # HP 条内底色
+        BG       = '#9db5d0'  # 背景色 (名字框/数字框)
+        BORDER_C = '#c8c6c6'  # 边框色
+        FONT_C   = '#e1dede'  # 文字色
+        BAR_BG   = '#2c3040'  # HP 条内底色
 
         # ═══════════════════════════════════════
-        #  HP 条 (顶行全宽, x=4..316, y=4..28)
+        #  xt_left 凹口 (最左侧, 16px 宽)
         # ═══════════════════════════════════════
-        bar_x, bar_y = 4, 6
-        # 多边形: (0,0)→2══(312,0)→(307,16)→(157,16)→(153,24)→(0,24)
-        PW = 312   # 全宽
-        PH = 24    # 全高
-        PS = 157   # 台阶内角 x
-        PT = 16    # 台阶高度
+        cv.create_rectangle(0,  0, 16, FH,   fill=BG,   outline='')
+        cv.create_rectangle(2, 14, 12, FH-14, fill=TRANS, outline='')
+
+        # ═══════════════════════════════════════
+        #  名字框 (左侧, x=2..88, y=4..42)
+        # ═══════════════════════════════════════
+        nx, ny, nw, nh = 2, 4, 86, 38
+        cv.create_rectangle(nx, ny, nx+nw, ny+nh, fill=BG, outline='')
+
+        display_name = self._username if self._username else 'Player'
+        if len(display_name) > 8:
+            display_name = display_name[:7] + '…'
+        self._float_title_id = cv.create_text(
+            nx + nw//2, ny + nh//2,
+            text=display_name, fill=FONT_C, font=get_sao_font(10))
+
+        # ═══════════════════════════════════════
+        #  HP 条 (右侧延伸, x=90..406, y=4..30)
+        # ═══════════════════════════════════════
+        bar_x, bar_y = 90, 4
+        PW = 316   # 总宽  → 右边缘 x=406
+        PH = 26    # 全高
+        PS = 166   # 台阶内角 x (相对 bar_x)
+        PT = 14    # 台阶高度
 
         # 1) 内部深色背景
         bar_pts = [
@@ -767,71 +786,55 @@ class SAOPlayerGUI:
         cv.create_polygon(bar_pts, fill=BAR_BG, outline='', tags='hp_bg')
 
         # 2) HP 填充矩形 (初始隐藏)
-        self._hp_bar_x    = bar_x + 2
-        self._hp_bar_y    = bar_y + 2
-        self._hp_bar_right     = bar_x + PW - 7    # 上半最大 x
-        self._hp_bar_bot_top   = bar_y + PT - 1    # 上半最大 y
-        self._hp_bar_bot_full  = bar_y + PH - 1    # 下半最大 y
-        self._hp_bar_step_x    = bar_x + PS - 6    # 台阶 x
+        self._hp_bar_x        = bar_x + 2
+        self._hp_bar_y        = bar_y + 2
+        self._hp_bar_right    = bar_x + PW - 7    # 上半最大 x
+        self._hp_bar_bot_top  = bar_y + PT - 1    # 上半最大 y
+        self._hp_bar_bot_full = bar_y + PH - 1    # 下半最大 y
+        self._hp_bar_step_x   = bar_x + PS - 6    # 台阶 x
 
         self._float_hp_fill_top = cv.create_rectangle(
             -1, -1, -1, -1, fill='#9ad334', outline='', tags='hp_fill')
         self._float_hp_fill_bot = cv.create_rectangle(
             -1, -1, -1, -1, fill='#9ad334', outline='', tags='hp_fill')
 
-        # 3) 外边框 (屏幕直接画线, 最可靠)
+        # 3) 外边框
         def bline(x0, y0, x1, y1):
             cv.create_line(x0, y0, x1, y1, fill=BORDER_C, width=2)
-        bline(bar_x,      bar_y,      bar_x+PW,      bar_y)
-        bline(bar_x+PW,   bar_y,      bar_x+PW-5,    bar_y+PT)
-        bline(bar_x+PW-5, bar_y+PT,   bar_x+PS,      bar_y+PT)
-        bline(bar_x+PS,   bar_y+PT,   bar_x+PS-4,    bar_y+PH)
-        bline(bar_x+PS-4, bar_y+PH,   bar_x,         bar_y+PH)
-        bline(bar_x,      bar_y+PH,   bar_x,         bar_y)
+        bline(bar_x,      bar_y,      bar_x+PW,   bar_y)
+        bline(bar_x+PW,   bar_y,      bar_x+PW-5, bar_y+PT)
+        bline(bar_x+PW-5, bar_y+PT,   bar_x+PS,   bar_y+PT)
+        bline(bar_x+PS,   bar_y+PT,   bar_x+PS-4, bar_y+PH)
+        bline(bar_x+PS-4, bar_y+PH,   bar_x,      bar_y+PH)
+        bline(bar_x,      bar_y+PH,   bar_x,       bar_y)
 
-        # 4) 内分隔线 (1px, 层叠在填充之上)
-        cv.create_line(bar_x+2, bar_y+1,     bar_x+PW-2, bar_y+1,
+        # 4) 内分隔线
+        cv.create_line(bar_x+2, bar_y+1,      bar_x+PW-2, bar_y+1,
                        fill=BORDER_C, width=1, tags='hp_inner')
-        cv.create_line(bar_x+2, bar_y+PH-2,  bar_x+PS-7, bar_y+PH-2,
+        cv.create_line(bar_x+2, bar_y+PH-2,   bar_x+PS-7, bar_y+PH-2,
                        fill=BORDER_C, width=1, tags='hp_inner')
         cv.create_line(bar_x+PS+1, bar_y+PT-2, bar_x+PW-7, bar_y+PT-2,
                        fill=BORDER_C, width=1, tags='hp_inner')
 
         # ═══════════════════════════════════════
-        #  名字框 (右侧, x=325..415, y=4..40) — xt_left 风格
-        # ═══════════════════════════════════════
-        nx, ny, nw, nh = 324, 4, 90, 38
-        cv.create_rectangle(nx, ny, nx+nw, ny+nh, fill=BG, outline='')
-        # 左侧凹口 (匹配 xt_left)
-        cv.create_rectangle(nx, ny + int(nh*0.25), nx + int(nw*0.25),
-                            ny + int(nh*0.75), fill=TRANS, outline='')
-
-        display_name = self._username if self._username else 'Player'
-        if len(display_name) > 8:
-            display_name = display_name[:7] + '…'
-        self._float_title_id = cv.create_text(
-            nx + nw//2 + 6, ny + nh//2,
-            text=display_name, fill=FONT_C, font=get_sao_font(10))
-
-        # ═══════════════════════════════════════
-        #  XP / Lv 数字 (底行)
+        #  XP / Lv 数字 (底行, 右对齐至 HP 条右边)
         # ═══════════════════════════════════════
         _lv, _cur_xp, _need_xp = calc_level(self._xp)
-        num_y = 42
-        xp_x, xp_w = 174, 140
-        lv_x, lv_w = xp_x + xp_w + 3, 52
+        num_y = 34
+        xp_x, xp_w = 216, 130
+        lv_x, lv_w = xp_x + xp_w + 3, 60
 
-        cv.create_rectangle(xp_x, num_y, xp_x+xp_w, num_y+16,
+        cv.create_rectangle(xp_x, num_y, xp_x+xp_w, num_y+18,
                             fill=BG, outline='')
         self._float_time_id = cv.create_text(
-            xp_x+xp_w-5, num_y+8,
+            xp_x+xp_w-5, num_y+9,
             text=f'{_cur_xp}/{_need_xp}',
             font=get_sao_font(9), fill=FONT_C, anchor='e')
 
-        cv.create_rectangle(lv_x, num_y, lv_x+lv_w, num_y+16,
+        cv.create_rectangle(lv_x, num_y, lv_x+lv_w, num_y+18,
                             fill=BG, outline='')
         self._float_level_id = cv.create_text(
-            lv_x+lv_w-5, num_y+8,
+            lv_x+lv_w-5, num_y+9,
             text=f'lv.{self._level}',
             font=get_sao_font(9), fill=FONT_C, anchor='e')
 
@@ -3195,7 +3198,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.6+3206\n\n"
+            "咲 Midi Player  SAO Edition\nv3.2.7+3207\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

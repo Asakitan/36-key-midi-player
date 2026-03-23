@@ -591,17 +591,17 @@ class SAOWebViewGUI:
                 from PIL import ImageGrab
                 img = ImageGrab.grab()
 
-            # 缩小以加快 GPU/numpy 处理速度
+            # 缩小以加快 GPU/numpy 处理速度 (保留较高分辨率减少模糊感)
             w, h = img.size
-            scale = min(800 / w, 450 / h, 1.0)
+            scale = min(1280 / w, 720 / h, 1.0)
             if scale < 1.0:
-                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+                img = img.resize((int(w * scale), int(h * scale)), Image.BILINEAR)
 
             # GPU barrel distortion (moderngl)
             img = self._apply_barrel_distortion(img)
 
             buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=quality)
+            img.save(buf, format='JPEG', quality=max(quality, 70))
             return b64mod.b64encode(buf.getvalue()).decode('ascii')
         except Exception as e:
             print(f"[SAO] monitor capture: {e}")
@@ -646,7 +646,7 @@ class SAOWebViewGUI:
         }
         '''
         self._gl_prog = ctx.program(vertex_shader=vert_src, fragment_shader=frag_src)
-        self._gl_prog['strength'] = 0.65
+        self._gl_prog['strength'] = 0.35
 
         verts = np.array([
             -1, -1, 0, 0,
@@ -689,7 +689,7 @@ class SAOWebViewGUI:
 
         # ── numpy fallback (simple polynomial, matches SAO_GUI) ──
         try:
-            strength = 0.65
+            strength = 0.35
             arr = np.array(img, dtype=np.float32)
             cy, cx = h / 2.0, w / 2.0
             Y, X = np.mgrid[0:h, 0:w].astype(np.float32)
