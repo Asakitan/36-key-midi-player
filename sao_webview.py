@@ -732,20 +732,23 @@ class SAOWebViewGUI:
         self._play_sound('menu_close')
         self._eval_menu('SAO.closeMenu()')
 
-        # 立即将菜单窗口设为完全透明, 避免 hide() 延迟期间出现白屏
-        try:
-            _hwnd = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
-            if _hwnd:
-                GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000; LWA_ALPHA = 2
-                _ex = ctypes.windll.user32.GetWindowLongW(_hwnd, GWL_EXSTYLE)
-                if not (_ex & WS_EX_LAYERED):
-                    ctypes.windll.user32.SetWindowLongW(_hwnd, GWL_EXSTYLE, _ex | WS_EX_LAYERED)
-                ctypes.windll.user32.SetLayeredWindowAttributes(_hwnd, 0, 0, LWA_ALPHA)
-        except Exception:
-            pass
-
+        # 等 TV 动画播完 (~550ms) 再淡出隐藏窗口, 否则立刻 alpha=0 会遮住动画
         def _hide():
-            time.sleep(0.4)
+            time.sleep(0.52)  # TV动画时长 0.55s, 稍早一点开始淡出
+            try:
+                hwnd = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
+                GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000; LWA_ALPHA = 2
+                if hwnd:
+                    _ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                    if not (_ex & WS_EX_LAYERED):
+                        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, _ex | WS_EX_LAYERED)
+                    # 快速淡出 (3帧)
+                    for a in [120, 30, 0]:
+                        ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, a, LWA_ALPHA)
+                        time.sleep(0.03)
+            except Exception:
+                pass
+            time.sleep(0.05)
             try:
                 self.menu_win.restore()  # 取消最大化
             except Exception:
