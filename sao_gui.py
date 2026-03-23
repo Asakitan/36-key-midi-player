@@ -2607,6 +2607,11 @@ class SAOPlayerGUI:
         self._update_status_panel()
 
     def _stop(self):
+        # 停止循环文件夹
+        if self._folder_loop_active:
+            self._folder_loop_active = False
+            self._folder_loop_files = []
+            self._folder_loop_index = 0
         self.player.stop()
         self._playing = False
         self._paused = False
@@ -2734,37 +2739,109 @@ class SAOPlayerGUI:
             SAODialog.showerror(self._float, "错误", "MIDI控制器模块不可用")
 
     def _toggle_folder_loop(self):
+        """切换循环文件夹 — 移植自 Old UI"""
         if self._folder_loop_active:
+            # 停止循环
             self._folder_loop_active = False
-            self._refresh_menu_if_open()
-            return
-
-        if not self._current_file:
-            SAODialog.showwarning(self._float, "提示", "请先打开一个MIDI文件")
-            return
-
-        folder = os.path.dirname(self._current_file)
-        files = sorted([os.path.join(folder, f) for f in os.listdir(folder)
-                        if f.lower().endswith(('.mid', '.midi'))])
-        if not files:
-            SAODialog.showwarning(self._float, "提示", "当前文件夹中没有MIDI文件")
-            return
-
-        self._folder_loop_active = True
-        self._folder_loop_files = files
-        try:
-            self._folder_loop_index = files.index(self._current_file)
-        except ValueError:
+            self._folder_loop_files = []
             self._folder_loop_index = 0
-        self._refresh_menu_if_open()
+            self.player.stop()
+            self._playing = False
+            self._paused = False
+            self._update_float_status()
+            self._refresh_menu_if_open()
+            if self._player_panel:
+                self._player_panel.update_status("已停止循环", False)
+                self._player_panel.update_progress(0, 0)
+            if self._mini_piano:
+                self._mini_piano.reset()
+            if self._visualizer:
+                self._visualizer.stop()
+            return
 
-    def _play_next_folder_song(self):
+        # 关闭 SAO 菜单, 延迟打开文件夹选择器
+        if self._sao_menu.visible:
+            self._sao_menu.close()
+        self.root.after(600, self._do_open_folder_picker)
+
+    def _do_open_folder_picker(self):
+        """打开文件夹选择器 (SAOFilePicker dir 模式)"""
+        last_folder = self.settings.get('last_folder', '')
+        if self._current_file:
+            init_dir = os.path.dirname(self._current_file)
+        elif last_folder and os.path.isdir(last_folder):
+            init_dir = last_folder
+        else:
+            init_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Midi')
+        if not os.path.isdir(init_dir):
+            init_dir = os.path.dirname(os.path.abspath(__file__))
+
+        self._picker = SAOFilePicker(
+            self._float,
+            title='选择循环播放的文件夹',
+            initial_dir=init_dir,
+            mode='dir',
+            callback=self._on_folder_selected,
+        )
+
+    def _on_folder_selected(self, folder):
+        """文件夹选中回调 — 扫描 MIDI 并开始循环"""
+        self._picker = None
+        if not folder or not os.path.isdir(folder):
+            return
+
+        self.settings.set('last_folder', folder)
+        files = sorted([
+            os.path.join(folder, f) for f in os.listdir(folder)
+            if f.lower().endswith(('.mid', '.midi'))
+            and os.path.isfile(os.path.join(folder, f))
+        ])
+        if not files:
+            SAODialog.showwarning(self._float, "提示", "该文件夹下没有 MIDI 文件")
+            return
+
+        self._folder_loop_files = files
+        self._folder_loop_index = 0
+        self._folder_loop_active = True
+        self._refresh_menu_if_open()
+        self._play_next_folder_song()
+
+    def _play_next_folder_song(self, _retries=0):
+        """播放下一首循环文件 — 含重试逻辑"""
         if not self._folder_loop_active or not self._folder_loop_files:
             return
+        if _retries >= len(self._folder_loop_files):
+            self._folder_loop_active = False
+            self._folder_loop_files = []
+            self._folder_loop_index = 0
+            self._refresh_menu_if_open()
+            SAODialog.showerror(self._float, "错误", "文件夹中所有文件加载失败，已停止循环")
+            return
+
+        filepath = self._folder_loop_files[self._folder_loop_index]
         self._folder_loop_index = (self._folder_loop_index + 1) % len(self._folder_loop_files)
-        next_file = self._folder_loop_files[self._folder_loop_index]
-        self._on_file_selected(next_file)
-        self.root.after(500, self._toggle_play)
+
+        if self.player.load_midi(filepath):
+            self._current_file = filepath
+            self.settings.set('last_file', filepath)
+            fname = os.path.basename(filepath)
+            self._update_float_fname(fname)
+            self._transpose = 0
+            self.player.set_transpose(0)
+            self.player.mapper.clear_channel_settings()
+            if self._direct_c:
+                self.player.set_direct_c_mode(True, save=False)
+            self.player.set_part_filter(self._melody_on, self._bass_on)
+            self.player.set_speed(self._speed)
+            self.player.play()
+            self._playing = True
+            self._paused = False
+            self._update_float_status()
+            self._refresh_menu_if_open()
+            if self._player_panel:
+                self._player_panel.update_status(f"循环: {fname}", True)
+        else:
+            self._play_next_folder_song(_retries + 1)
 
     # ══════════════════════════════════════════════
     #  回调绑定
@@ -2902,7 +2979,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.1.14+3114\n\n"
+            "咲 Midi Player  SAO Edition\nv3.1.15+3115\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

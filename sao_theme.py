@@ -2476,13 +2476,14 @@ class SAOFilePicker(tk.Toplevel):
     _FILE_FG  = '#444444'
 
     def __init__(self, parent, title='选择文件', initial_dir='.',
-                 filetypes=None, callback=None, **kw):
+                 filetypes=None, callback=None, mode='file', **kw):
         super().__init__(parent)
         self.result = None
         self.callback = callback
         self._current_dir = os.path.abspath(initial_dir)
         self._filetypes = filetypes or [('All Files', '*.*')]
         self._entries = []
+        self._mode = mode  # 'file' or 'dir'
 
         self.overrideredirect(True)
         self.attributes('-topmost', True)
@@ -2634,6 +2635,18 @@ class SAOFilePicker(tk.Toplevel):
         btn_frame = tk.Frame(footer, bg=self._BG2)
         btn_frame.place(relx=0.5, rely=0.5, anchor='center')
 
+        # 目录模式: 添加 "选择此文件夹" 按钮
+        if self._mode == 'dir':
+            sel_dir_cv = tk.Canvas(btn_frame, width=36, height=36,
+                                   bg=self._BG2, highlightthickness=0, cursor='hand2')
+            sel_dir_cv.pack(side=tk.LEFT, padx=(0, 4))
+            sel_dir_cv.create_oval(2, 2, 34, 34, outline='#4caf50', width=2, fill='')
+            sel_dir_cv.create_oval(8, 8, 28, 28, fill=self._BG2, outline='')
+            sel_dir_cv.create_oval(11, 11, 25, 25, fill='#4caf50', outline='')
+            sel_dir_cv.bind('<Button-1>', lambda e: self._confirm_dir())
+            tk.Label(btn_frame, text='选择此文件夹', bg=self._BG2, fg='#999999',
+                     font=('Segoe UI', 8)).pack(side=tk.LEFT, padx=(0, 16))
+
         # 确认 (蓝圆)
         ok_cv = tk.Canvas(btn_frame, width=36, height=36,
                           bg=self._BG2, highlightthickness=0, cursor='hand2')
@@ -2737,10 +2750,20 @@ class SAOFilePicker(tk.Toplevel):
         if sel:
             name, is_dir = self._entries[sel[0]]
             if is_dir:
-                self._load_dir(os.path.join(self._current_dir, name))
+                if self._mode == 'dir' and name != '..':
+                    # 目录模式: 确认选中的子文件夹
+                    self.result = os.path.join(self._current_dir, name)
+                    self._finish()
+                else:
+                    self._load_dir(os.path.join(self._current_dir, name))
             else:
                 self.result = os.path.join(self._current_dir, name)
                 self._finish()
+
+    def _confirm_dir(self):
+        """目录模式: 选择当前浏览的文件夹"""
+        self.result = self._current_dir
+        self._finish()
 
     def _cancel(self):
         self.result = None
@@ -2941,7 +2964,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.0.3+3003", on_close=None, **kw):
+                 version="v3.1.15+3115", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close
