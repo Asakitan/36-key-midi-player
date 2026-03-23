@@ -219,6 +219,36 @@ class SAOWebAPI:
 
 
 # ════════════════════════════════════════════════
+#  面板 JS API Bridge
+# ════════════════════════════════════════════════
+class PanelAPI:
+    """pywebview js_api for panel windows (control/piano/status/viz)."""
+
+    def __init__(self, gui: 'SAOWebViewGUI', panel_type: str):
+        self._g = gui
+        self._type = panel_type
+
+    def window_drag(self, dx, dy):
+        try:
+            win = self._g._panel_wins.get(self._type)
+            if win:
+                x = win.x + int(dx)
+                y = win.y + int(dy)
+                win.move(x, y)
+        except Exception:
+            pass
+
+    def close_panel(self):
+        threading.Thread(target=self._g._toggle_panel, args=(self._type,), daemon=True).start()
+
+    def panel_action(self, action):
+        threading.Thread(target=self._g._menu_action, args=(action,), daemon=True).start()
+
+    def play_sound(self, name):
+        threading.Thread(target=self._g._play_sound, args=(name,), daemon=True).start()
+
+
+# ════════════════════════════════════════════════
 #  主类
 # ════════════════════════════════════════════════
 class SAOWebViewGUI:
@@ -295,6 +325,7 @@ class SAOWebViewGUI:
         self._hp_hwnd = 0
         self._ctx_menu_active = False
         self._fisheye_active = False
+        self._panel_wins = {}  # panel_type -> webview window
 
         # 回调
         self.player.on_progress = self._on_progress
@@ -339,8 +370,7 @@ class SAOWebViewGUI:
         self.menu_win = webview.create_window(
             'SAO Menu', menu_url,
             frameless=True,
-            transparent=False,
-            background_color='#000000',
+            transparent=True,
             hidden=True,
             js_api=self._api,
         )
@@ -405,6 +435,21 @@ class SAOWebViewGUI:
                 # 默认: 只保留 HP 条 (body pad=8 + XTBox=40 + number=20 = 68px)
                 hrgn = gdi32.CreateRectRgn(0, 0, 420, 68)
             user32.SetWindowRgn(self._hp_hwnd, hrgn, True)
+        except Exception:
+            pass
+
+    def _ensure_hp_on_top(self):
+        """Win32: re-assert HP window as TOPMOST above fullscreen menu."""
+        if not self._hp_hwnd:
+            return
+        try:
+            HWND_TOPMOST = ctypes.c_void_p(-1)
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOACTIVATE = 0x0010
+            ctypes.windll.user32.SetWindowPos(
+                self._hp_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
         except Exception:
             pass
 
@@ -473,6 +518,8 @@ class SAOWebViewGUI:
             self.menu_win.maximize()
         except Exception:
             pass
+        # HP 栏保持在菜单窗口上方
+        self._ensure_hp_on_top()
         # 非阻塞延迟初始化菜单动画
         def _init_menu():
             time.sleep(0.15)
@@ -490,20 +537,145 @@ class SAOWebViewGUI:
                 self.menu_win.hide()
             except Exception:
                 pass
-        threading.Timer(0.5, _hide).start()
+        threading.Timer(0.4, _hide).start()
+
+    def _capture_current_monitor_b64(self, quality=50):
+        """截取 HP 窗口所在显示器 → JPEG base64 (无桶形畸变, CSS 动画实现鱼眼)."""
+        try:
+            import base64 as b64mod, io
+            from PIL import Image
+
+            hx = self.hp_win.x if self.hp_win else 0
+            hy = self.hp_win.y if self.hp_win else 0
+
+            try:
+                import mss
+                with mss.mss() as sct:
+                    target = sct.monitors[1]  # 默认主屏
+                    for m in sct.monitors[1:]:
+                        if (m['left'] <= hx < m['left'] + m['width'] and
+                                m['top'] <= hy < m['top'] + m['height']):
+                            target = m
+                            break
+                    raw = sct.grab(target)
+                    img = Image.frombytes('RGB', raw.size, raw.rgb)
+            except Exception:
+                from PIL import ImageGrab
+                img = ImageGrab.grab()
+
+            # 缩小以加快速度
+            w, h = img.size
+            scale = min(800 / w, 450 / h, 1.0)
+            if scale < 1.0:
+                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=quality)
+            return b64mod.b64encode(buf.getvalue()).decode('ascii')
+        except Exception as e:
+            print(f"[SAO] monitor capture: {e}")
+            return None
 
     def _push_fisheye_background(self):
-        """截图 → barrel distortion → 推送到菜单 JS 做背景"""
-        b64 = _capture_fisheye_base64(strength=0.25, quality=55)
+        """截图当前屏幕 → 推送到菜单 JS (CSS 动画提供 60fps 鱼眼效果)"""
+        b64 = self._capture_current_monitor_b64(quality=50)
         if b64:
             js = f'SAO.setFisheyeBg("data:image/jpeg;base64,{b64}")'
             self._eval_menu(js)
 
     def _fisheye_loop(self):
-        """实时刷新鱼眼背景 — 菜单打开期间每 2 秒更新"""
+        """实时刷新背景 — 菜单打开期间每 1 秒更新截图, CSS 动画实现 60fps"""
         while self._fisheye_active and self._menu_visible:
             self._push_fisheye_background()
-            time.sleep(2)
+            time.sleep(1)
+
+    # ─── 面板管理 ───
+    def _toggle_panel(self, panel_type):
+        """切换面板窗口 (control/piano/status/viz)."""
+        if panel_type in self._panel_wins:
+            try:
+                self._panel_wins[panel_type].destroy()
+            except Exception:
+                pass
+            self._panel_wins.pop(panel_type, None)
+            return
+        self._create_panel_window(panel_type)
+
+    def _create_panel_window(self, panel_type):
+        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
+        url = os.path.join(web_dir, 'panel.html')
+
+        sizes = {
+            'control': (280, 210),
+            'piano': (520, 125),
+            'status': (220, 195),
+            'viz': (210, 360),
+        }
+        w, h = sizes.get(panel_type, (280, 200))
+
+        try:
+            hx, hy = self.hp_win.x or 100, self.hp_win.y or 100
+        except Exception:
+            hx, hy = 100, 100
+
+        key_x = f'wv_{panel_type}_x'
+        key_y = f'wv_{panel_type}_y'
+        sx = self.settings.get(key_x, max(0, hx - w - 20))
+        sy = self.settings.get(key_y, hy)
+
+        api = PanelAPI(self, panel_type)
+        win = webview.create_window(
+            f'SAO {panel_type}', url,
+            width=w, height=h,
+            x=int(sx), y=int(sy),
+            frameless=True,
+            transparent=True,
+            on_top=True,
+            js_api=api,
+        )
+        self._panel_wins[panel_type] = win
+
+        def _init():
+            time.sleep(1.0)
+            try:
+                state = self._get_panel_state()
+                win.evaluate_js(f'Panel.init("{panel_type}", {json.dumps(state)})')
+            except Exception:
+                pass
+        threading.Thread(target=_init, daemon=True).start()
+
+    def _get_panel_state(self):
+        mode_sys = self.settings.get('mode_system', 'classic')
+        mode_label = {'classic': '经典60键', 'full88': '完整88键', 'hyper': '超级键位'}.get(mode_sys, mode_sys)
+        return {
+            'speed': self._speed,
+            'transpose': self._transpose,
+            'melody': self._melody_on,
+            'bass': self._bass_on,
+            'directc': self._direct_c,
+            'glissando': self._glissando,
+            'sustain': False,
+            'play_state': '播放中' if self._playing else ('已暂停' if self._paused else '就绪'),
+            'mode': mode_label,
+            'bpm': 0,
+        }
+
+    def _sync_all_panels(self):
+        """同步所有打开的面板的状态."""
+        state = self._get_panel_state()
+        for pt, win in list(self._panel_wins.items()):
+            try:
+                win.evaluate_js(f'Panel.update({json.dumps(state)})')
+            except Exception:
+                pass
+
+    def _destroy_all_panels(self):
+        for win in list(self._panel_wins.values()):
+            try:
+                win.destroy()
+            except Exception:
+                pass
+        self._panel_wins.clear()
 
     # ─── 同步信息 ───
     def _sync_menu_info(self):
@@ -523,6 +695,7 @@ class SAOWebViewGUI:
         for k, v in [('melody', self._melody_on), ('bass', self._bass_on),
                       ('directc', self._direct_c), ('glissando', self._glissando)]:
             self._eval_menu(f'SAO.updateBadge("{k}", {"true" if v else "false"})')
+        self._sync_all_panels()
 
     # ════════════════════════════════════════
     #  动作分发
@@ -536,6 +709,10 @@ class SAOWebViewGUI:
             'folder': self._open_folder,
             'speedup': self._speed_up,
             'speeddown': self._speed_down,
+            'panel_control': lambda: self._toggle_panel('control'),
+            'panel_piano': lambda: self._toggle_panel('piano'),
+            'panel_status': lambda: self._toggle_panel('status'),
+            'panel_viz': lambda: self._toggle_panel('viz'),
             'switch_sao': self._switch_to_sao_ui,
             'switch_old': self._switch_to_old_ui,
             'exit': self._exit,
@@ -559,6 +736,10 @@ class SAOWebViewGUI:
             'toggle_glissando': self._toggle_glissando,
             'transpose_up': self._transpose_up,
             'transpose_down': self._transpose_down,
+            'panel_control': lambda: self._toggle_panel('control'),
+            'panel_piano': lambda: self._toggle_panel('piano'),
+            'panel_status': lambda: self._toggle_panel('status'),
+            'panel_viz': lambda: self._toggle_panel('viz'),
             'switch_sao': self._switch_to_sao_ui,
             'switch_old': self._switch_to_old_ui,
             'exit': self._exit,
@@ -656,24 +837,28 @@ class SAOWebViewGUI:
         self.player.set_part_filter(self._melody_on, self._bass_on)
         self._eval_menu(f'SAO.updateBadge("melody", {"true" if self._melody_on else "false"})')
         self._eval_menu(f'SAO.showToast("主旋律: {"ON" if self._melody_on else "OFF"}")')
+        self._sync_all_panels()
 
     def _toggle_bass(self):
         self._bass_on = not self._bass_on
         self.player.set_part_filter(self._melody_on, self._bass_on)
         self._eval_menu(f'SAO.updateBadge("bass", {"true" if self._bass_on else "false"})')
         self._eval_menu(f'SAO.showToast("伴奏: {"ON" if self._bass_on else "OFF"}")')
+        self._sync_all_panels()
 
     def _toggle_direct_c(self):
         self._direct_c = not self._direct_c
         self.player.set_direct_c_mode(self._direct_c)
         self._eval_menu(f'SAO.updateBadge("directc", {"true" if self._direct_c else "false"})')
         self._eval_menu(f'SAO.showToast("C调直转: {"ON" if self._direct_c else "OFF"}")')
+        self._sync_all_panels()
 
     def _toggle_glissando(self):
         self._glissando = not self._glissando
         self.player._play_ending_glissando = self._glissando
         self._eval_menu(f'SAO.updateBadge("glissando", {"true" if self._glissando else "false"})')
         self._eval_menu(f'SAO.showToast("结尾滑奏: {"ON" if self._glissando else "OFF"}")')
+        self._sync_all_panels()
 
     # ════════════════════════════════════════
     #  文件管理
@@ -796,7 +981,16 @@ class SAOWebViewGUI:
                 if x is not None and y is not None:
                     self.settings.set('float_x', x)
                     self.settings.set('float_y', y)
-                    self.settings.save()
+                # 保存面板位置
+                for pt, win in list(self._panel_wins.items()):
+                    try:
+                        px, py = win.x, win.y
+                        if px is not None and py is not None:
+                            self.settings.set(f'wv_{pt}_x', px)
+                            self.settings.set(f'wv_{pt}_y', py)
+                    except Exception:
+                        pass
+                self.settings.save()
             except Exception:
                 return  # 窗口已销毁, 退出循环
 
@@ -809,6 +1003,7 @@ class SAOWebViewGUI:
         self.settings.save()
         self._pending_switch = 'sao'
         self.player.stop()
+        self._destroy_all_panels()
         try:
             self.hp_win.destroy()
         except Exception:
@@ -824,6 +1019,7 @@ class SAOWebViewGUI:
         self.settings.save()
         self._pending_switch = 'old'
         self.player.stop()
+        self._destroy_all_panels()
         try:
             self.hp_win.destroy()
         except Exception:
@@ -846,6 +1042,7 @@ class SAOWebViewGUI:
 
     def _exit(self):
         self.player.stop()
+        self._destroy_all_panels()
         try:
             self.hp_win.destroy()
         except Exception:

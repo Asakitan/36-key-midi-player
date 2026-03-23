@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+@font-face { font-family: 'sao'; src: url('../assets/fonts/SAOUI.ttf'); }
+@font-face { font-family: 'yuanJWD'; src: url('../assets/fonts/ZhuZiAYuanJWD.ttf'); }
+
+html, body {
+    background: transparent;
+    margin: 0; padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+    overflow: hidden;
+}
+
+.panel {
+    margin: 4px;
+    background: rgba(255, 255, 255, 0.92);
+    border-radius: 4px;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.18);
+    overflow: hidden;
+    font-family: 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
+    font-size: 12px;
+    color: #555;
+}
+
+.panel-header {
+    background: rgba(245, 245, 247, 0.95);
+    height: 26px;
+    display: flex;
+    align-items: center;
+    cursor: grab;
+    border-bottom: 1px solid #e8e8e8;
+}
+.panel-header:active { cursor: grabbing; }
+
+.panel-title {
+    font-size: 11px;
+    color: #646364;
+    padding-left: 10px;
+    flex: 1;
+    font-family: 'sao', 'yuanJWD', sans-serif;
+    letter-spacing: 1px;
+}
+
+.panel-close {
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: #999; font-size: 14px;
+}
+.panel-close:hover { color: #e53935; background: rgba(229,57,53,0.1); }
+
+.panel-body { padding: 8px 10px; }
+
+/* ═══ Control panel ═══ */
+.ctrl-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.ctrl-label {
+    width: 48px;
+    color: #999;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+.ctrl-btn {
+    width: 28px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    background: #f0f0f0;
+    border-radius: 3px;
+    cursor: pointer;
+    color: #646364;
+    font-size: 14px;
+    font-weight: bold;
+    transition: background 0.15s;
+}
+.ctrl-btn:hover { background: rgba(243,175,18,0.7); color: #fff; }
+.ctrl-btn:active { background: rgba(243,175,18,1); }
+
+.ctrl-value {
+    min-width: 65px;
+    text-align: center;
+    font-family: 'Consolas', monospace;
+    font-size: 12px;
+    color: #333;
+}
+.ctrl-sep { height: 1px; background: #eee; margin: 6px 0; }
+
+.ctrl-toggle {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 11px;
+    margin-right: 6px;
+    margin-bottom: 4px;
+    transition: background 0.15s, color 0.15s;
+}
+.ctrl-toggle.on { background: rgba(243,175,18,0.85); color: #fff; }
+.ctrl-toggle.off { background: #f0f0f0; color: #999; }
+.ctrl-toggle:hover { opacity: 0.85; }
+
+/* ═══ Status panel ═══ */
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(200,200,200,0.3);
+    font-size: 12px;
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: #999; }
+.stat-value { color: #555; font-weight: 500; }
+.stat-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.stat-dot.on { background: #3ad86c; box-shadow: 0 0 4px rgba(58,216,108,0.5); }
+.stat-dot.off { background: #e0e0e0; }
+
+/* ═══ Piano panel ═══ */
+.piano-container {
+    display: flex;
+    height: 70px;
+    position: relative;
+}
+.piano-key {
+    flex: 1;
+    background: #fff;
+    border: 1px solid #d8d8d8;
+    border-radius: 0 0 3px 3px;
+    transition: background 0.08s;
+    min-width: 0;
+}
+.piano-key.pressed { background: rgba(154,211,52,0.6); }
+.piano-key.black-key {
+    background: #444;
+    flex: 0.6;
+    height: 60%;
+    border-radius: 0 0 2px 2px;
+    margin: 0 -4px;
+    z-index: 1;
+    border: none;
+}
+.piano-key.black-key.pressed { background: rgba(243,175,18,0.8); }
+
+/* ═══ Visualizer panel ═══ */
+.viz-canvas {
+    width: 100%;
+    height: 100%;
+    background: #fafafa;
+    border-radius: 3px;
+}
+</style>
+</head>
+<body>
+<div class="panel" id="panel">
+    <div class="panel-header" id="panel-header">
+        <span class="panel-title" id="panel-title">面板</span>
+        <span class="panel-close" id="panel-close">×</span>
+    </div>
+    <div class="panel-body" id="panel-body"></div>
+</div>
+
+<script>
+var panelType = '';
+
+/* ═══ Drag ═══ */
+(function() {
+    var hdr = document.getElementById('panel-header');
+    var drag = { on: false, sx: 0, sy: 0 };
+
+    hdr.addEventListener('mousedown', function(e) {
+        if (e.target.id === 'panel-close') return;
+        drag.on = true;
+        drag.sx = e.screenX;
+        drag.sy = e.screenY;
+        hdr.style.cursor = 'grabbing';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!drag.on) return;
+        var dx = e.screenX - drag.sx;
+        var dy = e.screenY - drag.sy;
+        drag.sx = e.screenX;
+        drag.sy = e.screenY;
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.window_drag(dx, dy);
+        }
+    });
+
+    document.addEventListener('mouseup', function() {
+        drag.on = false;
+        document.getElementById('panel-header').style.cursor = 'grab';
+    });
+})();
+
+/* ═══ Close ═══ */
+document.getElementById('panel-close').addEventListener('click', function() {
+    if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.close_panel();
+    }
+});
+
+/* ═══ Action helper ═══ */
+function doAction(action) {
+    if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.panel_action(action);
+    }
+}
+
+/* ═══ Init panel by type ═══ */
+function initPanel(type, state) {
+    panelType = type;
+    var title = document.getElementById('panel-title');
+    var body = document.getElementById('panel-body');
+
+    if (type === 'control') {
+        title.textContent = '⚙ 控制面板';
+        body.innerHTML =
+            '<div class="ctrl-row">' +
+                '<span class="ctrl-label">速度</span>' +
+                '<span class="ctrl-btn" onclick="doAction(\'speeddown\')">−</span>' +
+                '<span class="ctrl-value" id="val-speed">1.00×</span>' +
+                '<span class="ctrl-btn" onclick="doAction(\'speedup\')">+</span>' +
+            '</div>' +
+            '<div class="ctrl-row">' +
+                '<span class="ctrl-label">移调</span>' +
+                '<span class="ctrl-btn" onclick="doAction(\'transpose_down\')">−</span>' +
+                '<span class="ctrl-value" id="val-transpose">+0</span>' +
+                '<span class="ctrl-btn" onclick="doAction(\'transpose_up\')">+</span>' +
+            '</div>' +
+            '<div class="ctrl-sep"></div>' +
+            '<div>' +
+                '<span class="ctrl-toggle on" id="tog-melody" onclick="doAction(\'toggle_melody\')">♪ 主旋律</span>' +
+                '<span class="ctrl-toggle on" id="tog-bass" onclick="doAction(\'toggle_bass\')">♫ 伴奏</span>' +
+            '</div>' +
+            '<div style="margin-top:2px">' +
+                '<span class="ctrl-toggle off" id="tog-directc" onclick="doAction(\'toggle_directc\')">C调直转</span>' +
+                '<span class="ctrl-toggle off" id="tog-glissando" onclick="doAction(\'toggle_glissando\')">滑奏</span>' +
+            '</div>';
+    } else if (type === 'status') {
+        title.textContent = '◉ 状态面板';
+        body.innerHTML =
+            '<div class="stat-row"><span class="stat-label">延音</span>' +
+                '<span class="stat-value" id="stat-sustain"><span class="stat-dot off"></span>OFF</span></div>' +
+            '<div class="stat-row"><span class="stat-label">状态</span>' +
+                '<span class="stat-value" id="stat-play">就绪</span></div>' +
+            '<div class="stat-row"><span class="stat-label">键位</span>' +
+                '<span class="stat-value" id="stat-mode">经典60键</span></div>' +
+            '<div class="stat-row"><span class="stat-label">BPM</span>' +
+                '<span class="stat-value" id="stat-bpm">—</span></div>' +
+            '<div class="stat-row"><span class="stat-label">速度</span>' +
+                '<span class="stat-value" id="stat-speed">1.00×</span></div>';
+    } else if (type === 'piano') {
+        title.textContent = '⌨ 钢琴面板';
+        /* 2 octaves: C D E F G A B pattern with black keys */
+        var html = '<div class="piano-container">';
+        var pattern = [0,1,0,1,0,0,1,0,1,0,1,0]; /* 0=white 1=black */
+        for (var oct = 0; oct < 2; oct++) {
+            for (var i = 0; i < 12; i++) {
+                var note = oct * 12 + i;
+                if (pattern[i]) {
+                    html += '<div class="piano-key black-key" data-note="' + note + '"></div>';
+                } else {
+                    html += '<div class="piano-key" data-note="' + note + '"></div>';
+                }
+            }
+        }
+        html += '<div class="piano-key" data-note="24"></div>'; /* final C */
+        html += '</div>';
+        body.innerHTML = html;
+    } else if (type === 'viz') {
+        title.textContent = '≡ 可视化';
+        body.innerHTML = '<canvas class="viz-canvas" id="viz-canvas" width="190" height="300"></canvas>';
+        initViz();
+    }
+
+    if (state) updatePanel(state);
+}
+
+/* ═══ Update panel state ═══ */
+function updatePanel(data) {
+    if (!data) return;
+    if (panelType === 'control') {
+        if (data.speed !== undefined) {
+            var el = document.getElementById('val-speed');
+            if (el) el.textContent = data.speed.toFixed(2) + '×';
+        }
+        if (data.transpose !== undefined) {
+            var el = document.getElementById('val-transpose');
+            if (el) el.textContent = (data.transpose >= 0 ? '+' : '') + data.transpose;
+        }
+        ['melody', 'bass', 'directc', 'glissando'].forEach(function(k) {
+            if (data[k] !== undefined) {
+                var el = document.getElementById('tog-' + k);
+                if (el) el.className = 'ctrl-toggle ' + (data[k] ? 'on' : 'off');
+            }
+        });
+    } else if (panelType === 'status') {
+        if (data.sustain !== undefined) {
+            var el = document.getElementById('stat-sustain');
+            if (el) el.innerHTML = '<span class="stat-dot ' + (data.sustain ? 'on' : 'off') +
+                '"></span>' + (data.sustain ? 'ON' : 'OFF');
+        }
+        if (data.play_state) {
+            var el = document.getElementById('stat-play');
+            if (el) el.textContent = data.play_state;
+        }
+        if (data.mode) {
+            var el = document.getElementById('stat-mode');
+            if (el) el.textContent = data.mode;
+        }
+        if (data.bpm !== undefined) {
+            var el = document.getElementById('stat-bpm');
+            if (el) el.textContent = data.bpm > 0 ? Math.round(data.bpm) : '—';
+        }
+        if (data.speed !== undefined) {
+            var el = document.getElementById('stat-speed');
+            if (el) el.textContent = data.speed.toFixed(2) + '×';
+        }
+    }
+}
+
+/* ═══ Piano key updates ═══ */
+function pressKeys(notes) {
+    document.querySelectorAll('.piano-key').forEach(function(k) { k.classList.remove('pressed'); });
+    if (notes && notes.length) {
+        notes.forEach(function(n) {
+            var el = document.querySelector('.piano-key[data-note="' + n + '"]');
+            if (el) el.classList.add('pressed');
+        });
+    }
+}
+
+/* ═══ Simple viz placeholder ═══ */
+function initViz() {
+    var canvas = document.getElementById('viz-canvas');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f0f0f0';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ccc';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('可视化面板', canvas.width/2, canvas.height/2);
+}
+
+window.Panel = {
+    init: initPanel,
+    update: updatePanel,
+    pressKeys: pressKeys,
+};
+</script>
+</body>
+</html>

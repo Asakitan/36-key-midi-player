@@ -249,6 +249,10 @@ body {
     <div class="cm-item" data-action="speedup">▲ 加速</div>
     <div class="cm-item" data-action="speeddown">▼ 减速</div>
     <div class="cm-sep"></div>
+    <div class="cm-item" data-action="panel_control">⚙ 控制面板</div>
+    <div class="cm-item" data-action="panel_status">◉ 状态面板</div>
+    <div class="cm-item" data-action="panel_piano">⌨ 钢琴面板</div>
+    <div class="cm-sep"></div>
     <div class="cm-item" data-action="switch_sao">◆ SAO Entity UI</div>
     <div class="cm-item" data-action="switch_old">↺ Old School UI</div>
     <div class="cm-sep"></div>
@@ -353,9 +357,11 @@ function hideCtxMenu() {
         drag.on = false;
         hp.style.cursor = 'grab';
         if (!drag.moved) {
-            /* Click (no drag) → show context menu below HP bar */
+            /* Click (no drag) → toggle SAO menu */
             snd('click');
-            showCtxMenu(10, 70);
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.toggle_menu();
+            }
         }
     });
 })();

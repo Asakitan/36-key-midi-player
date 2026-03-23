@@ -1094,7 +1094,7 @@ class SAOPlayerGUI:
             cv.itemconfig('xt_left', fill='#b5cde0')
             cv.itemconfig('num_bg1', fill='#b5cde0')
             cv.itemconfig('num_bg2', fill='#b5cde0')
-            self._float.attributes('-alpha', 1.0)
+            self._float.attributes('-alpha', 0.93)
         except Exception:
             pass
 
@@ -1105,7 +1105,7 @@ class SAOPlayerGUI:
             cv.itemconfig('xt_left', fill='#9db5d0')
             cv.itemconfig('num_bg1', fill='#9db5d0')
             cv.itemconfig('num_bg2', fill='#9db5d0')
-            self._float.attributes('-alpha', 0.95)
+            self._float.attributes('-alpha', 0.82)
         except Exception:
             pass
 
@@ -2608,7 +2608,7 @@ class SAOPlayerGUI:
                 if dt < 0.4:
                     # 渐显
                     t = ease_out(dt / 0.4)
-                    al = t * 0.95
+                    al = t * 0.82
                     try:
                         self._float.attributes('-alpha', al)
                     except Exception:
@@ -2620,7 +2620,7 @@ class SAOPlayerGUI:
                 elif dt < 0.45:
                     # 确保完全可见, 开始滑动
                     try:
-                        self._float.attributes('-alpha', 0.95)
+                        self._float.attributes('-alpha', 0.82)
                     except Exception:
                         pass
                     self._animate_float_to(fx_start, fy_start,
@@ -3269,7 +3269,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.2.3+3203\n\n"
+            "咲 Midi Player  SAO Edition\nv3.2.4+3204\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
