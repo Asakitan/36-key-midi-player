@@ -1235,23 +1235,45 @@ class SAOPlayerGUI:
 
     def _toggle_sao_menu(self):
         if self._sao_menu.visible:
+            self._play_motion_blur(closing=True)
             self._sao_menu.close()
         else:
+            self._play_motion_blur(closing=False)
             self._sao_menu.child_menus = self._build_menu_children()
             self._sao_menu.open()
             # 立即将悬浮按钮浮到 overlay 之上 (避免撕裂)
             self._float.lift()
 
     def _on_sao_menu_open(self):
-        """SAO 菜单打开时 — 停止呼吸, 启动 float 保持最顶循环, 并启动持久鱼眼"""
+        """SAO 菜单打开时 — 停止呼吸, 启动持久鱼眼 (Win32 z-order 接管)"""
         self._stop_float_breath()
-        self._lift_loop_active = True
-        self._lift_float_loop()
+        # 不启动 _lift_float_loop (tkinter .lift() 会引起闪烁);
+        # z-order 完全由 _start_fisheye_overlay 内的 Win32 SetWindowPos 管理
+        self._lift_loop_active = False
         # 延迟启动鱼眼叠加 (等菜单渲染完再截图)
-        self.root.after(160, self._start_fisheye_overlay)
+        self.root.after(50, self._start_fisheye_overlay)
+
+    def _any_panel_open(self):
+        """检查是否有任何浮动面板处于打开状态"""
+        for p in (self._piano_panel, self._viz_panel,
+                  self._status_panel, self._control_panel):
+            try:
+                if p and p.winfo_exists():
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _maybe_stop_fisheye(self):
+        """仅当 SAO 菜单和所有面板都关闭时才销毁鱼眼叠加层"""
+        if self._sao_menu.visible:
+            return
+        if self._any_panel_open():
+            return
+        self._stop_fisheye_overlay()
 
     def _on_sao_menu_close(self):
-        """SAO 菜单关闭时 — 重启呼吸动画, 销毁鱼眼叠加层"""
+        """SAO 菜单关闭时 — 重启呼吸动画; 鱼眼由 _tick 自动渐隐, 此处作安全兜底"""
         self._lift_loop_active = False
         self._player_panel = None
         self._stop_fisheye_overlay()
@@ -1277,6 +1299,7 @@ class SAOPlayerGUI:
             self._mini_piano = None
             self.settings.set('show_piano', False)
             self.settings.save()
+            self._maybe_stop_fisheye()
             return
 
         pw, ph = 500, 100
@@ -1342,6 +1365,7 @@ class SAOPlayerGUI:
             self._status_panel = None
             self.settings.set('show_status', False)
             self.settings.save()
+            self._maybe_stop_fisheye()
             return
 
         sw, sh = 220, 200
@@ -1503,6 +1527,7 @@ class SAOPlayerGUI:
             self._visualizer = None
             self.settings.set('show_viz', False)
             self.settings.save()
+            self._maybe_stop_fisheye()
             return
 
         vw, vh = 200, 300
@@ -1569,6 +1594,7 @@ class SAOPlayerGUI:
             self._control_panel = None
             self.settings.set('show_control', False)
             self.settings.save()
+            self._maybe_stop_fisheye()
             return
 
         PW, PH = 295, 305
@@ -1813,124 +1839,213 @@ class SAOPlayerGUI:
                 self._toggle_control_panel()
 
     # ══════════════════════════════════════════════════════════════
-    #  持久鱼眼叠加层 (菜单开启时常驻, 关闭时销毁)
+    #  点击悬浮按钮 → 径向运动模糊闪现
     # ══════════════════════════════════════════════════════════════
-    def _start_fisheye_overlay(self):
+    def _play_motion_blur(self, closing=False):
         """
-        SAO 菜单开启期间的持久鱼眼叠加层.
+        悬浮按钮点击时的径向运动模糊效果 (SAO 菜单展开/收起).
 
-        工作方式:
-          1. 截取全屏 → 1/4分辨率 → 桶形畸变 (numpy 向量化双线性重映射)
-          2. -topmost=True 覆盖全屏 (含子菜单面板), alpha~28%
-          3. Win32 WS_EX_LAYERED + WS_EX_TRANSPARENT: 鼠标事件穿透
-          4. 每 50ms 截图+更新; 独立 z-order ticker 保证始终覆盖所有面板
-          5. 首帧就绪后才启动渐显动画 (避免黑屏→畸变图闪现)
-          6. 菜单关闭时由 _stop_fisheye_overlay 销毁
+        以悬浮按钮为中心, 截取屏幕 → 径向缩放模糊 → 叠加层 300ms 渐隐.
+        全部在后台线程完成重活, 主线程仅显示结果图.
         """
-        self._stop_fisheye_overlay()
-        if not self._sao_menu.visible:
-            return
-
-        # 停止 tkinter .lift() 循环 — 由 Win32 SetWindowPos 接管 (无闪烁)
-        self._lift_loop_active = False
-
         try:
-            from PIL import ImageGrab, Image, ImageTk
-            import numpy as _np
+            from PIL import ImageGrab, Image, ImageTk, ImageFilter
         except ImportError:
             return
 
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        qw, qh = sw // 4, sh // 4
 
-        # ── 预计算 numpy 双线性重映射查找表 (仅一次) ──
-        cx_, cy_ = qw / 2.0, qh / 2.0
-        strength = 0.32
-        _yy, _xx = _np.mgrid[0:qh, 0:qw].astype(_np.float32)
-        _nx = (_xx - cx_) / cx_
-        _ny = (_yy - cy_) / cy_
-        _r2 = _nx * _nx + _ny * _ny
-        _f  = 1.0 + strength * _r2
-        _sx  = _np.clip(cx_ + _nx * _f * cx_, 0.0, qw - 1.0001)
-        _sy  = _np.clip(cy_ + _ny * _f * cy_, 0.0, qh - 1.0001)
-        _x0  = _sx.astype(_np.int32);  _x1 = _x0 + 1
-        _y0  = _sy.astype(_np.int32);  _y1 = _y0 + 1
-        _wfx = (_sx - _x0).astype(_np.float32)[..., _np.newaxis]
-        _wfy = (_sy - _y0).astype(_np.float32)[..., _np.newaxis]
+        # 悬浮按钮中心作为模糊焦点
+        try:
+            fx = self._float.winfo_x() + self._fw // 2
+            fy = self._float.winfo_y() + self._fh // 2
+        except Exception:
+            fx, fy = sw // 2, sh // 2
 
-        def _numpy_remap(tiny_img):
-            arr = _np.array(tiny_img, dtype=_np.float32)
-            top = arr[_y0, _x0] * (1 - _wfx) + arr[_y0, _x1] * _wfx
-            bot = arr[_y1, _x0] * (1 - _wfx) + arr[_y1, _x1] * _wfx
-            return Image.fromarray(
-                (top * (1 - _wfy) + bot * _wfy).clip(0, 255).astype(_np.uint8))
+        def _build_and_show():
+            """后台: 截屏 + 径向模糊 → 主线程显示."""
+            # 截屏
+            shot = None
+            try:
+                import mss as _mss_mod
+                _sct = _mss_mod.mss()
+                _mon = {"top": 0, "left": 0, "width": sw, "height": sh}
+                s = _sct.grab(_mon)
+                shot = Image.frombytes('RGB', s.size, s.rgb)
+            except Exception:
+                pass
+            if shot is None:
+                for _g in (
+                    lambda: ImageGrab.grab(bbox=(0, 0, sw, sh), all_screens=True),
+                    lambda: ImageGrab.grab(bbox=(0, 0, sw, sh)),
+                    lambda: ImageGrab.grab(),
+                ):
+                    try:
+                        shot = _g()
+                        break
+                    except Exception:
+                        continue
+            if shot is None:
+                return
 
-        # ── 创建叠加层窗口 ──
+            # 半分辨率处理
+            hw, hh = sw // 2, sh // 2
+            small = shot.resize((hw, hh), Image.BILINEAR)
+            cx, cy = fx / 2.0, fy / 2.0  # 焦点在半分辨率坐标
+
+            # 径向缩放模糊: 多次微缩放叠加
+            import numpy as np
+            acc = np.array(small, dtype=np.float32)
+            n_layers = 6
+            for i in range(1, n_layers + 1):
+                scale = 1.0 + i * 0.012  # 逐层放大
+                nw = int(hw * scale)
+                nh = int(hh * scale)
+                zoomed = small.resize((nw, nh), Image.BILINEAR)
+                # 以焦点为中心裁剪回原尺寸
+                ox = int(cx * scale - cx)
+                oy = int(cy * scale - cy)
+                ox = max(0, min(ox, nw - hw))
+                oy = max(0, min(oy, nh - hh))
+                crop = zoomed.crop((ox, oy, ox + hw, oy + hh))
+                acc += np.array(crop, dtype=np.float32)
+            blurred = Image.fromarray(
+                (acc / (n_layers + 1)).clip(0, 255).astype(np.uint8))
+
+            # 亮度微调: 展开时略亮, 收起时略暗
+            from PIL import ImageEnhance
+            if closing:
+                blurred = ImageEnhance.Brightness(blurred).enhance(0.85)
+            else:
+                blurred = ImageEnhance.Brightness(blurred).enhance(1.12)
+
+            full = blurred.resize((sw, sh), Image.BILINEAR)
+
+            # 投递到主线程显示
+            try:
+                self.root.after(0, lambda img=full: _display(img))
+            except Exception:
+                pass
+
+        def _display(pil_img):
+            """主线程: 显示模糊图 + 300ms ease-out 渐隐."""
+            try:
+                mb_ov = tk.Toplevel(self.root)
+                mb_ov.overrideredirect(True)
+                mb_ov.attributes('-topmost', True)
+                mb_ov.attributes('-alpha', 0.75)
+                mb_ov.geometry(f'{sw}x{sh}+0+0')
+                cv = tk.Canvas(mb_ov, width=sw, height=sh,
+                               highlightthickness=0, bg='black')
+                cv.pack(fill=tk.BOTH, expand=True)
+                photo = ImageTk.PhotoImage(pil_img)
+                cv.create_image(0, 0, image=photo, anchor='nw')
+                cv._photo = photo
+            except Exception:
+                return
+
+            # 300ms ease-out 渐隐
+            _t0 = time.time()
+            _dur = 0.30
+
+            def _mblur_fade():
+                dt = time.time() - _t0
+                if dt >= _dur:
+                    try: mb_ov.destroy()
+                    except Exception: pass
+                    return
+                a = max(0.0, 0.75 * (1.0 - (dt / _dur) ** 0.5))
+                try: mb_ov.attributes('-alpha', a)
+                except Exception: pass
+                try: mb_ov.after(16, _mblur_fade)
+                except Exception: pass
+
+            mb_ov.after(16, _mblur_fade)
+
+        import threading as _th
+        _th.Thread(target=_build_and_show, daemon=True).start()
+
+    # ══════════════════════════════════════════════════════════════
+    #  持久鱼眼叠加层 (菜单开启时常驻, 关闭时销毁)
+    # ══════════════════════════════════════════════════════════════
+    def _start_fisheye_overlay(self):
+        """
+        SAO 菜单开启期间的持久鱼眼叠加层 (实时 60fps 双缓冲).
+
+        架构:
+          • 后台 _worker 线程: 截屏 + GPU/numpy 畸变 + 缩放 → _latest_frame
+          • 主线程 16ms _tick 状态机: 从 _latest_frame 读 → PhotoImage → canvas
+          • 保证 60fps 显示 (alpha 动画 + 内容), 捕获帧率按硬件自适应
+          • _tick: init→fadein→active→fadeout→销毁
+          • 菜单关闭 16ms 内检测 → 同步渐隐, 无需二次点击
+        """
+        self._stop_fisheye_overlay()
+        if not self._sao_menu.visible:
+            return
+        self._lift_loop_active = False
+
+        try:
+            from PIL import ImageGrab, Image, ImageTk
+        except ImportError:
+            return
+
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        hw, hh = sw // 2, sh // 2
+
+        # ── 创建叠加层窗口 (不设 topmost, 自然低于 topmost UI) ──
+        # GPU/numpy 初始化已移至后台 _worker 线程 (消除主线程阻塞)
         try:
             ov = tk.Toplevel(self.root)
             ov.overrideredirect(True)
-            ov.attributes('-topmost', True)
-            ov.attributes('-alpha', 0.0)   # tk 设好 WS_EX_LAYERED; 此后不再调用
+            # 不设 -topmost: overlay 位于所有 topmost 窗口下方
+            ov.attributes('-alpha', 0.0)
             ov.geometry(f'{sw}x{sh}+0+0')
             cv_ov = tk.Canvas(ov, width=sw, height=sh,
                               highlightthickness=0, bg='black')
             cv_ov.pack(fill=tk.BOTH, expand=True)
             ov._cv = cv_ov
+            ov._img_id = None
             self._fisheye_ov = ov
         except Exception:
             return
 
-        # ── Win32 API (64-bit 安全: 所有 HWND 参数/返回值用 c_void_p) ──
+        # ── Win32 API (64-bit safe) ──
         _hwnd_ref = [0]
         try:
             import ctypes as _ct
             _u32 = _ct.windll.user32
-            _vp  = _ct.c_void_p
-            _u32.GetParent.argtypes                = [_vp]
-            _u32.GetParent.restype                 = _vp
-            _u32.GetWindowLongW.argtypes           = [_vp, _ct.c_int]
-            _u32.GetWindowLongW.restype            = _ct.c_long
-            _u32.SetWindowLongW.argtypes           = [_vp, _ct.c_int, _ct.c_long]
-            _u32.SetWindowLongW.restype            = _ct.c_long
+            _vp = _ct.c_void_p
+            _u32.GetParent.argtypes                 = [_vp]
+            _u32.GetParent.restype                  = _vp
+            _u32.GetWindowLongW.argtypes            = [_vp, _ct.c_int]
+            _u32.GetWindowLongW.restype             = _ct.c_long
+            _u32.SetWindowLongW.argtypes            = [_vp, _ct.c_int, _ct.c_long]
+            _u32.SetWindowLongW.restype             = _ct.c_long
             _u32.SetLayeredWindowAttributes.argtypes = [_vp, _ct.c_uint,
                                                         _ct.c_ubyte, _ct.c_uint]
-            _u32.SetLayeredWindowAttributes.restype = _ct.c_int
-            _u32.SetWindowPos.argtypes             = [_vp, _vp,
-                                                      _ct.c_int, _ct.c_int,
-                                                      _ct.c_int, _ct.c_int,
-                                                      _ct.c_uint]
-            _u32.SetWindowPos.restype              = _ct.c_int
+            _u32.SetLayeredWindowAttributes.restype  = _ct.c_int
+            # SetWindowDisplayAffinity (Win10 2004+): 排除屏幕捕获
+            _u32.SetWindowDisplayAffinity.argtypes  = [_vp, _ct.c_uint]
+            _u32.SetWindowDisplayAffinity.restype   = _ct.c_int
         except Exception:
             _u32 = None
 
         _GWL_EXSTYLE       = -20
         _WS_EX_TRANSPARENT = 0x00000020
         _LWA_ALPHA         = 0x00000002
-        _HWND_TOP          = 0       # 绝对 z-order 最顶层 (含 topmost 层内)
-        _SWP_FLAGS         = 0x0001 | 0x0002 | 0x0008 | 0x0010  # NOSIZE|NOMOVE|NOREDRAW|NOACTIVATE
+        _WDA_EXCLUDEFROMCAPTURE = 0x00000011
 
-        def _set_alpha(byte_val):
+        def _set_alpha(bv):
             if _hwnd_ref[0] and _u32:
                 try:
                     _u32.SetLayeredWindowAttributes(
-                        _hwnd_ref[0], 0, byte_val, _LWA_ALPHA)
+                        _hwnd_ref[0], 0, bv, _LWA_ALPHA)
                 except Exception:
                     pass
-
-        def _set_top():
-            """SetWindowPos(HWND_TOP) — 强制到 z-order 最顶, 含 topmost 层."""
-            if _hwnd_ref[0] and _u32:
-                try:
-                    _u32.SetWindowPos(
-                        _hwnd_ref[0], _HWND_TOP, 0, 0, 0, 0, _SWP_FLAGS)
-                except Exception:
-                    pass
-
-        _float_hwnd_ref = [0]   # 悬浮按钮 HWND (z-order 管理用)
 
         def _init_layered():
-            """获取真实 HWND, 追加 WS_EX_TRANSPARENT, alpha 保持 0."""
             if not _u32:
                 return
             try:
@@ -1941,142 +2056,224 @@ class SAOPlayerGUI:
                 _u32.SetWindowLongW(hwnd, _GWL_EXSTYLE,
                                     cur | _WS_EX_TRANSPARENT)
                 _u32.SetLayeredWindowAttributes(hwnd, 0, 0, _LWA_ALPHA)
-            except Exception:
-                pass
-            # 获取悬浮按钮 HWND (用于同步 z-order, 替代 tkinter .lift())
-            try:
-                self._float.update_idletasks()
-                fh = _u32.GetParent(self._float.winfo_id()) or self._float.winfo_id()
-                _float_hwnd_ref[0] = fh
-            except Exception:
-                pass
-
-        # ── 渐显动画: 0→71 (≈28%), ~600ms ──
-        # 不在此处启动; 由 _apply 在首帧到达后触发
-        _ALPHA_TARGET  = 71
-        _alpha_cur     = [0.0]
-        _alpha_step    = _ALPHA_TARGET / 38   # 38帧 × 16ms ≈ 600ms
-        _fadein_started = [False]
-
-        def _fadein_tick():
-            if self._fisheye_ov is None:
-                return
-            _alpha_cur[0] = min(_ALPHA_TARGET, _alpha_cur[0] + _alpha_step)
-            _set_alpha(int(_alpha_cur[0]))
-            if _alpha_cur[0] < _ALPHA_TARGET:
+                # WDA_EXCLUDEFROMCAPTURE: 叠加层对 ImageGrab 不可见
                 try:
-                    ov.after(16, _fadein_tick)
+                    _u32.SetWindowDisplayAffinity(hwnd, _WDA_EXCLUDEFROMCAPTURE)
                 except Exception:
                     pass
+            except Exception:
+                pass
 
-        ov.after(60, _init_layered)
-
-        # ── Z-order ticker: 每 100ms 强制置顶 ──
+        # ── 60fps 双缓冲状态机 ──
+        _ALPHA_MAX = 255
+        _alpha_cur = [0.0]
+        _FADEIN_STEP = _ALPHA_MAX / 38.0     # 38 × 16ms ≈ 600ms 渐显
+        _FADEOUT_STEP = _ALPHA_MAX / 25.0    # 25 × 16ms ≈ 400ms 渐隐
         _running = [True]
+        _latest_frame = [None]   # 后台线程写, 主线程读 (GIL 原子)
+        _state = ['init']        # init → fadein → active → fadeout → 销毁
+        _last_shown = [None]     # 去重: 同帧不重建 PhotoImage
 
-        def _zorder_tick():
-            if not _running[0] or self._fisheye_ov is None:
+        def _show(frame):
+            """仅在新帧到达时创建 PhotoImage (跳过重复帧)."""
+            if frame is None or frame is _last_shown[0]:
                 return
-            # 右键菜单弹出时跳过 (避免遮盖菜单)
-            if not self._ctx_menu_open:
-                _set_top()
-                # 悬浮按钮也置顶 (overlay 之上), Win32 无闪烁
-                if _float_hwnd_ref[0] and _u32:
-                    try:
-                        _u32.SetWindowPos(
-                            _float_hwnd_ref[0], _HWND_TOP,
-                            0, 0, 0, 0, _SWP_FLAGS)
-                    except Exception:
-                        pass
+            _last_shown[0] = frame
             try:
-                ov.after(100, _zorder_tick)
-            except Exception:
-                pass
-
-        ov.after(120, _zorder_tick)
-
-        # ── 截图 + 畸变循环 (50ms, 后台线程) ──
-        def _do_capture():
-            if not _running[0]:
-                return
-            shot = None
-            for _grab in (
-                lambda: ImageGrab.grab(bbox=(0, 0, sw, sh), all_screens=True),
-                lambda: ImageGrab.grab(bbox=(0, 0, sw, sh)),
-                lambda: ImageGrab.grab(),
-            ):
-                try:
-                    shot = _grab()
-                    break
-                except Exception:
-                    continue
-            if shot is None:
-                if _running[0]:
-                    try:
-                        ov.after(800, lambda: _running[0] and
-                                 __import__('threading').Thread(
-                                     target=_do_capture, daemon=True).start())
-                    except Exception:
-                        pass
-                return
-            try:
-                tiny = shot.resize((qw, qh), Image.BILINEAR)
-                dist = _numpy_remap(tiny)
-                full = dist.resize((sw, sh), Image.BILINEAR)
-            except Exception:
-                return
-            if _running[0]:
-                try:
-                    ov.after(0, lambda img=full: _apply(img))
-                except Exception:
-                    pass
-
-        ov._img_id = None   # canvas 图元 ID, 首帧时创建后复用 (避免 delete+create)
-
-        def _apply(full_img):
-            if not _running[0]:
-                return
-            try:
-                photo = ImageTk.PhotoImage(full_img)
+                photo = ImageTk.PhotoImage(frame)
                 if ov._img_id is None:
-                    ov._img_id = cv_ov.create_image(0, 0, image=photo, anchor='nw')
+                    ov._img_id = cv_ov.create_image(
+                        0, 0, image=photo, anchor='nw')
                 else:
                     cv_ov.itemconfig(ov._img_id, image=photo)
-                cv_ov._photo = photo   # 防止 GC
+                cv_ov._photo = photo
             except Exception:
                 pass
-            # 首帧到达后再启动渐显 (避免黑色 canvas → 畸变图闪现)
-            if not _fadein_started[0]:
-                _fadein_started[0] = True
-                try:
-                    ov.after(0, _fadein_tick)
-                except Exception:
-                    pass
-            if _running[0] and self._fisheye_ov is not None:
-                try:
-                    ov.after(50, _schedule_next)
-                except Exception:
-                    pass
 
-        def _schedule_next():
-            if not _running[0] or self._fisheye_ov is None:
+        def _tick():
+            """主线程 60fps 状态机: fadein / display / fadeout 全在此."""
+            if self._fisheye_ov is None:
                 return
-            if not self._sao_menu.visible:
-                _running[0] = False
-                self._stop_fisheye_overlay()
-                return
-            import threading as _t
-            _t.Thread(target=_do_capture, daemon=True).start()
+            s = _state[0]
+            if s == 'init':
+                f = _latest_frame[0]
+                if f is not None:
+                    _show(f)
+                    _state[0] = 'fadein'
+            elif s == 'fadein':
+                if not self._sao_menu.visible:
+                    _state[0] = 'fadeout'
+                    _running[0] = False
+                else:
+                    _alpha_cur[0] = min(_ALPHA_MAX,
+                                        _alpha_cur[0] + _FADEIN_STEP)
+                    _set_alpha(int(_alpha_cur[0]))
+                    _show(_latest_frame[0])
+                    if _alpha_cur[0] >= _ALPHA_MAX:
+                        _state[0] = 'active'
+            elif s == 'active':
+                if not self._sao_menu.visible:
+                    _state[0] = 'fadeout'
+                    _running[0] = False
+                else:
+                    _show(_latest_frame[0])
+            elif s == 'fadeout':
+                _alpha_cur[0] = max(0, _alpha_cur[0] - _FADEOUT_STEP)
+                _set_alpha(int(_alpha_cur[0]))
+                if _alpha_cur[0] <= 0:
+                    self._stop_fisheye_overlay()
+                    return
+            try: ov.after(16, _tick)
+            except Exception: pass
+
+        ov.after(30, _init_layered)
+        ov.after(50, _tick)
+
+        # ── 后台 worker: 截屏 + 畸变 + 缩放 → _latest_frame ──
+        def _worker():
+            """后台线程: 全部重活在此, 主线程仅 PhotoImage."""
+            import time as _time
+
+            # ── 优先 mss 快速截屏 (DXGI, ~5ms), fallback ImageGrab (~30ms) ──
+            _cap_fn = None
+            try:
+                import mss as _mss_mod
+                _sct = _mss_mod.mss()
+                _mon = {"top": 0, "left": 0, "width": sw, "height": sh}
+                def _cap_mss():
+                    s = _sct.grab(_mon)
+                    return Image.frombytes('RGB', s.size, s.rgb)
+                _cap_fn = _cap_mss
+            except Exception:
+                pass
+            if _cap_fn is None:
+                def _cap_ig():
+                    for _g in (
+                        lambda: ImageGrab.grab(bbox=(0, 0, sw, sh),
+                                               all_screens=True),
+                        lambda: ImageGrab.grab(bbox=(0, 0, sw, sh)),
+                        lambda: ImageGrab.grab(),
+                    ):
+                        try: return _g()
+                        except Exception: continue
+                    return None
+                _cap_fn = _cap_ig
+
+            # ── GPU 初始化 (GL 上下文在本线程创建 & 使用, 线程安全) ──
+            _gl_ok = False
+            _ctx = _prog = _vbo = _vao = _tex = _fbo = None
+            try:
+                import moderngl
+                _ctx = moderngl.create_standalone_context()
+                _prog = _ctx.program(
+                    vertex_shader='''
+                        #version 330
+                        in vec2 in_pos;
+                        out vec2 uv;
+                        void main() {
+                            gl_Position = vec4(in_pos, 0.0, 1.0);
+                            uv = in_pos * 0.5 + 0.5;
+                        }
+                    ''',
+                    fragment_shader='''
+                        #version 330
+                        uniform sampler2D tex;
+                        uniform float strength;
+                        in vec2 uv;
+                        out vec4 fragColor;
+                        void main() {
+                            vec2 c = uv - 0.5;
+                            float r2 = dot(c, c);
+                            vec2 d = uv + c * strength * r2;
+                            fragColor = texture(tex, d);
+                        }
+                    '''
+                )
+                import numpy as _np
+                _verts = _np.array([-1, -1, 3, -1, -1, 3], dtype='f4')
+                _vbo = _ctx.buffer(_verts)
+                _vao = _ctx.simple_vertex_array(_prog, _vbo, 'in_pos')
+                _tex = _ctx.texture((hw, hh), 3)
+                _tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+                _fbo = _ctx.framebuffer(
+                    color_attachments=[_ctx.texture((hw, hh), 3)])
+                _prog['strength'].value = 0.55
+                _prog['tex'].value = 0
+                _gl_ok = True
+            except Exception:
+                _ctx = None
+
+            # ── numpy 后备 ──
+            qw, qh = (hw, hh) if _gl_ok else (sw // 4, sh // 4)
+            _np_maps = None
+            if not _gl_ok:
+                try:
+                    import numpy as _np
+                except ImportError:
+                    return
+                cx_, cy_ = qw / 2.0, qh / 2.0
+                _yy, _xx = _np.mgrid[0:qh, 0:qw].astype(_np.float32)
+                _nx = (_xx - cx_) / cx_;  _ny = (_yy - cy_) / cy_
+                _r2 = _nx * _nx + _ny * _ny; _f = 1.0 + 0.55 * _r2
+                _sx = _np.clip(cx_ + _nx * _f * cx_, 0.0, qw - 1.0001)
+                _sy = _np.clip(cy_ + _ny * _f * cy_, 0.0, qh - 1.0001)
+                _x0 = _sx.astype(_np.int32); _x1 = _x0 + 1
+                _y0 = _sy.astype(_np.int32); _y1 = _y0 + 1
+                _wfx = (_sx - _x0).astype(_np.float32)[..., _np.newaxis]
+                _wfy = (_sy - _y0).astype(_np.float32)[..., _np.newaxis]
+                _np_maps = (_x0, _x1, _y0, _y1, _wfx, _wfy)
+
+            # ── 主循环: 持续产出帧 → _latest_frame ──
+            while _running[0]:
+                shot = _cap_fn()
+                if shot is None or not _running[0]:
+                    _time.sleep(0.05)
+                    continue
+                try:
+                    if _gl_ok:
+                        small = shot.resize((hw, hh), Image.BILINEAR)
+                        _tex.write(small.tobytes())
+                        _fbo.use()
+                        _ctx.clear()
+                        _tex.use(0)
+                        _vao.render(moderngl.TRIANGLES)
+                        raw = _fbo.color_attachments[0].read()
+                        dist = Image.frombytes('RGB', (hw, hh), raw)
+                    else:
+                        tiny = shot.resize((qw, qh), Image.BILINEAR)
+                        _x0, _x1, _y0, _y1, _wfx, _wfy = _np_maps
+                        a = _np.array(tiny, dtype=_np.float32)
+                        t = a[_y0, _x0] * (1 - _wfx) + a[_y0, _x1] * _wfx
+                        b = a[_y1, _x0] * (1 - _wfx) + a[_y1, _x1] * _wfx
+                        dist = Image.fromarray(
+                            (t * (1 - _wfy) + b * _wfy)
+                            .clip(0, 255).astype(_np.uint8))
+                except Exception:
+                    _time.sleep(0.02)
+                    continue
+                if not _running[0]:
+                    break
+                full = dist.resize((sw, sh), Image.NEAREST)
+                _latest_frame[0] = full
+                _time.sleep(0.001)   # yield, 不限速 — 全速产出
+
+            # ── 线程退出, 释放 GPU ──
+            if _ctx:
+                try: _ctx.release()
+                except Exception: pass
 
         import threading as _th
-        _th.Thread(target=_do_capture, daemon=True).start()
-
+        _th.Thread(target=_worker, daemon=True).start()
+        ov._running_ref = _running
 
     def _stop_fisheye_overlay(self):
-        """销毁持久鱼眼叠加层."""
+        """销毁持久鱼眼叠加层 (GPU 由后台线程自行释放)."""
         ov = self._fisheye_ov
         self._fisheye_ov = None
         if ov is not None:
+            running = getattr(ov, '_running_ref', None)
+            if running:
+                running[0] = False
             try:
                 ov.destroy()
             except Exception:
@@ -2625,13 +2822,14 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.1.0+3100\n\n"
+            "咲 Midi Player  SAO Edition\nv3.1.1+3101\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
     def _on_close(self):
         if hasattr(self, '_hotkey_mgr'):
             self._hotkey_mgr.cleanup()
+        self._stop_fisheye_overlay()
         try:
             self._sao_menu.unbind_events()
             if self._sao_menu.visible:
