@@ -31,6 +31,13 @@ body {
    HP Component — exact copy from SAO-UI
    packages/HP/src/index.vue
    ═══════════════════════════════════════ */
+/* ═══ Entry Animation ═══ */
+@keyframes hp-slide-in {
+    0%   { opacity: 0; transform: translateX(-60px); }
+    60%  { opacity: 1; transform: translateX(6px); }
+    100% { opacity: 1; transform: translateX(0); }
+}
+
 .XTBox {
     --bgColor: rgba(205, 221, 248, 0.5);
     --fontcolor: #e1dede;
@@ -45,6 +52,7 @@ body {
     color: #e1dede;
     font-size: 12px;
     cursor: grab;
+    animation: hp-slide-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .xt_left, .xt_right, .number_xt { height: 100%; }

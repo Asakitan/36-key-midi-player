@@ -864,9 +864,15 @@ function closeMenu() {
     }, 400);
 }
 
-/* Click backdrop to close */
+/* Click backdrop to close — route through Python so window hides properly */
 overlay.addEventListener('click', function(e) {
-    if (e.target === overlay) closeMenu();
+    if (e.target === overlay) {
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.toggle_menu();
+        } else {
+            closeMenu();
+        }
+    }
 });
 
 /* ═══ Circle activation ═══ */
@@ -1023,7 +1029,11 @@ document.addEventListener('keydown', function(e) {
         if (document.getElementById('alert-dialog').classList.contains('show')) {
             closeAlert();
         } else if (menuOpen) {
-            closeMenu();
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.toggle_menu();
+            } else {
+                closeMenu();
+            }
         }
     }
 });

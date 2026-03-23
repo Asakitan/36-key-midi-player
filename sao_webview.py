@@ -432,6 +432,26 @@ class SAOWebViewGUI:
 
     # ─── 透明设置 (pywebview transparent=True 自动处理) ───
 
+    # ─── WebView2 透明背景 ───
+    def _apply_webview2_transparency(self):
+        """Win32: 为 HP 窗口设置 LWA_COLORKEY 透明 + .NET WebView2 透明背景,
+        消除白色底色."""
+        # 方案 1: .NET (pythonnet) — 最可靠
+        try:
+            hwnd = ctypes.windll.user32.FindWindowW(None, '♪ SAO HP')
+            if hwnd:
+                _make_transparent_ctypes(hwnd)
+        except Exception:
+            pass
+        # 方案 2: 通过 pywebview 内部 Form 设置 WebView2 DefaultBackgroundColor
+        try:
+            gui = getattr(self.hp_win, 'gui', None)
+            form = getattr(gui, 'BrowserForm', None) if gui else None
+            if form:
+                _setup_dotnet_transparency(form)
+        except Exception:
+            pass
+
     # ─── 点击穿透 ───
     def _setup_click_through(self):
         """限制 HP 窗口可交互区域 — 只保留 HP 条, 透明区域鼠标穿透."""
@@ -507,6 +527,8 @@ class SAOWebViewGUI:
             # 设置 click-through (延迟确保窗口已完全创建)
             time.sleep(0.3)
             self._setup_click_through()
+            # WebView2 透明背景 (防止白底)
+            self._apply_webview2_transparency()
         threading.Timer(0.5, _init).start()
 
         # 后台线程
@@ -516,31 +538,78 @@ class SAOWebViewGUI:
         # 全局快捷键
         self._setup_hotkeys()
 
+    # F键虚拟键码表 (Windows VK codes)
+    _FKEY_VK = {
+        'F1': 112, 'F2': 113, 'F3': 114, 'F4': 115,
+        'F5': 116, 'F6': 117, 'F7': 118, 'F8': 119,
+        'F9': 120, 'F10': 121, 'F11': 122, 'F12': 123,
+    }
+
     def _setup_hotkeys(self):
-        """注册全局快捷键 (keyboard 模块)."""
+        """注册全局快捷键 — 与普通模式/SAO Entity 保持一致 (pynput + settings.json)."""
+        # 动作映射
+        self._hk_actions = {
+            'play_pause': self._toggle_play,
+            'stop': self._stop,
+            'speed_up': self._speed_up,
+            'speed_down': self._speed_down,
+            'toggle_topmost': lambda: None,  # webview 模式无置顶切换
+            'hide_panels': lambda: None,     # webview 模式无面板隐藏
+        }
+        self._hk_pressed = set()
+        self._hk_listener = None
         try:
-            import keyboard as kb
-            kb.add_hotkey('ctrl+shift+space', lambda: threading.Thread(
-                target=self._toggle_play, daemon=True).start(), suppress=False)
-            kb.add_hotkey('ctrl+shift+right', lambda: threading.Thread(
-                target=self._speed_up, daemon=True).start(), suppress=False)
-            kb.add_hotkey('ctrl+shift+left', lambda: threading.Thread(
-                target=self._speed_down, daemon=True).start(), suppress=False)
-            kb.add_hotkey('ctrl+shift+o', lambda: threading.Thread(
-                target=self._open_file, daemon=True).start(), suppress=False)
-            kb.add_hotkey('ctrl+shift+s', lambda: threading.Thread(
-                target=self._stop, daemon=True).start(), suppress=False)
-            kb.add_hotkey('ctrl+shift+m', lambda: threading.Thread(
-                target=self._toggle_menu, daemon=True).start(), suppress=False)
-            kb.add_hotkey('ctrl+shift+up', lambda: threading.Thread(
-                target=self._transpose_up, daemon=True).start(), suppress=False)
-            kb.add_hotkey('ctrl+shift+down', lambda: threading.Thread(
-                target=self._transpose_down, daemon=True).start(), suppress=False)
+            from pynput.keyboard import Listener as KbListener, Key, KeyCode
+            self._hk_Key = Key
+            self._hk_KeyCode = KeyCode
+            self._hk_listener = KbListener(
+                on_press=self._hk_on_press, on_release=self._hk_on_release)
+            self._hk_listener.daemon = True
+            self._hk_listener.start()
+            saved = self.settings.get('hotkeys', {})
+            from config import DEFAULT_HOTKEYS
+            merged = {**DEFAULT_HOTKEYS, **saved}
+            keys_desc = ', '.join(f'{a}={k}' for a, k in merged.items())
             self._hotkeys_ok = True
-            print('[SAO WebView] Hotkeys registered: Ctrl+Shift+Space/O/S/M/←/→/↑/↓')
+            print(f'[SAO WebView] Hotkeys (pynput): {keys_desc}')
         except Exception as e:
             self._hotkeys_ok = False
             print(f'[SAO WebView] Hotkeys unavailable: {e}')
+
+    def _hk_on_press(self, key):
+        try:
+            if isinstance(key, self._hk_KeyCode) and key.vk:
+                self._hk_pressed.add(key.vk)
+            elif isinstance(key, self._hk_Key):
+                self._hk_pressed.add(key.value.vk if hasattr(key.value, 'vk') else str(key))
+        except Exception:
+            pass
+        self._hk_check()
+
+    def _hk_on_release(self, key):
+        try:
+            if isinstance(key, self._hk_KeyCode) and key.vk:
+                self._hk_pressed.discard(key.vk)
+            elif isinstance(key, self._hk_Key):
+                self._hk_pressed.discard(key.value.vk if hasattr(key.value, 'vk') else str(key))
+        except Exception:
+            pass
+
+    def _hk_check(self):
+        from config import DEFAULT_HOTKEYS
+        saved = self.settings.get('hotkeys', DEFAULT_HOTKEYS)
+        for action, info in saved.items():
+            vk = None
+            if isinstance(info, dict):
+                vk = info.get('vk')
+            elif isinstance(info, str) and info:
+                vk = self._FKEY_VK.get(info.upper())
+            if vk and vk in self._hk_pressed:
+                cb = self._hk_actions.get(action)
+                if cb:
+                    threading.Thread(target=cb, daemon=True).start()
+                    self._hk_pressed.clear()
+                    return
 
     # ════════════════════════════════════════
     #  JS 辅助
@@ -658,7 +727,7 @@ class SAOWebViewGUI:
             self._ensure_hp_on_top()
         threading.Thread(target=_hide, daemon=True).start()
 
-    def _capture_current_monitor_b64(self, quality=35):
+    def _capture_current_monitor_b64(self, quality=55):
         """截取 HP 窗口所在显示器 → JPEG base64 (低分辨率快速截图,
         distortion 由浏览器端 WebGL shader 实时 60fps 渲染)."""
         try:
@@ -683,11 +752,11 @@ class SAOWebViewGUI:
                 from PIL import ImageGrab
                 img = ImageGrab.grab()
 
-            # 缩到 480p 以加快 encode+传输 (WebGL 拉伸不影响鱼眼效果)
+            # 缩到 540p 以保持鱼眼清晰度 (WebGL 拉伸至全屏)
             w, h = img.size
-            scale = min(640 / w, 360 / h, 1.0)
+            scale = min(960 / w, 540 / h, 1.0)
             if scale < 1.0:
-                img = img.resize((int(w * scale), int(h * scale)), Image.BILINEAR)
+                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
             buf = io.BytesIO()
             img.save(buf, format='JPEG', quality=quality)
