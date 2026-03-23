@@ -732,9 +732,8 @@ class SAOWebViewGUI:
         self._play_sound('menu_close')
         self._eval_menu('SAO.closeMenu()')
 
-        # 等 TV 动画播完 (~550ms) 再淡出隐藏窗口, 否则立刻 alpha=0 会遮住动画
-        def _hide():
-            time.sleep(0.52)  # TV动画时长 0.55s, 稍早一点开始淡出
+        # 与 TV 动画同步: 先等白闪结束 (150ms), 再渐隐窗口 (~400ms) 让背景浮现
+        def _fade_and_hide():
             try:
                 hwnd = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
                 GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000; LWA_ALPHA = 2
@@ -742,10 +741,13 @@ class SAOWebViewGUI:
                     _ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
                     if not (_ex & WS_EX_LAYERED):
                         ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, _ex | WS_EX_LAYERED)
-                    # 快速淡出 (3帧)
-                    for a in [120, 30, 0]:
-                        ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, a, LWA_ALPHA)
-                        time.sleep(0.03)
+                    time.sleep(0.15)  # 等白闪 + 初始压缩完成
+                    steps = 18        # ~400ms, 每步 ~22ms
+                    for i in range(steps):
+                        alpha = int(255 * (1 - (i + 1) / steps))
+                        ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA)
+                        time.sleep(0.022)
+                    ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA)
             except Exception:
                 pass
             time.sleep(0.05)
@@ -767,7 +769,7 @@ class SAOWebViewGUI:
                 pass
             # 恢复 HP 窗口焦点 & 置顶
             self._ensure_hp_on_top()
-        threading.Thread(target=_hide, daemon=True).start()
+        threading.Thread(target=_fade_and_hide, daemon=True).start()
 
     def _capture_current_monitor_b64(self, quality=100):
         """截取 HP 窗口所在显示器 → JPEG base64 (低分辨率快速截图,
