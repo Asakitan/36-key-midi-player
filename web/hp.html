@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>HP</title>
+<style>
+/* ═══ Reset ═══ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ═══ SAO Fonts ═══ */
+@font-face { font-family: 'sao'; src: url('../assets/fonts/SAOUI.ttf'); }
+@font-face { font-family: 'yuanJWD'; src: url('../assets/fonts/ZhuZiAYuanJWD.ttf'); }
+
+/* ═══ Body — color-keyed transparent background ═══
+   RGB(1,0,1) is our Win32 LWA_COLORKEY color.
+   All pixels with this EXACT color become transparent + click-through. */
+html, body {
+    background: rgb(1, 0, 1);
+    user-select: none;
+    -webkit-user-select: none;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+}
+
+body {
+    padding: 8px 10px 0 10px;
+}
+
+/* ═══════════════════════════════════════
+   HP Component — exact copy from SAO-UI
+   packages/HP/src/index.vue
+   ═══════════════════════════════════════ */
+.XTBox {
+    --bgColor: rgba(205, 221, 248, 0.5);
+    --fontcolor: #e1dede;
+    --hover: rgba(229, 231, 236, 0.6);
+    position: relative;
+    width: 400px;
+    height: 40px;
+    display: flex;
+    filter: drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5));
+    font-family: 'sao', 'yuanJWD', sans-serif;
+    letter-spacing: 1px;
+    color: #e1dede;
+    font-size: 12px;
+    cursor: pointer;
+    -webkit-app-region: drag;
+}
+
+.xt_left, .xt_right, .number_xt { height: 100%; }
+
+.xt_left {
+    width: 22px;
+    clip-path: polygon(0% 25%, 50% 25%, 50% 75%, 0% 75%, 0% 100%, 100% 100%, 100% 0%, 0% 0%);
+    margin-right: 3px;
+    background: var(--bgColor);
+    transition: background 0.15s ease;
+}
+
+.xt_right {
+    flex: 1;
+    clip-path: polygon(75px 22%, 100% 22%, 100% 0%, 0% 0%, 0 100%, 210px 100%, 210px 80%, 100% 80%, 100% 60%, 200px 60%, 195px 77%, 75px 77%);
+    background: linear-gradient(to right, var(--bgColor) 50%, rgba(220, 212, 212, 0));
+    display: flex;
+    align-items: center;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+
+.xt_right > span {
+    min-width: 70px;
+    max-width: 72px;
+    text-align: center;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    padding-left: 10px;
+}
+
+.number_xt {
+    position: absolute;
+    top: 90%;
+    left: 60%;
+    width: 150px;
+    height: 20px;
+    display: flex;
+}
+
+.number_xt > div {
+    background: var(--bgColor);
+    box-shadow: -4px 3px 27px 3px rgba(0, 0, 0, 0.1);
+    padding-right: 5px;
+    text-align: right;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+
+.number_xt div:nth-child(1) { width: 69%; margin-right: 3px; }
+.number_xt div:nth-child(2) { width: 30%; }
+
+/* ═══ Hover ═══ */
+.XTBox:hover .xt_left,
+.XTBox:hover .number_xt div {
+    background: var(--hover);
+}
+.XTBox:hover .xt_right {
+    background: linear-gradient(to right, var(--hover) 50%, rgba(220, 212, 212, 0));
+}
+.XTBox:hover .xt_border { opacity: .8; }
+
+/* ═══ SVG border ═══ */
+.svg_border {
+    position: absolute;
+    left: 100px;
+    top: 8px;
+}
+
+/* ═══ HP bar border + fill ═══ */
+.xt_border {
+    position: absolute;
+    left: 100px;
+    top: 8px;
+    width: 260px;
+    height: 23px;
+    clip-path: polygon(120px 100%, 124px 16px, 98% 16px, 100% 0%, 0% 0%, 0% 100%);
+    display: flex;
+    opacity: .6;
+    transition: opacity 0.15s ease;
+}
+
+.xt_border_left {
+    width: 1.5px;
+    height: 100%;
+    background: rgb(218, 215, 215);
+}
+
+.xt_border_right {
+    flex: 1;
+    height: 100%;
+}
+
+.tb_line {
+    width: 100%;
+    height: 1px;
+    background: rgb(218, 215, 215);
+}
+
+.xt_in {
+    height: 21px;
+    width: 100%;
+    transition: width 0.3s ease, background 0.3s ease;
+}
+
+.xt_in_green {
+    background: linear-gradient(to right, rgb(211, 234, 124), rgb(154, 211, 52));
+}
+.xt_in_yellow {
+    background: linear-gradient(to right, rgb(235, 238, 112), rgb(244, 250, 73));
+}
+.xt_in_red {
+    background: linear-gradient(to right, rgb(248, 140, 122), rgb(239, 104, 78));
+}
+
+/* ═══ Playing status indicator ═══ */
+@keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1.0; }
+}
+.XTBox.playing .xt_left {
+    background: rgba(154, 211, 52, 0.6);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+.XTBox.paused .xt_left {
+    background: rgba(244, 250, 73, 0.6);
+}
+
+/* ═══ Context Menu — compact 5 items ═══ */
+.context-menu {
+    display: none;
+    position: fixed;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    border-radius: 4px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    font-family: 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
+    font-size: 12px;
+    color: #333;
+    z-index: 1000;
+    min-width: 140px;
+    padding: 3px 0;
+    -webkit-app-region: no-drag;
+}
+.context-menu.show { display: block; }
+.context-menu .cm-item {
+    padding: 4px 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+.context-menu .cm-item:hover {
+    background: rgba(243, 175, 18, 0.8);
+    color: #fff;
+}
+.context-menu .cm-sep {
+    height: 1px;
+    background: #e0e0e0;
+    margin: 2px 6px;
+}
+</style>
+</head>
+<body>
+
+<!-- HP Component -->
+<div class="XTBox" id="hp">
+    <div class="xt_left"></div>
+    <div class="xt_right"><span id="username">Player</span></div>
+    <div class="number_xt">
+        <div id="hp-value">0/0</div>
+        <div id="hp-level">lv.1</div>
+    </div>
+    <div class="xt_border">
+        <div class="xt_border_left"></div>
+        <div class="xt_border_right">
+            <div class="tb_line"></div>
+            <div class="xt_in xt_in_green" id="hp-fill" style="width:100%"></div>
+            <div class="tb_line"></div>
+        </div>
+    </div>
+    <svg height="23px" width="260px" class="svg_border">
+        <polygon points="0,0 260,0 255,16 124,16 120,23 0,23"
+                 style="fill:none;stroke:rgb(218,215,215);stroke-width:1;"/>
+    </svg>
+</div>
+
+<!-- Context Menu -->
+<div class="context-menu" id="ctx-menu">
+    <div class="cm-item" data-action="menu">◆ SAO 菜单</div>
+    <div class="cm-sep"></div>
+    <div class="cm-item" data-action="play">▶ 播放/暂停</div>
+    <div class="cm-item" data-action="stop">■ 停止</div>
+    <div class="cm-item" data-action="open">▸ 打开文件</div>
+    <div class="cm-item" data-action="folder">▸ 文件夹循环</div>
+    <div class="cm-sep"></div>
+    <div class="cm-item" data-action="speedup">▲ 加速</div>
+    <div class="cm-item" data-action="speeddown">▼ 减速</div>
+    <div class="cm-sep"></div>
+    <div class="cm-item" data-action="switch_sao">◆ SAO Entity UI</div>
+    <div class="cm-item" data-action="switch_old">↺ Old School UI</div>
+    <div class="cm-sep"></div>
+    <div class="cm-item" data-action="exit">✕ 退出</div>
+</div>
+
+<script>
+/* ═══ HP Bar API ═══ */
+function updateHP(current, total, level) {
+    var el = document.getElementById('hp-value');
+    el.textContent = Math.floor(current) + '/' + Math.floor(total);
+    document.getElementById('hp-level').textContent = 'lv.' + level;
+
+    var pct = total > 0 ? Math.round(current / total * 100) : 100;
+    var fill = document.getElementById('hp-fill');
+    fill.style.width = pct + '%';
+    fill.classList.remove('xt_in_green', 'xt_in_yellow', 'xt_in_red');
+    if (pct < 25) fill.classList.add('xt_in_red');
+    else if (pct < 60) fill.classList.add('xt_in_yellow');
+    else fill.classList.add('xt_in_green');
+}
+
+function setUsername(name) {
+    document.getElementById('username').textContent = name;
+}
+
+function setPlayState(state) {
+    var hp = document.getElementById('hp');
+    hp.classList.remove('playing', 'paused');
+    if (state === 'playing') hp.classList.add('playing');
+    else if (state === 'paused') hp.classList.add('paused');
+}
+
+/* ═══ Sound via Python bridge ═══ */
+function snd(name) {
+    try {
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.play_sound(name);
+        }
+    } catch(e) {}
+}
+
+/* ═══ Click → toggle menu ═══ */
+document.getElementById('hp').addEventListener('click', function(e) {
+    if (e.button !== 0) return;
+    var ctx = document.getElementById('ctx-menu');
+    if (ctx.classList.contains('show')) return;
+    snd('click');
+    if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.toggle_menu();
+    }
+});
+
+/* ═══ Right-click → context menu ═══ */
+var ctxMenu = document.getElementById('ctx-menu');
+
+document.getElementById('hp').addEventListener('contextmenu', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    snd('click');
+    /* Position: show above the click point if near bottom */
+    var menuH = 230;
+    var x = Math.max(0, Math.min(e.clientX, window.innerWidth - 150));
+    var y = e.clientY;
+    if (y + menuH > window.innerHeight) {
+        y = Math.max(0, y - menuH);
+    }
+    ctxMenu.style.left = x + 'px';
+    ctxMenu.style.top  = y + 'px';
+    ctxMenu.classList.add('show');
+});
+
+document.addEventListener('click', function(e) {
+    if (!ctxMenu.contains(e.target)) {
+        ctxMenu.classList.remove('show');
+    }
+});
+
+ctxMenu.querySelectorAll('.cm-item').forEach(function(item) {
+    item.addEventListener('click', function() {
+        ctxMenu.classList.remove('show');
+        snd('click');
+        var action = this.getAttribute('data-action');
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.context_action(action);
+        }
+    });
+});
+</script>
+</body>
+</html>

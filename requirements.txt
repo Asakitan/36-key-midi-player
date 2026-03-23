@@ -21,3 +21,6 @@ numpy>=1.20
 
 # Pygame 回退方案 (使用系统MIDI合成器)
 # pip install pygame
+
+# === SAO-UI WebView 渲染 (推荐, 像素级还原 SAO-UI CSS) ===
+pywebview>=4.0

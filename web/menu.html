@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAO Menu</title>
+<style>
+/* ═══ Reset ═══ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ═══ SAO Fonts ═══ */
+@font-face { font-family: 'sao'; src: url('../assets/fonts/SAOUI.ttf'); }
+@font-face { font-family: 'yuanJWD'; src: url('../assets/fonts/ZhuZiAYuanJWD.ttf'); }
+
+/* ═══════════════════════════════════════
+   PopUpMenu — fullscreen overlay
+   ═══════════════════════════════════════ */
+html, body {
+    width: 100vw;
+    height: 100vh;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: 'sao', 'yuanJWD', sans-serif;
+    letter-spacing: 1px;
+    color: #555;
+}
+
+.info {
+    position: fixed;
+    z-index: 400;
+    left: 0; top: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(3px);
+    perspective: 600px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+}
+.info.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* ═══ Breathing animation for position ═══ */
+.position {
+    position: absolute;
+    animation: breath 8s linear infinite;
+    animation-delay: .2s;
+}
+@keyframes breath {
+    0%   { transform: translate(0); }
+    25%  { transform: translate(0, 8px); }
+    50%  { transform: translate(-8px, 0); }
+    75%  { transform: translate(-8px, 8px); }
+    100% { transform: translate(0); }
+}
+
+/* ═══════════════════════════════════════
+   MenuBar — circle buttons (right column)
+   ═══════════════════════════════════════ */
+.item_box {
+    list-style: none;
+    position: absolute;
+    height: 340px;
+    overflow: hidden;
+}
+
+.item {
+    margin-bottom: 15px;
+    --radius: 54px;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    border: 2px solid rgba(201, 198, 198, .6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+    animation: itemDown 0.4s ease forwards;
+    opacity: 0;
+    transform: translateY(-80px);
+}
+.item:nth-child(1) { animation-delay: 0.20s; }
+.item:nth-child(2) { animation-delay: 0.15s; }
+.item:nth-child(3) { animation-delay: 0.10s; }
+.item:nth-child(4) { animation-delay: 0.05s; }
+.item:nth-child(5) { animation-delay: 0.00s; }
+
+@keyframes itemDown {
+    from { transform: translateY(-80px); opacity: 0; }
+    to   { transform: translateY(0);     opacity: 1; }
+}
+
+.closing .item {
+    animation: itemUp 0.3s ease forwards;
+}
+@keyframes itemUp {
+    from { transform: translateY(0);     opacity: 1; }
+    to   { transform: translateY(-80px); opacity: 0; }
+}
+
+.item .in-circle {
+    width: calc(var(--radius) - 8px);
+    height: calc(var(--radius) - 8px);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease;
+}
+
+.item .in-circle i {
+    font-style: normal;
+    font-size: 22px;
+    color: rgb(185, 183, 183);
+    transition: color 0.2s ease;
+}
+
+/* Active circle */
+.item.active {
+    border: 2px solid rgba(243, 175, 18, 0.6) !important;
+}
+.item.active .in-circle {
+    background: rgba(243, 175, 18, 0.8) !important;
+}
+.item.active .in-circle i {
+    color: rgba(255, 255, 255, .9) !important;
+}
+
+/* Hover */
+.item:hover .in-circle {
+    background: rgba(243, 175, 18, 0.8);
+}
+.item:hover .in-circle i {
+    color: rgba(255, 255, 255, .9);
+}
+.item:hover {
+    border: 2px solid rgba(243, 175, 18, 0.6);
+}
+
+/* ═══════════════════════════════════════
+   LeftInfo — player info panel
+   ═══════════════════════════════════════ */
+.leftInfo {
+    position: absolute;
+    left: calc(-25px - 240px);
+    top: -180px;
+}
+
+.leftInfoBox {
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+.leftInfoBox.show {
+    opacity: 1;
+    animation: padding_open 1s ease forwards;
+}
+
+.leftInfoBox .top {
+    background: rgba(255, 255, 255, .85);
+    width: 240px;
+    height: 252px;
+    overflow: hidden;
+    position: relative;
+}
+
+.top .title {
+    margin: 0 10px;
+    padding-top: 10px;
+    padding-bottom: 7px;
+    border-bottom: 2px solid rgb(170, 170, 170);
+    letter-spacing: 1px;
+    text-align: center;
+    font-size: 15px;
+    color: #555;
+}
+
+.right-triangle {
+    width: 18px;
+    height: 14px;
+    position: absolute;
+    top: 200px;
+    left: 100%;
+    clip-path: polygon(100% 50%, 0 100%, 0 0);
+    background: rgba(255, 255, 255, .85);
+}
+
+.bottom-triangle {
+    width: 15px;
+    height: 10px;
+    position: absolute;
+    top: 0;
+    left: 30px;
+    clip-path: polygon(50% 100%, 100% 0, 0 0);
+    background: rgba(255, 255, 255, .6);
+}
+
+.leftInfoBox .bottom {
+    background: rgba(229, 227, 227, 0.8);
+    width: 240px;
+    height: 168px;
+    position: relative;
+    overflow: hidden;
+}
+
+.bottom .des {
+    text-align: left;
+    padding: 15px 10px;
+    font-size: 13px;
+    color: #666;
+    line-height: 1.6;
+}
+
+/* LeftInfo panel animations */
+@keyframes padding_open {
+    0%   { padding-left: 240px; padding-top: 252px; padding-bottom: 168px; opacity: 0; }
+    50%  { padding-left: 0; padding-top: 0; opacity: 1; }
+    100% { padding-bottom: 0; }
+}
+
+/* ═══ Info Panel Content ═══ */
+.info-content {
+    padding: 12px;
+}
+
+.info-stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 4px;
+    border-bottom: 1px solid rgba(170, 170, 170, 0.3);
+    font-size: 13px;
+    color: #666;
+}
+.info-stat:last-child { border-bottom: none; }
+.info-stat .label { color: #999; }
+.info-stat .value { color: #555; font-weight: 500; }
+
+.xp-bar-container {
+    margin: 8px 4px;
+    height: 6px;
+    background: rgba(200, 200, 200, 0.5);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.xp-bar-fill {
+    height: 100%;
+    background: linear-gradient(to right, rgb(243, 175, 18), rgb(255, 210, 80));
+    border-radius: 3px;
+    transition: width 0.5s ease;
+}
+
+/* ═══════════════════════════════════════
+   ChildBar — sub-menu items
+   ═══════════════════════════════════════ */
+.cb_position {
+    position: absolute;
+    left: 86px;
+    top: 27px;
+}
+
+.cb_position .line {
+    opacity: 0;
+    width: 2px;
+    position: absolute;
+    top: 50%;
+    left: -5px;
+    transform: translateY(-50%);
+    background: linear-gradient(transparent, rgb(124,124,124) 15%, rgb(124,124,124) 85%, transparent);
+    transition: opacity 0.2s ease, height 0.3s ease;
+}
+.cb_position .line.show { opacity: 1; }
+
+.cb_position .arrow {
+    opacity: 0;
+    position: absolute;
+    left: -22px;
+    width: 19px;
+    height: 17px;
+    overflow: hidden;
+    transform: translateY(-50%);
+    clip-path: polygon(0 50%, 100% 100%, 100% 0);
+    transition: opacity 0.2s ease;
+}
+.cb_position .arrow.show { opacity: 1; }
+
+.cb_position .circle-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(34%, -50%);
+    box-shadow: 0px 0px 0px 100px rgb(212,212,212);
+}
+
+.child-menu {
+    position: absolute;
+    top: 0;
+    left: 0;
+    list-style: none;
+    opacity: 0;
+    transform: translateY(-30px);
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.child-menu.show {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.child-menu li {
+    height: 40px;
+    margin-bottom: 3px;
+    width: 180px;
+    background: rgba(255, 255, 255, .85);
+    display: flex;
+    align-items: center;
+    font-size: 15px;
+    text-align: left;
+    cursor: pointer;
+    padding-left: 12px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.child-menu li:last-child { margin-bottom: 0; }
+
+.child-menu li:hover {
+    background: rgb(222, 166, 32);
+    color: rgb(251, 245, 231);
+}
+
+.child-menu li span {
+    display: inline-block;
+    width: 140px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.child-menu li i {
+    font-style: normal;
+    margin-right: 8px;
+    font-size: 14px;
+}
+
+/* ═══ Status indicator in child items ═══ */
+.child-menu li .badge {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 8px;
+    margin-left: auto;
+    margin-right: 8px;
+}
+.badge.on {
+    background: rgba(154, 211, 52, 0.7);
+    color: #fff;
+}
+.badge.off {
+    background: rgba(200, 200, 200, 0.5);
+    color: #999;
+}
+
+/* ═══════════════════════════════════════
+   Alert Dialog
+   ═══════════════════════════════════════ */
+.saoMsgBox_fa {
+    --close-duration: .5s;
+    --open-duration: .5s;
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 500;
+    display: none;
+}
+.saoMsgBox_fa.show { display: block; }
+
+.saoMsgBox {
+    width: 375px;
+    box-shadow: 0 0 32px 4px rgba(0,0,0,0.3);
+    border-radius: 2px;
+    animation: XOpen ease 0.5s forwards;
+}
+@keyframes XOpen {
+    0%   { width: 135px; }
+    100% { width: 375px; }
+}
+
+.saoMsgBox > .alert-title {
+    height: 68px;
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow: rgba(0,0,0,.3) 0 13px 12px 0, rgba(0,0,0,.1) 0 13px 15px 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.alert-title span {
+    font-weight: 800;
+    color: rgb(100, 99, 100);
+    font-size: 18px;
+    max-width: 200px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.saoMsgBox > .alert-body {
+    min-height: 80px;
+    background: rgba(234, 233, 233, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 15px;
+    font-size: 14px;
+    color: rgb(100, 96, 96);
+    line-height: 1.6;
+}
+
+.saoMsgBox > .alert-footer {
+    height: 83px;
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow: rgba(0,0,0,.07) 0 -15px 12px 0, rgba(0,0,0,.1) 0 -2px 15px 0;
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+}
+
+.btn-circle {
+    width: 35px; height: 35px;
+    border-radius: 50%;
+    cursor: pointer;
+    position: relative;
+    border: 3px solid;
+}
+.btn-ok { border-color: rgb(66, 140, 230); }
+.btn-close { border-color: rgb(209, 61, 79); }
+
+.btn-circle .inner {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 26px; height: 26px;
+    border-radius: 50%;
+}
+.btn-ok .inner { background: rgb(66, 140, 230); }
+.btn-close .inner { background: rgb(209, 61, 79); }
+
+/* X mark for close */
+.btn-close .inner::before,
+.btn-close .inner::after {
+    content: "";
+    width: 16px; height: 4px;
+    background: #fff;
+    position: absolute;
+    top: 50%; left: 50%;
+}
+.btn-close .inner::before { transform: translate(-50%, -50%) rotate(45deg); }
+.btn-close .inner::after  { transform: translate(-50%, -50%) rotate(-45deg); }
+
+/* OK dot */
+.btn-ok .inner::before {
+    content: "";
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+}
+.btn-ok .inner::after {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: rgb(66, 140, 230);
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+/* ═══ Toast notification ═══ */
+.toast {
+    position: fixed;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(8px);
+    padding: 10px 24px;
+    border-radius: 4px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    font-size: 14px;
+    color: #555;
+    opacity: 0;
+    transition: opacity 0.3s, transform 0.3s;
+    pointer-events: none;
+    z-index: 600;
+}
+.toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ═══ Current file display ═══ */
+.current-file {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    max-width: 60vw;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    pointer-events: none;
+}
+</style>
+</head>
+<body>
+<!-- Sounds via Python bridge -->
+
+<!-- ═══ Fullscreen overlay ═══ -->
+<div class="info" id="popup-overlay">
+
+    <div class="position" id="menu-position">
+
+        <!-- LeftInfo Panel -->
+        <div class="leftInfo" id="left-info">
+            <div class="leftInfoBox" id="info-box">
+                <div class="top">
+                    <i class="right-triangle"></i>
+                    <div class="title" id="info-username">Player</div>
+                    <div class="info-content">
+                        <div class="info-stat">
+                            <span class="label">等级</span>
+                            <span class="value" id="info-level">Lv.1</span>
+                        </div>
+                        <div class="xp-bar-container">
+                            <div class="xp-bar-fill" id="info-xp" style="width:0%"></div>
+                        </div>
+                        <div class="info-stat">
+                            <span class="label">职业</span>
+                            <span class="value" id="info-profession">剑士</span>
+                        </div>
+                        <div class="info-stat">
+                            <span class="label">演奏曲数</span>
+                            <span class="value" id="info-songs">0</span>
+                        </div>
+                        <div class="info-stat">
+                            <span class="label">总时长</span>
+                            <span class="value" id="info-time">0:00</span>
+                        </div>
+                        <div class="info-stat">
+                            <span class="label">速度</span>
+                            <span class="value" id="info-speed">1.0x</span>
+                        </div>
+                        <div class="info-stat">
+                            <span class="label">移调</span>
+                            <span class="value" id="info-transpose">0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="bottom">
+                    <i class="bottom-triangle"></i>
+                    <div class="des" id="info-des">Welcome to SAO MIDI Player</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MenuBar Circles -->
+        <ul class="item_box" id="menu-bar">
+            <li class="item active" data-name="userInfo" data-idx="0">
+                <div class="in-circle"><i>👤</i></div>
+            </li>
+            <li class="item" data-name="playCtrl" data-idx="1">
+                <div class="in-circle"><i>▶</i></div>
+            </li>
+            <li class="item" data-name="fileMenu" data-idx="2">
+                <div class="in-circle"><i>📂</i></div>
+            </li>
+            <li class="item" data-name="settings" data-idx="3">
+                <div class="in-circle"><i>⚙</i></div>
+            </li>
+            <li class="item" data-name="panels" data-idx="4">
+                <div class="in-circle"><i>🎹</i></div>
+            </li>
+        </ul>
+
+        <!-- ChildBar -->
+        <div class="cb_position" id="child-bar">
+            <div class="line" id="cb-line"></div>
+            <div class="arrow" id="cb-arrow">
+                <div class="circle-dot"></div>
+            </div>
+
+            <!-- Play Controls sub-menu -->
+            <ul class="child-menu" id="sub-playCtrl" data-group="playCtrl">
+                <li data-action="play"><i>▶</i><span>播放 / 暂停</span></li>
+                <li data-action="stop"><i>■</i><span>停止</span></li>
+                <li data-action="speedup"><i>▲</i><span>加速 (+0.1)</span></li>
+                <li data-action="speeddown"><i>▼</i><span>减速 (-0.1)</span></li>
+                <li data-action="restart"><i>↻</i><span>重新开始</span></li>
+            </ul>
+
+            <!-- File sub-menu -->
+            <ul class="child-menu" id="sub-fileMenu" data-group="fileMenu">
+                <li data-action="open"><i>📄</i><span>打开文件</span></li>
+                <li data-action="folder"><i>📁</i><span>文件夹循环</span></li>
+            </ul>
+
+            <!-- Settings sub-menu -->
+            <ul class="child-menu" id="sub-settings" data-group="settings">
+                <li data-action="toggle_melody"><i>🎵</i><span>主旋律</span><span class="badge on" id="badge-melody">ON</span></li>
+                <li data-action="toggle_bass"><i>🎸</i><span>伴奏</span><span class="badge on" id="badge-bass">ON</span></li>
+                <li data-action="toggle_directc"><i>🔑</i><span>C调直转</span><span class="badge off" id="badge-directc">OFF</span></li>
+                <li data-action="toggle_glissando"><i>🎶</i><span>结尾滑奏</span><span class="badge off" id="badge-glissando">OFF</span></li>
+                <li data-action="transpose_up"><i>⬆</i><span>升调 (+1)</span></li>
+                <li data-action="transpose_down"><i>⬇</i><span>降调 (-1)</span></li>
+            </ul>
+
+            <!-- Panels sub-menu -->
+            <ul class="child-menu" id="sub-panels" data-group="panels">
+                <li data-action="switch_sao"><i>◆</i><span>SAO Entity UI</span></li>
+                <li data-action="switch_old"><i>↺</i><span>Old School UI</span></li>
+                <li data-action="exit"><i>✕</i><span>退出程序</span></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Current file display -->
+<div class="current-file" id="current-file"></div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Alert Dialog -->
+<div class="saoMsgBox_fa" id="alert-dialog">
+    <div class="saoMsgBox">
+        <div class="alert-title"><span id="alert-title">提示</span></div>
+        <div class="alert-body" id="alert-body">内容</div>
+        <div class="alert-footer">
+            <div class="btn-circle btn-ok" id="alert-ok"><div class="inner"></div></div>
+            <div class="btn-circle btn-close" id="alert-close"><div class="inner"></div></div>
+        </div>
+    </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════
+   SAO Menu JavaScript Controller
+   ═══════════════════════════════════════ */
+
+var overlay = document.getElementById('popup-overlay');
+var menuBar = document.getElementById('menu-bar');
+var childBar = document.getElementById('child-bar');
+var infoBox = document.getElementById('info-box');
+var cbLine = document.getElementById('cb-line');
+var cbArrow = document.getElementById('cb-arrow');
+
+var currentActive = 'userInfo';
+var menuOpen = false;
+
+/* ═══ Sound helpers — via Python bridge ═══ */
+var _sndMap = {
+    'snd-click': 'click',
+    'snd-popup': 'menu_open',
+    'snd-dismiss': 'menu_close',
+    'snd-panel': 'panel',
+    'snd-menu': 'submenu',
+    'snd-alert': 'alert',
+    'snd-alert-close': 'alert_close'
+};
+function playSound(id) {
+    try {
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.play_sound(_sndMap[id] || id);
+        }
+    } catch(e) {}
+}
+
+/* ═══ Fisheye backdrop ═══ */
+function setFisheyeBg(dataUrl) {
+    var el = document.getElementById('fisheye-bg');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'fisheye-bg';
+        el.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;' +
+            'background-size:cover;background-position:center;opacity:0;transition:opacity 0.6s;pointer-events:none;';
+        document.getElementById('popup-overlay').prepend(el);
+    }
+    el.style.backgroundImage = 'url(' + dataUrl + ')';
+    setTimeout(function() { el.style.opacity = '0.45'; }, 50);
+}
+
+/* ═══ Menu Open / Close ═══ */
+function openMenu(x, y) {
+    if (menuOpen) return;
+    menuOpen = true;
+    playSound('snd-popup');
+
+    var pos = document.getElementById('menu-position');
+    pos.style.left = Math.max(300, Math.min(x || 500, window.innerWidth - 150)) + 'px';
+    pos.style.top  = Math.max(100, Math.min(y || 300, window.innerHeight - 400)) + 'px';
+
+    overlay.classList.remove('closing');
+    overlay.classList.add('visible');
+
+    /* Reset item animations */
+    menuBar.querySelectorAll('.item').forEach(function(el) {
+        el.style.animation = 'none';
+        el.offsetHeight; /* reflow */
+        el.style.animation = '';
+    });
+
+    /* Show userInfo by default */
+    activateCircle('userInfo');
+}
+
+function closeMenu() {
+    if (!menuOpen) return;
+    menuOpen = false;
+    playSound('snd-dismiss');
+
+    overlay.classList.add('closing');
+    setTimeout(function() {
+        overlay.classList.remove('visible', 'closing');
+        hideAllSubMenus();
+        infoBox.classList.remove('show');
+    }, 400);
+}
+
+/* Click backdrop to close */
+overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) closeMenu();
+});
+
+/* ═══ Circle activation ═══ */
+function activateCircle(name) {
+    playSound('snd-click');
+
+    /* Toggle if same circle */
+    if (currentActive === name) {
+        var items = menuBar.querySelectorAll('.item');
+        var first = items[0];
+        if (first.classList.contains('active')) {
+            first.classList.remove('active');
+            hideAllSubMenus();
+            infoBox.classList.remove('show');
+            cbLine.classList.remove('show');
+            cbArrow.classList.remove('show');
+            currentActive = null;
+        }
+        return;
+    }
+
+    currentActive = name;
+
+    /* Rotate the clicked item to top */
+    var items = Array.from(menuBar.querySelectorAll('.item'));
+    var targetIdx = items.findIndex(function(el) { return el.getAttribute('data-name') === name; });
+
+    /* Move target to first position */
+    if (targetIdx > 0) {
+        for (var i = 0; i < targetIdx; i++) {
+            menuBar.appendChild(menuBar.firstElementChild);
+        }
+    }
+
+    /* Update active state */
+    items = menuBar.querySelectorAll('.item');
+    items.forEach(function(el) { el.classList.remove('active'); });
+    menuBar.firstElementChild.classList.add('active');
+
+    /* Show appropriate content */
+    hideAllSubMenus();
+
+    if (name === 'userInfo') {
+        infoBox.classList.add('show');
+        playSound('snd-panel');
+        cbLine.classList.remove('show');
+        cbArrow.classList.remove('show');
+    } else {
+        infoBox.classList.remove('show');
+        var sub = document.getElementById('sub-' + name);
+        if (sub) {
+            sub.classList.add('show');
+            playSound('snd-menu');
+            /* Update line height */
+            var itemCount = sub.querySelectorAll('li').length;
+            cbLine.style.height = (itemCount * 43 - 9) + 'px';
+            cbLine.classList.add('show');
+            cbArrow.classList.add('show');
+        }
+    }
+}
+
+function hideAllSubMenus() {
+    document.querySelectorAll('.child-menu').forEach(function(el) {
+        el.classList.remove('show');
+    });
+}
+
+/* ═══ Circle click handlers ═══ */
+menuBar.querySelectorAll('.item').forEach(function(item) {
+    item.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var name = this.getAttribute('data-name');
+        activateCircle(name);
+    });
+});
+
+/* ═══ Child menu item clicks ═══ */
+document.querySelectorAll('.child-menu li').forEach(function(li) {
+    li.addEventListener('click', function(e) {
+        e.stopPropagation();
+        playSound('snd-click');
+        var action = this.getAttribute('data-action');
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.menu_action(action);
+        }
+    });
+});
+
+/* ═══ Alert dialog ═══ */
+function showAlert(title, body, showOk) {
+    playSound('snd-alert');
+    document.getElementById('alert-title').textContent = title;
+    document.getElementById('alert-body').textContent = body;
+    var dialog = document.getElementById('alert-dialog');
+    dialog.classList.add('show');
+
+    if (!showOk) {
+        document.getElementById('alert-ok').style.display = 'none';
+    } else {
+        document.getElementById('alert-ok').style.display = '';
+    }
+}
+
+function closeAlert() {
+    playSound('snd-alert-close');
+    playSound('snd-click');
+    var dialog = document.getElementById('alert-dialog');
+    dialog.classList.remove('show');
+}
+
+document.getElementById('alert-close').addEventListener('click', closeAlert);
+document.getElementById('alert-ok').addEventListener('click', function() {
+    closeAlert();
+    if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.alert_ok();
+    }
+});
+
+/* ═══ Toast ═══ */
+function showToast(msg, duration) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function() { t.classList.remove('show'); }, duration || 2000);
+}
+
+/* ═══ API: update info panel ═══ */
+function updateInfo(data) {
+    if (data.username) document.getElementById('info-username').textContent = data.username;
+    if (data.level !== undefined) document.getElementById('info-level').textContent = 'Lv.' + data.level;
+    if (data.xp_pct !== undefined) document.getElementById('info-xp').style.width = data.xp_pct + '%';
+    if (data.profession) document.getElementById('info-profession').textContent = data.profession;
+    if (data.songs !== undefined) document.getElementById('info-songs').textContent = data.songs;
+    if (data.time) document.getElementById('info-time').textContent = data.time;
+    if (data.speed !== undefined) document.getElementById('info-speed').textContent = data.speed + 'x';
+    if (data.transpose !== undefined) document.getElementById('info-transpose').textContent = data.transpose;
+    if (data.des) document.getElementById('info-des').textContent = data.des;
+    if (data.file) document.getElementById('current-file').textContent = '♪ ' + data.file;
+}
+
+/* ═══ API: update toggle badges ═══ */
+function updateBadge(id, isOn) {
+    var badge = document.getElementById('badge-' + id);
+    if (badge) {
+        badge.textContent = isOn ? 'ON' : 'OFF';
+        badge.className = 'badge ' + (isOn ? 'on' : 'off');
+    }
+}
+
+/* ═══ Escape key to close ═══ */
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        if (document.getElementById('alert-dialog').classList.contains('show')) {
+            closeAlert();
+        } else if (menuOpen) {
+            closeMenu();
+        }
+    }
+});
+
+/* ═══ Python bridge: expose JS functions ═══ */
+window.SAO = {
+    openMenu: openMenu,
+    closeMenu: closeMenu,
+    updateInfo: updateInfo,
+    updateBadge: updateBadge,
+    showAlert: showAlert,
+    closeAlert: closeAlert,
+    showToast: showToast,
+    setFisheyeBg: setFisheyeBg,
+};
+</script>
+</body>
+</html>

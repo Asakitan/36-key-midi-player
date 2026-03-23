@@ -1428,6 +1428,7 @@ class SAOLinkStart:
     _TUNNEL_R_MAX = 45      # 隧道最大半径
     _STREAK_H = 300         # 粒子轴向长度 (= CSS height: 300px)
     _NUM_PARTICLES = 300    # 粒子数量 (增加密度提升质感)
+    _NUM_PARTICLES_CANVAS = 150  # Canvas 回退时使用较少粒子 (性能)
 
     # ──── 摄像机动画参数 (匹配 SAO-UI) ────
     _CAM_Z_START = -1200    # 摄像机起始 z (= CSS translateZ(-1200px))
@@ -1532,8 +1533,10 @@ void main() {
         self._canvas.pack(fill=tk.BOTH, expand=True)
 
         # ── 预生成静态隧道粒子 (SAO-UI 模型) ──
-        self._color_particles = self._gen_tunnel(self._COLORS_8)
-        self._blue_particles = self._gen_tunnel(self._BLUES_8)
+        # GPU模式用300粒子, Canvas回退用150以保证帧率
+        n_particles = self._NUM_PARTICLES if _HAS_MODERNGL else self._NUM_PARTICLES_CANVAS
+        self._color_particles = self._gen_tunnel(self._COLORS_8, n_particles)
+        self._blue_particles = self._gen_tunnel(self._BLUES_8, n_particles)
 
         # ── OpenGL 3D 渲染初始化 ──
         self._gl_ctx = None
@@ -1552,14 +1555,15 @@ void main() {
     # ════════════════════════════════════════════════════════
     #  隧道粒子生成 (SAO-UI 模型: 静态圆柱排列)
     # ════════════════════════════════════════════════════════
-    def _gen_tunnel(self, colors: list) -> list:
+    def _gen_tunnel(self, colors: list, num_particles: int = None) -> list:
         """
         生成 ~300 根静态隧道粒子.
         粒子分布在较深的范围, 摄像机从后方飞向前方,
         视觉上粒子会从中心小点逐渐变大并飞过摄像机.
         """
         particles = []
-        for i in range(self._NUM_PARTICLES):
+        n = num_particles if num_particles is not None else self._NUM_PARTICLES
+        for i in range(n):
             theta_deg = random.uniform(0, 360)
             rad = math.radians(theta_deg)
             r = random.uniform(self._TUNNEL_R_MIN, self._TUNNEL_R_MAX)
@@ -2059,6 +2063,8 @@ void main() {
             flkr = p.get('flicker_freq', 5.0)
             shimmer = 0.85 + 0.15 * math.sin(t * flkr + d * 0.005)
             alpha *= bright * shimmer
+            if alpha < 0.08:
+                continue
 
             sort_z = max(5.0, z_near)
 
@@ -2964,7 +2970,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.1.15+3115", on_close=None, **kw):
+                 version="v3.2.0+3200", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close

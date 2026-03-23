@@ -92,19 +92,49 @@ def main():
     ui_mode = _load_ui_mode()
     print(f"\nUI 模式: {ui_mode}")
 
-    # 导入并运行GUI
+    # 导入并运行GUI — 支持 3 种 UI 模式
     try:
-        if ui_mode == 'sao':
+        if ui_mode == 'webview':
+            # 最新 WebView UI (pywebview + HTML/CSS)
+            try:
+                from sao_webview import SAOWebViewGUI, is_webview_available
+                if is_webview_available():
+                    print("\n启动 SAO WebView GUI (HTML/CSS 渲染)...")
+                    print("提示: 点击 HP 栏打开 SAO 菜单")
+                    app = SAOWebViewGUI()
+                else:
+                    raise ImportError("pywebview not available")
+            except ImportError:
+                print("pywebview 不可用, 回退到 SAO Entity UI...")
+                from sao_gui import SAOPlayerGUI
+                app = SAOPlayerGUI()
+        elif ui_mode == 'sao':
+            # SAO Entity UI (tkinter SAO 主题)
+            # 兼容旧配置: 'sao' 曾经是 webview 优先, 现在直接启动 tkinter SAO
             from sao_gui import SAOPlayerGUI
-            print("\n启动 SAO Edition GUI...")
+            print("\n启动 SAO Entity GUI (tkinter)...")
             print("提示: Alt+A 打开 SAO 菜单")
             app = SAOPlayerGUI()
-        else:
+        elif ui_mode == 'old':
             from gui import MidiPlayerGUI
-            print("\n启动经典 GUI...")
+            print("\n启动 Old School GUI...")
             print("提示: 播放MIDI时请切换到游戏窗口")
-            print("提示: 需要管理员权限才能模拟按键")
             app = MidiPlayerGUI()
+        else:
+            # 未知模式 — 默认尝试 webview → sao → old
+            try:
+                from sao_webview import SAOWebViewGUI, is_webview_available
+                if is_webview_available():
+                    app = SAOWebViewGUI()
+                else:
+                    raise ImportError
+            except ImportError:
+                try:
+                    from sao_gui import SAOPlayerGUI
+                    app = SAOPlayerGUI()
+                except ImportError:
+                    from gui import MidiPlayerGUI
+                    app = MidiPlayerGUI()
 
         app.run()
         

@@ -349,7 +349,7 @@ def get_icon_path():
 class CustomTitleBar(tk.Frame):
     """自定义无边框窗口标题栏 - 扁平暗色设计"""
 
-    def __init__(self, parent, root, title="咲 Midi Player", version="v3.1.15+3115",
+    def __init__(self, parent, root, title="咲 Midi Player", version="v3.2.0+3200",
                  on_close=None, **kwargs):
         super().__init__(parent, bg=ModernColors.TITLEBAR, height=36, **kwargs)
         self.root = root
@@ -3226,7 +3226,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                                        title="咲 Midi Player", version="v3.1.15+3115",
+                                        title="咲 Midi Player", version="v3.2.0+3200",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 
@@ -3261,6 +3261,10 @@ class MidiPlayerGUI:
         self.sao_ui_btn = SmoothButton(toolbar, text="◆ SAO UI", command=self._switch_to_sao_ui,
                                        width=72, height=22, bg=ModernColors.BTN_SECONDARY, font_size=8)
         self.sao_ui_btn.pack(side=tk.RIGHT, padx=(0, 6))
+
+        self.webview_btn = SmoothButton(toolbar, text="◇ WebView", command=self._switch_to_webview_ui,
+                                        width=72, height=22, bg=ModernColors.BTN_SECONDARY, font_size=8)
+        self.webview_btn.pack(side=tk.RIGHT, padx=(0, 6))
 
         _theme_labels = {'dark': 'Light SE', 'light': 'SAO Mode', 'sao': 'Dark SE'}
         self.theme_btn = SmoothButton(toolbar, text=_theme_labels.get(_current_theme, 'Light SE'),
@@ -3451,13 +3455,50 @@ class MidiPlayerGUI:
         self.settings.set('theme', new_theme)
         self._refresh_all_colors()
 
-    def _switch_to_sao_ui(self):
-        """切换到 SAO Edition UI (需要重启)"""
-        self.settings.set('ui_mode', 'sao')
+    def _switch_to_webview_ui(self):
+        """切换到 SAO WebView UI"""
+        self.settings.set('ui_mode', 'webview')
+        self.settings.save()
         import tkinter.messagebox as mb
-        mb.showinfo("切换 SAO UI",
-                    "已切换到 SAO Edition 模式。\n\n请重新启动程序生效。",
-                    parent=self.root)
+        if mb.askyesno("切换 WebView UI",
+                       "将切换到 SAO WebView UI。\n确定继续吗？",
+                       parent=self.root):
+            try:
+                self.hotkey_panel.cleanup()
+            except Exception:
+                pass
+            self.player.stop()
+            try:
+                self.root.destroy()
+            except Exception:
+                pass
+            from sao_webview import SAOWebViewGUI
+            app = SAOWebViewGUI()
+            app.run()
+
+    def _switch_to_sao_ui(self):
+        """切换到 SAO Entity UI — 在进程内热切换, 无需重启"""
+        self.settings.set('ui_mode', 'sao')
+        self.settings.save()
+        import tkinter.messagebox as mb
+        if mb.askyesno("切换 SAO UI",
+                       "将切换到 SAO Edition 模式。\n确定继续吗？",
+                       parent=self.root):
+            # 清理 Old UI 资源
+            try:
+                self.hotkey_panel.cleanup()
+            except Exception:
+                pass
+            self.player.stop()
+            # 销毁 root
+            try:
+                self.root.destroy()
+            except Exception:
+                pass
+            # 创建新的 SAO UI
+            from sao_gui import SAOPlayerGUI
+            app = SAOPlayerGUI()
+            app.run()
 
     def _refresh_all_colors(self):
         """刷新全部控件颜色 (主题切换后)"""
