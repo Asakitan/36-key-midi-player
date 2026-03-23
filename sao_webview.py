@@ -495,6 +495,35 @@ class SAOWebViewGUI:
         threading.Thread(target=self._progress_loop, daemon=True).start()
         threading.Thread(target=self._save_position_loop, daemon=True).start()
 
+        # 全局快捷键
+        self._setup_hotkeys()
+
+    def _setup_hotkeys(self):
+        """注册全局快捷键 (keyboard 模块)."""
+        try:
+            import keyboard as kb
+            kb.add_hotkey('ctrl+shift+space', lambda: threading.Thread(
+                target=self._toggle_play, daemon=True).start(), suppress=False)
+            kb.add_hotkey('ctrl+shift+right', lambda: threading.Thread(
+                target=self._speed_up, daemon=True).start(), suppress=False)
+            kb.add_hotkey('ctrl+shift+left', lambda: threading.Thread(
+                target=self._speed_down, daemon=True).start(), suppress=False)
+            kb.add_hotkey('ctrl+shift+o', lambda: threading.Thread(
+                target=self._open_file, daemon=True).start(), suppress=False)
+            kb.add_hotkey('ctrl+shift+s', lambda: threading.Thread(
+                target=self._stop, daemon=True).start(), suppress=False)
+            kb.add_hotkey('ctrl+shift+m', lambda: threading.Thread(
+                target=self._toggle_menu, daemon=True).start(), suppress=False)
+            kb.add_hotkey('ctrl+shift+up', lambda: threading.Thread(
+                target=self._transpose_up, daemon=True).start(), suppress=False)
+            kb.add_hotkey('ctrl+shift+down', lambda: threading.Thread(
+                target=self._transpose_down, daemon=True).start(), suppress=False)
+            self._hotkeys_ok = True
+            print('[SAO WebView] Hotkeys registered: Ctrl+Shift+Space/O/S/M/←/→/↑/↓')
+        except Exception as e:
+            self._hotkeys_ok = False
+            print(f'[SAO WebView] Hotkeys unavailable: {e}')
+
     # ════════════════════════════════════════
     #  JS 辅助
     # ════════════════════════════════════════
@@ -565,13 +594,12 @@ class SAOWebViewGUI:
                 pass
         threading.Timer(0.4, _hide).start()
 
-    def _capture_current_monitor_b64(self, quality=50):
-        """截取 HP 窗口所在显示器 → GPU barrel distortion → JPEG base64.
-        优先使用 moderngl GPU 加速, 失败 fallback 到 numpy, 最终 fallback 到无畸变."""
+    def _capture_current_monitor_b64(self, quality=55):
+        """截取 HP 窗口所在显示器 → JPEG base64 (不做 barrel distortion,
+        distortion 由浏览器端 WebGL shader 实时渲染, 真正 60fps)."""
         try:
             import base64 as b64mod, io
             from PIL import Image
-            import numpy as np
 
             hx = self.hp_win.x if self.hp_win else 0
             hy = self.hp_win.y if self.hp_win else 0
@@ -579,7 +607,7 @@ class SAOWebViewGUI:
             try:
                 import mss
                 with mss.mss() as sct:
-                    target = sct.monitors[1]  # 默认主屏
+                    target = sct.monitors[1]
                     for m in sct.monitors[1:]:
                         if (m['left'] <= hx < m['left'] + m['width'] and
                                 m['top'] <= hy < m['top'] + m['height']):
@@ -591,17 +619,14 @@ class SAOWebViewGUI:
                 from PIL import ImageGrab
                 img = ImageGrab.grab()
 
-            # 缩小以加快 GPU/numpy 处理速度 (保留较高分辨率减少模糊感)
+            # 缩小 (浏览器端 WebGL 做畸变, 无需高分辨率)
             w, h = img.size
-            scale = min(1280 / w, 720 / h, 1.0)
+            scale = min(960 / w, 540 / h, 1.0)
             if scale < 1.0:
                 img = img.resize((int(w * scale), int(h * scale)), Image.BILINEAR)
 
-            # GPU barrel distortion (moderngl)
-            img = self._apply_barrel_distortion(img)
-
             buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=max(quality, 70))
+            img.save(buf, format='JPEG', quality=quality)
             return b64mod.b64encode(buf.getvalue()).decode('ascii')
         except Exception as e:
             print(f"[SAO] monitor capture: {e}")
@@ -719,25 +744,32 @@ class SAOWebViewGUI:
             self._eval_menu(js)
 
     def _fisheye_loop(self, gen: int):
-        """实时刷新背景 — 菜单打开期间持续截屏+GPU畸变, 目标60fps.
-        gen: 代数标记, 如果新循环启动, 旧循环自动退出."""
+        """后台截屏循环 — 菜单打开期间截屏推送到浏览器 WebGL.
+        浏览器端 WebGL shader 以 60fps 实时渲染 barrel distortion.
+        Python 端只需 ~4fps 更新截图 (桌面变化不快)."""
         import time as _time
         while self._fisheye_active and self._menu_visible and gen == self._fisheye_gen:
             t0 = _time.time()
             self._push_fisheye_background()
             elapsed = _time.time() - t0
-            sleep_t = max(0.001, 0.016 - elapsed)  # 目标 ~60fps
+            sleep_t = max(0.05, 0.25 - elapsed)   # ~4fps 截屏, WebGL 做 60fps 渲染
             _time.sleep(sleep_t)
 
     # ─── 面板管理 ───
     def _toggle_panel(self, panel_type):
         """切换面板窗口 (control/piano/status/viz)."""
         if panel_type in self._panel_wins:
-            try:
-                self._panel_wins[panel_type].destroy()
-            except Exception:
-                pass
-            self._panel_wins.pop(panel_type, None)
+            win = self._panel_wins.pop(panel_type, None)
+            if win:
+                try:
+                    win.evaluate_js('document.documentElement.style.opacity="0"')
+                except Exception:
+                    pass
+                time.sleep(0.15)
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
             return
         self._create_panel_window(panel_type)
 
@@ -810,6 +842,12 @@ class SAOWebViewGUI:
                 pass
 
     def _destroy_all_panels(self):
+        for win in list(self._panel_wins.values()):
+            try:
+                win.evaluate_js('document.documentElement.style.opacity="0"')
+            except Exception:
+                pass
+        time.sleep(0.15)
         for win in list(self._panel_wins.values()):
             try:
                 win.destroy()
