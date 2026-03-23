@@ -349,7 +349,7 @@ def get_icon_path():
 class CustomTitleBar(tk.Frame):
     """自定义无边框窗口标题栏 - 扁平暗色设计"""
 
-    def __init__(self, parent, root, title="咲 Midi Player", version="v3.1.2+3102",
+    def __init__(self, parent, root, title="咲 Midi Player", version="v3.1.11+3111",
                  on_close=None, **kwargs):
         super().__init__(parent, bg=ModernColors.TITLEBAR, height=36, **kwargs)
         self.root = root
@@ -3230,7 +3230,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                                        title="咲 Midi Player", version="v3.1.2+3102",
+                                        title="咲 Midi Player", version="v3.1.11+3111",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 

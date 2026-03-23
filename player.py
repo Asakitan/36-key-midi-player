@@ -102,7 +102,7 @@ class KeyboardSimulator:
         self._current_mode = 'normal'  # 当前演奏模式: 'normal', 'shift', 'ctrl'
         self._mode_toggle_count = 0    # 模式总切换次数
         self._mode_last_toggle_time = 0.0  # 上次模式切换时间
-        self._mode_cooldown_ms = MODE_SWITCH_DELAY_MS   # 模式切换最小间隔(ms)，防止过快切换导致游戏漏识别
+        self._mode_cooldown_ms = MODE_SWITCH_DELAY_MS   # 模式切换最小间隔(ms)
         self._mode_max_toggles_before_reset = 40  # 累积N次切换后强制重置，防止状态漂移
         
         if not KEYBOARD_AVAILABLE and PYNPUT_AVAILABLE:
@@ -260,26 +260,18 @@ class KeyboardSimulator:
         self._cleanup_timers()
     
     def _toggle_modifier_key(self, key_name: str):
-        """按下并释放一个修饰键带冷却
-        
+        """按下并释放一个修饰键。无死区：仅阻塞物理按键时长(≈35ms)。
+        OS键盘事件队列FIFO，模式键已先于后续音符键入队，游戏将按顺序处理。
+
         key_name 支持: 'left shift', 'left ctrl', ',', '.'
         """
-        now = time.monotonic()
-        elapsed_ms = (now - self._mode_last_toggle_time) * 1000.0
-        
-        # 冷却：防止过快切换导致游戏漏识别
-        if elapsed_ms < self._mode_cooldown_ms:
-            remaining = self._mode_cooldown_ms - elapsed_ms
-            time.sleep(remaining / 1000.0)
-        
         try:
-            key_press_sec = MODE_KEY_PRESS_MS / 1000.0  # 按键按下时长
+            key_press_sec = MODE_KEY_PRESS_MS / 1000.0
             if self.use_keyboard and KEYBOARD_AVAILABLE:
                 keyboard.press(key_name)
                 time.sleep(key_press_sec)
                 keyboard.release(key_name)
             elif self.controller:
-                # pynput 按键映射
                 pynput_map = {
                     'left shift': Key.shift,
                     'left ctrl': Key.ctrl_l,
@@ -290,14 +282,13 @@ class KeyboardSimulator:
                     time.sleep(key_press_sec)
                     self.controller.release(pynput_key)
                 else:
-                    # 普通字符键 (<, >等)
                     self.controller.press(key_name)
                     time.sleep(key_press_sec)
                     self.controller.release(key_name)
-            
+
             self._mode_toggle_count += 1
             self._mode_last_toggle_time = time.monotonic()
-            time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)  # 65ms强制等待，确保游戏完成模式切换
+
         except Exception as e:
             print(f"[MODE] {key_name} 切换失败: {e}")
 
@@ -334,36 +325,59 @@ class KeyboardSimulator:
             self._current_mode = 'gt'
     
     def ensure_mode(self, target_mode: str):
-        """确保当前处于指定模式
-        
-        classic 模式: 'normal', 'shift', 'ctrl'
-        extended 模式: 'normal', 'lt', 'gt'
-        
-        状态机（两个系统共享同一逻辑）：
-        - normal ↔ X: 按对应切换键
-        - X → Y: 先按X键(→normal) + 再按Y键(→Y)
+        """确保当前处于指定模式。
+
+        classic 模式 (ctrl/shift): 游戏允许直接按目标键切换，无需先退出当前模式。
+          normal ↔ ctrl:  按 left ctrl
+          normal ↔ shift: 按 left shift
+          ctrl  → shift:  只按 left shift（游戏直接切过去）
+          shift → ctrl:   只按 left ctrl（同理）
+
+        extended 模式 (lt/gt): < 和 > 是相对方向键，每按一次移动一个档位。
+          > 永远向高音方向走一步，< 永远向低音方向走一步。
+          normal → lt:  按 , (向下一步)
+          normal → gt:  按 . (向上一步)
+          lt → normal:  按 . (向上一步，回来)
+          gt → normal:  按 , (向下一步，回来)
+          lt → gt:      按 . (lt→normal) 再按 . (normal→gt)
+          gt → lt:      按 , (gt→normal) 再按 , (normal→lt)
         """
         if self._current_mode == target_mode:
             return
-        
-        # 模式→切换键 映射
-        mode_key_map = {
-            'shift': 'left shift',
-            'ctrl': 'left ctrl',
-            'lt': ',',
-            'gt': '.',
-        }
-        
-        # 先回到 normal（按当前模式的键）
-        if self._current_mode in mode_key_map:
-            self._toggle_modifier_key(mode_key_map[self._current_mode])
-        
-        # 再去目标模式（按目标模式的键）
-        if target_mode in mode_key_map:
-            self._toggle_modifier_key(mode_key_map[target_mode])
-        
+
+        current = self._current_mode
+        mode_system = getattr(self, '_mode_system', 'classic')
+
+        if mode_system == 'extended':
+            # ── 方向性切换：> 向上，< 向下 ──
+            # 编码档位用数字: lt=-1, normal=0, gt=+1
+            level = {'lt': -1, 'normal': 0, 'gt': 1}
+            from_lv = level.get(current, 0)
+            to_lv   = level.get(target_mode, 0)
+            step_key = '.' if to_lv > from_lv else ','   # 需要向上还是向下
+            steps = abs(to_lv - from_lv)
+            for _ in range(steps):
+                self._toggle_modifier_key(step_key)
+        else:
+            # ── Classic: ctrl/shift 是独立 toggle，游戏允许直接按目标键切换 ──
+            # ctrl→shift: 只按 left shift（游戏直接切过去，无需先退 ctrl）
+            # shift→ctrl: 只按 left ctrl（同理）
+            # X→normal:   按当前模式键（toggle off）
+            classic_keys = {
+                'shift': 'left shift',
+                'ctrl':  'left ctrl',
+            }
+            if target_mode == 'normal':
+                # 退出当前模式：按当前模式键 toggle off
+                if current in classic_keys:
+                    self._toggle_modifier_key(classic_keys[current])
+            else:
+                # 直接按目标模式键（游戏会自动切换，不需要先回 normal）
+                if target_mode in classic_keys:
+                    self._toggle_modifier_key(classic_keys[target_mode])
+
         self._current_mode = target_mode
-        
+
         # 累积过多切换后强制重置，防止状态漂移
         if self._mode_toggle_count >= self._mode_max_toggles_before_reset:
             self._force_reset_mode(target=target_mode)
@@ -373,52 +387,16 @@ class KeyboardSimulator:
         self.ensure_mode('shift' if need_shift else 'normal')
 
     def _force_reset_mode(self, target: str = 'normal'):
-        """强制重置到已知模式状态，用于防漂移
-        
-        策略：根据当前模式系统，把各修饰键各按1次（当前模式键→normal），
-        然后计数归零。比盲目按多次更可靠。
-        """
-        print(f"[MODE] 累积{self._mode_toggle_count}次切换，执行防漂移重置")
-        time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)
-        
-        mode_system = getattr(self, '_mode_system', 'classic')
-        
-        # 根据模式系统选择要重置的键
-        if mode_system == 'extended':
-            reset_keys = [',', '.']  # <和>模式
-        else:
-            reset_keys = ['left shift', 'left ctrl']
-        
-        # 当前如果不在normal，先按当前模式键回到normal
-        key_press_sec = MODE_KEY_PRESS_MS / 1000.0
-        mode_key_map = {
-            'shift': 'left shift', 'ctrl': 'left ctrl',
-            'lt': ',', 'gt': '.',
-        }
-        if self._current_mode in mode_key_map:
-            try:
-                kn = mode_key_map[self._current_mode]
-                if self.use_keyboard and KEYBOARD_AVAILABLE:
-                    keyboard.press(kn)
-                    time.sleep(key_press_sec)
-                    keyboard.release(kn)
-                elif self.controller:
-                    pynput_map = {'left shift': Key.shift, 'left ctrl': Key.ctrl_l}
-                    pk = pynput_map.get(kn, kn)
-                    self.controller.press(pk)
-                    time.sleep(key_press_sec)
-                    self.controller.release(pk)
-                time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)
-            except Exception as e:
-                print(f"[MODE] 重置单键失败: {e}")
-        
-        self._current_mode = 'normal'
+        """强制重置到已知模式状态，用于防漂移。先归零计数再调 ensure_mode，避免递归。"""
+        print(f"[MODE] 累积{self._mode_toggle_count}次切换，执行防漂移重置 → {target}")
+        # 先归零，防止 ensure_mode 内再次触发 _force_reset_mode
         self._mode_toggle_count = 0
         self._mode_last_toggle_time = time.monotonic()
-        
-        # 如果目标不是normal，再切换过去
+
+        # 回到 normal，再到目标
+        if self._current_mode != 'normal':
+            self.ensure_mode('normal')
         if target != 'normal':
-            time.sleep(MODE_SWITCH_DELAY_MS / 1000.0)
             self.ensure_mode(target)
 
     def _force_reset_shift(self, target: bool = False):
