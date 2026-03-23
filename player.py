@@ -3248,16 +3248,18 @@ class MidiPlayer:
 
     def _check_screen_mode_drift(self):
         """
-        每 _screen_check_interval 个音符后，截取游戏窗口右侧的模式指示器区域，
-        检测 高八度(shift)/默认(normal)/低八度(ctrl) 三个按钮哪个最亮，
+        每 _screen_check_interval 个音符后，截取游戏窗口右下角的模式指示器区域，
+        检测 钢琴(normal)/高八度(shift)/低八度(ctrl) 三行哪行最亮，
         与 simulator._current_mode 比较；若不一致则强制纠正。
 
-        按钮排布（从截图推断，自上而下）：
-            index 0 → 高八度 → shift
-            index 1 → 默认   → normal
-            index 2 → 低八度 → ctrl
+        按钮排布（从截图确认，自上而下）：
+            index 0 → 钢琴   [F9]      → normal
+            index 1 → 高八度 [L Shift] → shift
+            index 2 → 低八度 [L Ctrl]  → ctrl
 
-        采样区域：窗口右侧 5% 宽度内，垂直三等分中段。
+        采样区域（基于 1920×1080 参考坐标 左上1662,431 右下1897,553）：
+            x: 窗口宽度的 86.6% ~ 98.8%
+            y: 窗口高度的 39.9% ~ 51.2%
         仅在 classic 模式下启用。
         """
         if not self._screen_drift_enabled:
@@ -3281,20 +3283,20 @@ class MidiPlayer:
                 h = user32.GetSystemMetrics(1)
                 left, top = 0, 0
 
-            # 右侧指示器区域：右边 8% 宽，钢琴 UI 大约在中下部 40%~80% 高
-            rx0 = left + int(w * 0.90)
-            rx1 = left + int(w * 0.99)
-            ry0 = top  + int(h * 0.40)
-            ry1 = top  + int(h * 0.80)
+            # 指示器区域坐标（参考分辨率 1920×1080，左上1662,431 右下1897,553）
+            rx0 = left + int(w * 0.866)
+            rx1 = left + int(w * 0.988)
+            ry0 = top  + int(h * 0.399)
+            ry1 = top  + int(h * 0.512)
 
             img = ImageGrab.grab(bbox=(rx0, ry0, rx1, ry1), all_screens=True)
             img_w, img_h = img.size
             if img_w < 2 or img_h < 2:
                 return
 
-            # 三等分垂直区域，分别对应 高八度/默认/低八度
+            # 三等分垂直区域，分别对应 钢琴(normal)/高八度(shift)/低八度(ctrl)
             slice_h = img_h // 3
-            mode_order = ['shift', 'normal', 'ctrl']
+            mode_order = ['normal', 'shift', 'ctrl']
             brightness = []
             for i in range(3):
                 y0 = i * slice_h
@@ -3309,7 +3311,7 @@ class MidiPlayer:
                 avg_b = sum(p[2] for p in pixels) / len(pixels)
                 brightness.append(avg_r + avg_g + avg_b)
 
-            # 亮度差异太小时不做判断（可能截图区域不正确）
+            # 亮度差异太小时不做判断（截图区域可能不正确）
             max_b = max(brightness)
             min_b = min(brightness)
             if max_b - min_b < 15:   # 亮度差小于 15/765，认为无法区分
