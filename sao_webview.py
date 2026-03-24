@@ -427,7 +427,7 @@ class SAOWebViewGUI:
         try:
             _sw = ctypes.windll.user32.GetSystemMetrics(0)
             _sh = ctypes.windll.user32.GetSystemMetrics(1)
-            cx, cy = (_sw - 430) // 2, (_sh - 280) // 2
+            cx, cy = (_sw - 430) // 2, (_sh - 320) // 2
         except Exception:
             cx, cy = 500, 300
         self._hp_target_x = fx
@@ -436,7 +436,7 @@ class SAOWebViewGUI:
         # HP 悬浮窗 — transparent=True 由 pywebview 原生处理透明
         self.hp_win = webview.create_window(
             '♪ SAO HP', hp_url,
-            width=430, height=280,
+            width=430, height=320,
             x=cx, y=cy,
             frameless=True,
             easy_drag=False,           # 自行处理拖拽 (CSS app-region)
@@ -569,7 +569,7 @@ class SAOWebViewGUI:
             user32 = ctypes.windll.user32
             if expanded:
                 # 右键菜单打开: 扩展到全窗口 (含菜单空间)
-                hrgn = gdi32.CreateRectRgn(0, 0, 430, 280)
+                hrgn = gdi32.CreateRectRgn(0, 0, 430, 320)
             else:
                 # 默认: 只保留 HP 条 (body pad=8 + XTBox=40 + number=20 = 68px)
                 hrgn = gdi32.CreateRectRgn(0, 0, 420, 68)
@@ -630,7 +630,7 @@ class SAOWebViewGUI:
                 try:
                     _sw = ctypes.windll.user32.GetSystemMetrics(0)
                     _sh = ctypes.windll.user32.GetSystemMetrics(1)
-                    sx, sy = (_sw - 430) // 2, (_sh - 280) // 2
+                    sx, sy = (_sw - 430) // 2, (_sh - 320) // 2
                 except Exception:
                     sx, sy = 500, 300
             tx, ty = self._hp_target_x, self._hp_target_y
@@ -1465,13 +1465,20 @@ class SAOWebViewGUI:
 
     def _fetch_leaderboard(self, sort_by: str = 'xp'):
         """拉取排行榜数据并推送到 menu.html."""
+        def _push(js: str):
+            try:
+                self.root.after(0, lambda: self._eval_menu(js))
+            except Exception:
+                self._eval_menu(js)
+
         try:
-            from leaderboard import fetch_leaderboard, _get_device_id
+            from leaderboard import fetch_leaderboard, get_local_identity
             data = fetch_leaderboard(sort_by=sort_by, limit=50)
             if data is None:
-                self._eval_menu('SAO.showAlert("排行榜", "无法连接服务器，请稍后再试", false)')
+                _push('SAO.showAlert("排行榜", "无法连接服务器，请稍后再试", false)')
                 return
-            my_id = _get_device_id()
+            identity = get_local_identity()
+            my_id = identity['device_id']
             rows = data if isinstance(data, list) else data.get('players', [])
             for i, r in enumerate(rows):
                 r['rank'] = i + 1
@@ -1480,11 +1487,12 @@ class SAOWebViewGUI:
                 'sort': sort_by,
                 'entries': rows,
                 'self_device': my_id,
+                'self_player_id': identity.get('player_id', identity.get('device_name', '')),
             }, ensure_ascii=False)
-            self._eval_menu(f'SAO.showLeaderboard({payload})')
+            _push(f'SAO.showLeaderboard({payload})')
         except Exception as e:
             print(f"[SAO] leaderboard: {e}")
-            self._eval_menu('SAO.showAlert("排行榜", "加载失败: ' + str(e).replace('"', '\\"') + '", false)')
+            _push('SAO.showAlert("排行榜", "加载失败: ' + str(e).replace('"', '\\"') + '", false)')
 
     # ════════════════════════════════════════
     #  文件管理

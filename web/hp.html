@@ -10,17 +10,38 @@
 /* ═══ SAO Fonts ═══ */
 @font-face {
     font-family: 'sao';
-    src: url('../assets/fonts/SAOUI.ttf') format('truetype');
+    src: url('fonts/SAOUI.ttf') format('truetype');
     font-style: normal;
     font-weight: 400;
     font-display: block;
 }
 @font-face {
-    font-family: 'yuanJWD';
-    src: url('../assets/fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-family: 'saoLatin';
+    src: url('fonts/SAOUI.ttf') format('truetype');
     font-style: normal;
     font-weight: 400;
     font-display: block;
+    unicode-range: U+0000-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+    font-family: 'yuanJWD';
+    src: url('fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+}
+@font-face {
+    font-family: 'yuanJWDCJK';
+    src: url('fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+    unicode-range: U+2E80-2EFF, U+3000-303F, U+31C0-31EF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
+}
+
+:root {
+    --font-sao: 'saoLatin', 'sao', 'Segoe UI', sans-serif;
+    --font-ui: 'saoLatin', 'sao', 'yuanJWDCJK', 'yuanJWD', 'Segoe UI', sans-serif;
 }
 
 /* ═══ Body — native pywebview transparency ═══
@@ -79,7 +100,7 @@ body {
     height: 40px;
     display: flex;
     filter: blur(0px) drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5));
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     letter-spacing: 1px;
     color: #e1dede;
     font-size: 12px;
@@ -264,7 +285,7 @@ body {
     top: 50%;
     left: 12px;
     transform: translateY(-50%);
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     font-size: 10px;
     letter-spacing: 1px;
     color: rgba(104, 228, 255, 0.78);
@@ -296,7 +317,7 @@ body {
     backdrop-filter: blur(8px);
     border-radius: 4px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-    font-family: 'sao', 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
+    font-family: var(--font-ui);
     font-size: 12px;
     color: #333;
     z-index: 1000;
@@ -322,6 +343,44 @@ body {
     background: #e0e0e0;
     margin: 2px 6px;
 }
+.context-menu .cm-icon {
+    position: relative;
+    display: inline-block;
+    width: 24px;
+    min-width: 24px;
+    height: 18px;
+    color: #76c9dd;
+    opacity: 0.96;
+    filter: drop-shadow(0 0 4px rgba(104, 228, 255, 0.18));
+    background:
+        linear-gradient(90deg, currentColor, currentColor) left top 3px / 7px 1px no-repeat,
+        linear-gradient(90deg, currentColor, currentColor) right bottom 3px / 7px 1px no-repeat,
+        linear-gradient(180deg, rgba(104, 228, 255, 0.18), rgba(104, 228, 255, 0)) center / 100% 100% no-repeat;
+}
+.context-menu .cm-icon::before,
+.context-menu .cm-icon::after { content: ''; position: absolute; box-sizing: border-box; border-color: currentColor; }
+.context-menu .cm-item:hover .cm-icon {
+    color: #fff;
+    filter: drop-shadow(0 0 8px rgba(243, 175, 18, 0.28));
+}
+.cm-icon.mi-play::before { left: 7px; top: 2px; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-left: 8px solid currentColor; }
+.cm-icon.mi-stop::before { left: 6px; top: 3px; width: 10px; height: 10px; border: 2px solid currentColor; }
+.cm-icon.mi-file::before { left: 5px; top: 2px; width: 12px; height: 12px; border: 2px solid currentColor; }
+.cm-icon.mi-file::after { right: 5px; top: 2px; width: 5px; height: 5px; border-top: 2px solid currentColor; border-right: 2px solid currentColor; }
+.cm-icon.mi-dir::before { left: 3px; top: 5px; width: 16px; height: 8px; border: 2px solid currentColor; border-radius: 2px; }
+.cm-icon.mi-dir::after { left: 5px; top: 2px; width: 7px; height: 5px; border: 2px solid currentColor; border-bottom: none; border-radius: 2px 2px 0 0; }
+.cm-icon.mi-speedup::before { left: 10px; top: 2px; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 7px solid currentColor; }
+.cm-icon.mi-speedup::after { left: 4px; top: 12px; width: 14px; height: 2px; background: currentColor; }
+.cm-icon.mi-speeddown::before { left: 10px; top: 7px; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 7px solid currentColor; }
+.cm-icon.mi-speeddown::after { left: 4px; top: 2px; width: 14px; height: 2px; background: currentColor; }
+.cm-icon.mi-ent::before { left: 5px; top: 3px; width: 12px; height: 10px; border: 2px solid currentColor; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.cm-icon.mi-old::before { left: 4px; top: 3px; width: 11px; height: 11px; border: 2px solid currentColor; border-left-color: transparent; border-radius: 50%; }
+.cm-icon.mi-old::after { right: 3px; top: 2px; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 3px solid transparent; border-bottom: 3px solid transparent; }
+.cm-icon.mi-rank::before { left: 3px; bottom: 2px; width: 4px; height: 5px; border: 2px solid currentColor; box-shadow: 6px -3px 0 -2px currentColor, 12px -6px 0 -2px currentColor; }
+.cm-icon.mi-exit::before, .cm-icon.mi-exit::after { left: 10px; top: 1px; width: 2px; height: 14px; background: currentColor; }
+.cm-icon.mi-exit::before { transform: rotate(45deg); }
+.cm-icon.mi-exit::after { transform: rotate(-45deg); }
+.cm-icon.mi-menu::before { left: 4px; top: 3px; width: 14px; height: 2px; background: currentColor; box-shadow: 0 4px 0 currentColor, 0 8px 0 currentColor; }
 
 /* ═══ Level Up Overlay ═══ */
 @keyframes lv-bg-anim {
@@ -365,7 +424,7 @@ body {
     opacity: 0;
 }
 .lv-title {
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     font-size: 38px;
     font-weight: bold;
     color: #f3af12;
@@ -374,7 +433,7 @@ body {
     line-height: 1;
 }
 .lv-num {
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     font-size: 22px;
     color: #ffffff;
     margin-top: 10px;
@@ -387,12 +446,6 @@ body {
 
 <!-- HP Component -->
 <div class="XTBox" id="hp">
-    <div class="hp-hud" aria-hidden="true">
-        <div class="hp-hud-lane hp-left-far"><span class="hp-hud-label">SYS CORE</span></div>
-        <div class="hp-hud-lane gold hp-left-near"><span class="hp-hud-label">GAIN ROUTE</span></div>
-        <div class="hp-hud-lane hp-right-far"><span class="hp-hud-label">NERVE GEAR</span></div>
-        <div class="hp-hud-lane gold hp-right-near"><span class="hp-hud-label">LINK RATE</span></div>
-    </div>
     <div class="xt_left"></div>
     <div class="xt_right"><span id="username">Player</span></div>
     <div class="number_xt">
@@ -423,22 +476,22 @@ body {
 
 <!-- Context Menu -->
 <div class="context-menu" id="ctx-menu">
-    <div class="cm-item" data-action="menu">◆ SAO 菜单</div>
+    <div class="cm-item" data-action="menu"><span class="cm-icon mi-menu"></span>SAO 菜单</div>
     <div class="cm-sep"></div>
-    <div class="cm-item" data-action="play">▶ 播放/暂停</div>
-    <div class="cm-item" data-action="stop">■ 停止</div>
-    <div class="cm-item" data-action="open">▸ 打开文件</div>
-    <div class="cm-item" data-action="folder">▸ 文件夹循环</div>
+    <div class="cm-item" data-action="play"><span class="cm-icon mi-play"></span>播放/暂停</div>
+    <div class="cm-item" data-action="stop"><span class="cm-icon mi-stop"></span>停止</div>
+    <div class="cm-item" data-action="open"><span class="cm-icon mi-file"></span>打开文件</div>
+    <div class="cm-item" data-action="folder"><span class="cm-icon mi-dir"></span>文件夹循环</div>
     <div class="cm-sep"></div>
-    <div class="cm-item" data-action="speedup">▲ 加速</div>
-    <div class="cm-item" data-action="speeddown">▼ 减速</div>
+    <div class="cm-item" data-action="speedup"><span class="cm-icon mi-speedup"></span>加速</div>
+    <div class="cm-item" data-action="speeddown"><span class="cm-icon mi-speeddown"></span>减速</div>
     <div class="cm-sep"></div>
-    <div class="cm-item" data-action="switch_sao">◆ SAO Entity UI</div>
-    <div class="cm-item" data-action="switch_old">↺ Old School UI</div>
+    <div class="cm-item" data-action="switch_sao"><span class="cm-icon mi-ent"></span>SAO Entity UI</div>
+    <div class="cm-item" data-action="switch_old"><span class="cm-icon mi-old"></span>Old School UI</div>
     <div class="cm-sep"></div>
-    <div class="cm-item" data-action="leaderboard">◆ 排行榜</div>
+    <div class="cm-item" data-action="leaderboard"><span class="cm-icon mi-rank"></span>排行榜</div>
     <div class="cm-sep"></div>
-    <div class="cm-item" data-action="exit">✕ 退出</div>
+    <div class="cm-item" data-action="exit"><span class="cm-icon mi-exit"></span>退出</div>
 </div>
 
 <script>

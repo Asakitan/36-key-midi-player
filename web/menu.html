@@ -11,23 +11,39 @@
 /* ═══ SAO Fonts ═══ */
 @font-face {
     font-family: 'sao';
-    src: url('../assets/fonts/SAOUI.ttf') format('truetype');
+    src: url('fonts/SAOUI.ttf') format('truetype');
     font-style: normal;
     font-weight: 400;
     font-display: block;
 }
 @font-face {
+    font-family: 'saoLatin';
+    src: url('fonts/SAOUI.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+    unicode-range: U+0000-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
     font-family: 'yuanJWD';
-    src: url('../assets/fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    src: url('fonts/ZhuZiAYuanJWD.ttf') format('truetype');
     font-style: normal;
     font-weight: 400;
     font-display: block;
 }
+@font-face {
+    font-family: 'yuanJWDCJK';
+    src: url('fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+    unicode-range: U+2E80-2EFF, U+3000-303F, U+31C0-31EF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
+}
 
 :root {
-    --font-sao: 'sao', 'Segoe UI', sans-serif;
-    --font-round: 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
-    --font-ui: 'sao', 'yuanJWD', 'Segoe UI', sans-serif;
+    --font-sao: 'saoLatin', 'sao', 'Segoe UI', sans-serif;
+    --font-round: 'saoLatin', 'sao', 'yuanJWDCJK', 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
+    --font-ui: 'saoLatin', 'sao', 'yuanJWDCJK', 'yuanJWD', 'Segoe UI', sans-serif;
 }
 
 /* ═══════════════════════════════════════
@@ -101,18 +117,20 @@ html, body {
     inset: 0;
     pointer-events: none;
     overflow: hidden;
+    z-index: 1;
+    mix-blend-mode: screen;
 }
 .menu-hud-lane {
     position: absolute;
-    width: 152px;
-    height: 28px;
-    border: 1px solid rgba(104, 228, 255, 0.26);
+    width: 172px;
+    height: 30px;
+    border: 1px solid rgba(104, 228, 255, 0.40);
     clip-path: polygon(0 16%, 88% 16%, 100% 0, 100% 100%, 10% 100%, 0 76%);
-    box-shadow: inset 0 0 18px rgba(104, 228, 255, 0.06);
+    box-shadow: inset 0 0 18px rgba(104, 228, 255, 0.12), 0 0 18px rgba(104, 228, 255, 0.05);
 }
 .menu-hud-lane.gold {
-    border-color: rgba(243, 175, 18, 0.24);
-    box-shadow: inset 0 0 18px rgba(243, 175, 18, 0.06);
+    border-color: rgba(243, 175, 18, 0.38);
+    box-shadow: inset 0 0 18px rgba(243, 175, 18, 0.12), 0 0 18px rgba(243, 175, 18, 0.05);
 }
 .menu-hud-lane::before {
     content: '';
@@ -127,11 +145,11 @@ html, body {
     left: 12px;
     transform: translateY(-50%);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     letter-spacing: 1.1px;
-    color: rgba(104, 228, 255, 0.72);
+    color: rgba(104, 228, 255, 0.92);
 }
-.menu-hud-lane.gold .menu-hud-label { color: rgba(243, 175, 18, 0.74); }
+.menu-hud-lane.gold .menu-hud-label { color: rgba(243, 175, 18, 0.90); }
 @keyframes menu-hud-left-far {
     0% { transform: translate3d(-20px, 0, 0); opacity: .30; }
     50% { transform: translate3d(20px, 8px, 0); opacity: .66; }
@@ -152,10 +170,10 @@ html, body {
     50% { transform: translate3d(-28px, -10px, 0); opacity: .84; }
     100% { transform: translate3d(34px, 0, 0); opacity: .28; }
 }
-.menu-hud-left-far { left: 64px; top: 148px; animation: menu-hud-left-far 8.4s ease-in-out infinite; }
-.menu-hud-left-near { left: 88px; bottom: 112px; animation: menu-hud-left-near 5.9s ease-in-out infinite; }
-.menu-hud-right-far { right: 72px; top: 168px; animation: menu-hud-right-far 8.0s ease-in-out infinite; }
-.menu-hud-right-near { right: 94px; bottom: 132px; animation: menu-hud-right-near 5.6s ease-in-out infinite; }
+.menu-hud-left-far { left: 7vw; top: 16vh; animation: menu-hud-left-far 8.4s ease-in-out infinite; }
+.menu-hud-left-near { left: 9vw; bottom: 16vh; animation: menu-hud-left-near 5.9s ease-in-out infinite; }
+.menu-hud-right-far { right: 8vw; top: 19vh; animation: menu-hud-right-far 8.0s ease-in-out infinite; }
+.menu-hud-right-near { right: 9vw; bottom: 18vh; animation: menu-hud-right-near 5.6s ease-in-out infinite; }
 
 /* ═══ Breathing animation for position ═══ */
 .position {
@@ -167,6 +185,7 @@ html, body {
     transform-origin: 78% 42%;
     isolation: isolate;
     will-change: transform, opacity;
+    z-index: 2;
 }
 .info.entering .position {
     opacity: 0;
@@ -742,8 +761,77 @@ html, body {
 .child-menu li i {
     font-style: normal;
     margin-right: 8px;
-    font-size: 14px;
 }
+
+.menu-glyph {
+    position: relative;
+    display: inline-block;
+    width: 24px;
+    min-width: 24px;
+    height: 18px;
+    color: #8adfff;
+    opacity: 0.96;
+    filter: drop-shadow(0 0 4px rgba(104, 228, 255, 0.18));
+    background:
+        linear-gradient(90deg, currentColor, currentColor) left top 3px / 7px 1px no-repeat,
+        linear-gradient(90deg, currentColor, currentColor) right bottom 3px / 7px 1px no-repeat,
+        linear-gradient(180deg, rgba(104, 228, 255, 0.18), rgba(104, 228, 255, 0)) center / 100% 100% no-repeat;
+}
+.menu-glyph::before,
+.menu-glyph::after,
+.menu-glyph span::before,
+.menu-glyph span::after {
+    content: '';
+    position: absolute;
+    box-sizing: border-box;
+    border-color: currentColor;
+}
+.child-menu li:hover .menu-glyph {
+    color: #fff;
+    filter: drop-shadow(0 0 8px rgba(243, 175, 18, 0.28));
+}
+
+.mi-play::before { left: 7px; top: 2px; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-left: 8px solid currentColor; }
+.mi-stop::before { left: 6px; top: 3px; width: 10px; height: 10px; border: 2px solid currentColor; }
+.mi-speedup::before, .mi-speeddown::before { left: 10px; width: 0; height: 0; }
+.mi-speedup::before { top: 2px; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 7px solid currentColor; }
+.mi-speeddown::before { top: 7px; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 7px solid currentColor; }
+.mi-speedup::after, .mi-speeddown::after { left: 4px; width: 14px; height: 2px; background: currentColor; }
+.mi-speedup::after { top: 12px; }
+.mi-speeddown::after { top: 2px; }
+.mi-restart::before { left: 5px; top: 3px; width: 10px; height: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; }
+.mi-restart::after { left: 12px; top: 1px; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 3px solid transparent; border-bottom: 3px solid transparent; }
+.mi-file::before { left: 5px; top: 2px; width: 12px; height: 12px; border: 2px solid currentColor; border-radius: 1px; }
+.mi-file::after { right: 5px; top: 2px; width: 5px; height: 5px; border-top: 2px solid currentColor; border-right: 2px solid currentColor; }
+.mi-dir::before { left: 3px; top: 5px; width: 16px; height: 8px; border: 2px solid currentColor; border-radius: 2px; }
+.mi-dir::after { left: 5px; top: 2px; width: 7px; height: 5px; border: 2px solid currentColor; border-bottom: none; border-radius: 2px 2px 0 0; }
+.mi-mel::before { left: 12px; top: 2px; width: 2px; height: 9px; background: currentColor; }
+.mi-mel::after { left: 6px; top: 10px; width: 6px; height: 6px; border: 2px solid currentColor; border-radius: 50%; }
+.mi-bass::before { left: 6px; top: 3px; width: 2px; height: 9px; background: currentColor; box-shadow: 6px 0 0 currentColor; }
+.mi-bass::after { left: 4px; top: 10px; width: 5px; height: 5px; border: 2px solid currentColor; border-radius: 50%; box-shadow: 6px 0 0 -1px currentColor; }
+.mi-cmap::before { left: 4px; top: 4px; width: 8px; height: 8px; border: 2px solid currentColor; transform: rotate(45deg); }
+.mi-cmap::after { right: 3px; top: 6px; width: 5px; height: 2px; background: currentColor; box-shadow: -2px 4px 0 currentColor, -2px -4px 0 currentColor; }
+.mi-gld::before { left: 3px; top: 10px; width: 16px; height: 2px; background: currentColor; transform: skewX(-40deg); box-shadow: 0 -5px 0 rgba(138,223,255,.65), 0 -10px 0 rgba(138,223,255,.35); }
+.mi-keyplus::before, .mi-keyminus::before { left: 4px; top: 7px; width: 14px; height: 2px; background: currentColor; }
+.mi-keyplus::after { left: 10px; top: 1px; width: 2px; height: 14px; background: currentColor; }
+.mi-ctrl::before { left: 4px; top: 3px; width: 14px; height: 2px; background: currentColor; box-shadow: 0 4px 0 currentColor, 0 8px 0 currentColor; }
+.mi-ctrl::after { left: 6px; top: 1px; width: 4px; height: 4px; border: 2px solid currentColor; border-radius: 50%; box-shadow: 6px 4px 0 -1px currentColor, -2px 8px 0 -1px currentColor; }
+.mi-keys::before { left: 3px; top: 3px; width: 16px; height: 10px; border: 2px solid currentColor; }
+.mi-keys::after { left: 7px; top: 3px; width: 2px; height: 10px; background: currentColor; box-shadow: 4px 0 0 currentColor, -4px 0 0 currentColor; }
+.mi-stat::before { left: 4px; top: 2px; width: 14px; height: 12px; border: 2px solid currentColor; border-radius: 50%; }
+.mi-stat::after { left: 9px; top: 7px; width: 4px; height: 4px; background: currentColor; border-radius: 50%; }
+.mi-viz::before { left: 4px; bottom: 2px; width: 3px; height: 7px; background: currentColor; box-shadow: 5px -3px 0 currentColor, 10px -6px 0 currentColor; }
+.mi-ent::before { left: 5px; top: 3px; width: 12px; height: 10px; border: 2px solid currentColor; clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+.mi-old::before { left: 4px; top: 3px; width: 11px; height: 11px; border: 2px solid currentColor; border-left-color: transparent; border-radius: 50%; }
+.mi-old::after { right: 3px; top: 2px; width: 0; height: 0; border-left: 5px solid currentColor; border-top: 3px solid transparent; border-bottom: 3px solid transparent; }
+.mi-rank::before { left: 3px; bottom: 2px; width: 4px; height: 5px; border: 2px solid currentColor; box-shadow: 6px -3px 0 -2px currentColor, 12px -6px 0 -2px currentColor; }
+.mi-exit::before, .mi-exit::after { left: 10px; top: 1px; width: 2px; height: 14px; background: currentColor; }
+.mi-exit::before { transform: rotate(45deg); }
+.mi-exit::after { transform: rotate(-45deg); }
+.mi-up::before { left: 9px; top: 1px; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 7px solid currentColor; }
+.mi-up::after { left: 10px; top: 7px; width: 2px; height: 7px; background: currentColor; }
+.mi-mid::before { left: 5px; top: 2px; width: 10px; height: 12px; border: 2px solid currentColor; }
+.mi-mid::after { left: 11px; top: 4px; width: 2px; height: 6px; background: currentColor; box-shadow: -4px 6px 0 -1px currentColor; }
 
 .child-menu li .shortcut {
     font-size: 9px;
@@ -751,7 +839,7 @@ html, body {
     margin-left: auto;
     margin-right: 8px;
     white-space: nowrap;
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     letter-spacing: 0;
 }
 .child-menu li:hover .shortcut {
@@ -763,7 +851,7 @@ html, body {
     font-size: 10px;
     padding: 1px 5px;
     border-radius: 8px;
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     margin-right: 8px;
 }
 .badge.on {
@@ -813,7 +901,7 @@ html, body {
     padding: 6px 14px;
     font-size: 11px;
     color: rgba(50, 110, 200, 0.9);
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -844,7 +932,14 @@ html, body {
 .picker-item:hover { background: rgba(243,175,18,0.15); }
 .picker-item.is-dir  { color: rgb(55, 120, 210); }
 .picker-item.is-up   { color: rgb(140,140,140); font-style: italic; }
-.picker-item i { font-style: normal; min-width: 20px; text-align: center; font-size: 14px; }
+.picker-item i {
+    font-style: normal;
+    min-width: 28px;
+    text-align: center;
+}
+.picker-item.is-dir .menu-glyph {
+    color: rgba(243, 175, 18, 0.92);
+}
 .picker-item .item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-item .item-info { font-size: 10px; color: #aaa; white-space: nowrap; }
 .picker-empty { padding: 28px; text-align: center; color: #aaa; font-size: 13px; }
@@ -864,7 +959,7 @@ html, body {
     color: #fff;
     border-radius: 3px;
     cursor: pointer;
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     letter-spacing: 1px;
     display: none;
     transition: background 0.15s;
@@ -887,8 +982,7 @@ html, body {
 .leaderboard-dialog.show { display: flex; }
 
 .lb-box {
-    width: 520px;
-    max-height: 70vh;
+    width: min(720px, 82vw);
     background: rgba(255,255,255,0.95);
     border-radius: 2px;
     box-shadow: 0 0 32px 4px rgba(0,0,0,0.35);
@@ -932,14 +1026,55 @@ html, body {
 .lb-tab:hover { color: #555; }
 .lb-tab.active { color: #f3af12; border-bottom-color: #f3af12; }
 
-.lb-list {
-    flex: 1;
-    overflow-y: auto;
-    background: rgba(238,238,238,0.85);
-    max-height: 400px;
+.lb-tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(245,246,248,0.94);
+    border-bottom: 1px solid rgba(210,210,210,0.38);
+    flex-wrap: wrap;
 }
-.lb-list::-webkit-scrollbar { width: 4px; }
-.lb-list::-webkit-scrollbar-thumb { background: rgba(66,140,230,0.35); border-radius: 2px; }
+.lb-search {
+    flex: 1;
+    border: 1px solid rgba(185,190,198,0.65);
+    background: rgba(255,255,255,0.94);
+    color: #445160;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    padding: 7px 10px;
+    outline: none;
+}
+.lb-search:focus { border-color: rgba(66,140,230,0.7); }
+.lb-btn {
+    min-width: 64px;
+    text-align: center;
+    padding: 7px 10px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: #e8f4f8;
+    background: #1a2030;
+    cursor: pointer;
+    user-select: none;
+}
+.lb-btn:hover { background: #2b3346; }
+
+.lb-summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 14px;
+    background: rgba(236,240,244,0.95);
+    border-bottom: 1px solid rgba(210,210,210,0.28);
+    color: #667687;
+    font-size: 11px;
+    flex-wrap: wrap;
+}
+
+.lb-list {
+    overflow: hidden;
+    background: rgba(238,238,238,0.85);
+}
 
 .lb-row {
     display: flex;
@@ -952,31 +1087,48 @@ html, body {
 }
 .lb-row:nth-child(-n+3) { background: rgba(243,175,18,0.08); }
 .lb-row .lb-rank {
-    width: 28px;
+    width: 40px;
     font-weight: bold;
     color: #aaa;
     text-align: center;
+    font-family: var(--font-sao);
+    letter-spacing: 0.8px;
 }
-.lb-row:nth-child(1) .lb-rank { color: #f3af12; font-size: 16px; }
-.lb-row:nth-child(2) .lb-rank { color: #999; font-size: 14px; }
-.lb-row:nth-child(3) .lb-rank { color: #b87333; font-size: 14px; }
+.lb-row:nth-child(1) .lb-rank { color: #f3af12; font-size: 12px; }
+.lb-row:nth-child(2) .lb-rank { color: #999; font-size: 12px; }
+.lb-row:nth-child(3) .lb-rank { color: #b87333; font-size: 12px; }
 .lb-row .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-row .lb-name .lb-sub { color: #9aa5b1; font-size: 10px; margin-left: 6px; }
 .lb-row .lb-lv { color: #428ce6; font-size: 11px; min-width: 44px; }
 .lb-row .lb-stat { color: #888; font-size: 11px; min-width: 60px; text-align: right; }
 
 .lb-row.lb-self { background: rgba(66,140,230,0.12); font-weight: bold; }
+.lb-row.lb-jump { background: rgba(243,175,18,0.16); box-shadow: inset 3px 0 0 #f3af12; }
 
 .lb-empty { padding: 40px; text-align: center; color: #aaa; font-size: 13px; }
 .lb-loading { padding: 40px; text-align: center; color: #aaa; font-size: 13px; }
 
 .lb-footer {
-    height: 50px;
+    height: 56px;
     background: rgba(255,255,255,0.85);
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     flex-shrink: 0;
+    padding: 0 14px;
 }
+.lb-pager {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.lb-page {
+    min-width: 72px;
+    text-align: center;
+    color: #666;
+    font-size: 11px;
+}
+.lb-meta-btns { display: flex; gap: 8px; }
 
 /* ═══════════════════════════════════════
    Alert Dialog
@@ -1243,41 +1395,41 @@ html, body {
 
             <!-- Play Controls sub-menu -->
             <ul class="child-menu" id="sub-playCtrl" data-group="playCtrl">
-                <li data-action="play"><i>▶</i><span>播放 / 暂停</span><small class="shortcut">F5</small></li>
-                <li data-action="stop"><i>■</i><span>停止</span><small class="shortcut">F6</small></li>
-                <li data-action="speedup"><i>▲</i><span>加速 (+0.1)</span><small class="shortcut">F7</small></li>
-                <li data-action="speeddown"><i>▼</i><span>减速 (-0.1)</span><small class="shortcut">F8</small></li>
-                <li data-action="restart"><i>↻</i><span>重新开始</span></li>
+                <li data-action="play"><i class="menu-glyph mi-play"></i><span>播放 / 暂停</span><small class="shortcut">F5</small></li>
+                <li data-action="stop"><i class="menu-glyph mi-stop"></i><span>停止</span><small class="shortcut">F6</small></li>
+                <li data-action="speedup"><i class="menu-glyph mi-speedup"></i><span>加速 (+0.1)</span><small class="shortcut">F7</small></li>
+                <li data-action="speeddown"><i class="menu-glyph mi-speeddown"></i><span>减速 (-0.1)</span><small class="shortcut">F8</small></li>
+                <li data-action="restart"><i class="menu-glyph mi-restart"></i><span>重新开始</span></li>
             </ul>
 
             <!-- File sub-menu -->
             <ul class="child-menu" id="sub-fileMenu" data-group="fileMenu">
-                <li data-action="open"><i>📄</i><span>打开文件</span></li>
-                <li data-action="folder"><i>📁</i><span>文件夹循环</span></li>
+                <li data-action="open"><i class="menu-glyph mi-file"></i><span>打开文件</span></li>
+                <li data-action="folder"><i class="menu-glyph mi-dir"></i><span>文件夹循环</span></li>
             </ul>
 
             <!-- Settings sub-menu -->
             <ul class="child-menu" id="sub-settings" data-group="settings">
-                <li data-action="toggle_melody"><i>🎵</i><span>主旋律</span><span class="badge on" id="badge-melody">ON</span></li>
-                <li data-action="toggle_bass"><i>🎸</i><span>伴奏</span><span class="badge on" id="badge-bass">ON</span></li>
-                <li data-action="toggle_directc"><i>🔑</i><span>C调直转</span><span class="badge off" id="badge-directc">OFF</span></li>
-                <li data-action="toggle_glissando"><i>🎶</i><span>结尾滑奏</span><span class="badge off" id="badge-glissando">OFF</span></li>
-                <li data-action="transpose_up"><i>⬆</i><span>升调 (+1)</span></li>
-                <li data-action="transpose_down"><i>⬇</i><span>降调 (-1)</span></li>
+                <li data-action="toggle_melody"><i class="menu-glyph mi-mel"></i><span>主旋律</span><span class="badge on" id="badge-melody">ON</span></li>
+                <li data-action="toggle_bass"><i class="menu-glyph mi-bass"></i><span>伴奏</span><span class="badge on" id="badge-bass">ON</span></li>
+                <li data-action="toggle_directc"><i class="menu-glyph mi-cmap"></i><span>C调直转</span><span class="badge off" id="badge-directc">OFF</span></li>
+                <li data-action="toggle_glissando"><i class="menu-glyph mi-gld"></i><span>结尾滑奏</span><span class="badge off" id="badge-glissando">OFF</span></li>
+                <li data-action="transpose_up"><i class="menu-glyph mi-keyplus"></i><span>升调 (+1)</span></li>
+                <li data-action="transpose_down"><i class="menu-glyph mi-keyminus"></i><span>降调 (-1)</span></li>
             </ul>
 
             <!-- Panels sub-menu -->
             <ul class="child-menu" id="sub-panels" data-group="panels">
-                <li data-action="panel_control"><i>⚙</i><span>控制面板</span></li>
-                <li data-action="panel_piano"><i>⌨</i><span>钢琴面板</span></li>
-                <li data-action="panel_status"><i>◉</i><span>状态面板</span></li>
-                <li data-action="panel_viz"><i>≡</i><span>可视化</span></li>
+                <li data-action="panel_control"><i class="menu-glyph mi-ctrl"></i><span>控制面板</span></li>
+                <li data-action="panel_piano"><i class="menu-glyph mi-keys"></i><span>钢琴面板</span></li>
+                <li data-action="panel_status"><i class="menu-glyph mi-stat"></i><span>状态面板</span></li>
+                <li data-action="panel_viz"><i class="menu-glyph mi-viz"></i><span>可视化</span></li>
                 <li class="sep"></li>
-                <li data-action="switch_sao"><i>◆</i><span>SAO Entity UI</span></li>
-                <li data-action="switch_old"><i>↺</i><span>Old School UI</span></li>
+                <li data-action="switch_sao"><i class="menu-glyph mi-ent"></i><span>SAO Entity UI</span></li>
+                <li data-action="switch_old"><i class="menu-glyph mi-old"></i><span>Old School UI</span></li>
                 <li class="sep"></li>
-                <li data-action="leaderboard"><i>◆</i><span>排行榜</span></li>
-                <li data-action="exit"><i>✕</i><span>退出</span></li>
+                <li data-action="leaderboard"><i class="menu-glyph mi-rank"></i><span>排行榜</span></li>
+                <li data-action="exit"><i class="menu-glyph mi-exit"></i><span>退出</span></li>
             </ul>
         </div>
     </div>
@@ -1285,7 +1437,7 @@ html, body {
 
 <!-- Current file display -->
 <div class="current-file" id="current-file"></div>
-<div class="current-file" style="bottom:5px;font-size:10px;color:rgba(255,255,255,0.3);font-family:'sao','yuanJWD',sans-serif;letter-spacing:0.8px;">F5 播放  F6 停止  F7 加速  F8 减速</div>
+<div class="current-file" style="bottom:5px;font-size:10px;color:rgba(255,255,255,0.3);font-family:var(--font-ui);letter-spacing:0.8px;">F5 播放  F6 停止  F7 加速  F8 减速</div>
 
 <!-- TV Off Overlay -->
 <div id="tv-off-overlay"></div>
@@ -1309,17 +1461,31 @@ html, body {
 <!-- Leaderboard Dialog -->
 <div class="leaderboard-dialog" id="lb-dialog">
     <div class="lb-box">
-        <div class="lb-header"><span>◆ LEADERBOARD ◆</span></div>
+        <div class="lb-header"><span>SYSTEM LEADERBOARD</span></div>
         <div class="lb-tabs" id="lb-tabs">
             <div class="lb-tab active" data-sort="xp">经验值</div>
             <div class="lb-tab" data-sort="level">等级</div>
             <div class="lb-tab" data-sort="songs_played">演奏数</div>
             <div class="lb-tab" data-sort="play_time">总时长</div>
         </div>
+        <div class="lb-tools">
+            <input class="lb-search" id="lb-search" placeholder="搜索昵称 / 设备名，输入 #12 可跳转排名" />
+            <div class="lb-btn" id="lb-search-btn">SEARCH</div>
+            <div class="lb-btn" id="lb-mine-btn">MY RANK</div>
+        </div>
+        <div class="lb-summary">
+            <span id="lb-self-id">PLAYER ID: --</span>
+            <span id="lb-self-rank">SELF RANK: --</span>
+        </div>
         <div class="lb-list" id="lb-list">
             <div class="lb-loading">加载中...</div>
         </div>
         <div class="lb-footer">
+            <div class="lb-pager">
+                <div class="lb-btn" id="lb-prev">PREV</div>
+                <div class="lb-page" id="lb-page">1 / 1</div>
+                <div class="lb-btn" id="lb-next">NEXT</div>
+            </div>
             <div class="btn-circle btn-close" id="lb-close"><div class="inner"></div></div>
         </div>
     </div>
@@ -1660,7 +1826,7 @@ function showFilePicker(dataJson) {
     if (data.parent) {
         var upEl = document.createElement('div');
         upEl.className = 'picker-item is-up';
-        upEl.innerHTML = '<i>↑</i><span class="item-name">.. 上级目录</span>';
+        upEl.innerHTML = '<i class="menu-glyph mi-up"></i><span class="item-name">.. 上级目录</span>';
         upEl.addEventListener('click', function() {
             playSound('snd-click');
             _pickerBrowse(data.parent);
@@ -1671,7 +1837,7 @@ function showFilePicker(dataJson) {
     (data.dirs || []).forEach(function(d) {
         var el = document.createElement('div');
         el.className = 'picker-item is-dir';
-        el.innerHTML = '<i>📁</i><span class="item-name">' + _escHtml(d.name) + '</span>';
+        el.innerHTML = '<i class="menu-glyph mi-dir"></i><span class="item-name">' + _escHtml(d.name) + '</span>';
         el.addEventListener('click', function() {
             playSound('snd-click');
             _pickerBrowse(d.path);
@@ -1683,7 +1849,7 @@ function showFilePicker(dataJson) {
         var el = document.createElement('div');
         el.className = 'picker-item';
         var infoStr = f.size ? '<span class="item-info">' + _fmtSize(f.size) + '</span>' : '';
-        el.innerHTML = '<i>🎵</i><span class="item-name">' + _escHtml(f.name) + '</span>' + infoStr;
+        el.innerHTML = '<i class="menu-glyph mi-mid"></i><span class="item-name">' + _escHtml(f.name) + '</span>' + infoStr;
         el.addEventListener('click', function() {
             playSound('snd-click');
             closeFilePicker();
@@ -1835,34 +2001,122 @@ document.addEventListener('keydown', function(e) {
 
 /* ═══ Leaderboard ═══ */
 var _lbCurrentSort = 'xp';
+var _lbEntries = [];
+var _lbFiltered = [];
+var _lbPageIndex = 0;
+var _lbPerPage = 10;
+var _lbSelfDevice = '';
+var _lbSelfDeviceName = '';
+var _lbSelfRank = null;
+var _lbFocusRank = null;
+
+function _updateLbSize(rowCount) {
+    var box = document.querySelector('#lb-dialog .lb-box');
+    var rows = Math.max(1, Math.min(_lbPerPage, rowCount || 1));
+    box.style.height = (52 + 42 + 42 + 38 + rows * 40 + 56) + 'px';
+}
+
+function _lbStatValue(e) {
+    if (_lbCurrentSort === 'xp') return 'XP ' + e.xp;
+    if (_lbCurrentSort === 'level') return 'Lv.' + e.level;
+    if (_lbCurrentSort === 'songs_played') return e.songs_played + '曲';
+    if (_lbCurrentSort === 'play_time') return _fmtTime(e.play_time);
+    return '—';
+}
+
+function _lbApplyFilter(resetPage) {
+    var q = (document.getElementById('lb-search').value || '').trim().toLowerCase();
+    _lbFocusRank = null;
+    if (!q) {
+        _lbFiltered = _lbEntries.slice();
+    } else if (/^#?\d+$/.test(q)) {
+        var rank = parseInt(q.replace('#', ''), 10);
+        _lbFiltered = _lbEntries.slice();
+        var idx = _lbFiltered.findIndex(function(e) { return Number(e.rank) === rank; });
+        if (idx >= 0) {
+            _lbFocusRank = rank;
+            _lbPageIndex = Math.floor(idx / _lbPerPage);
+            _lbRender();
+            return;
+        }
+        _lbFiltered = [];
+    } else {
+        _lbFiltered = _lbEntries.filter(function(e) {
+            var hay = [e.rank, e.player_id, e.username, e.device_name, e.profession, e.device_id].join(' ').toLowerCase();
+            return hay.indexOf(q) >= 0;
+        });
+    }
+    if (resetPage !== false) _lbPageIndex = 0;
+    _lbRender();
+}
+
+function _lbRender() {
+    var list = document.getElementById('lb-list');
+    var shown = _lbSelfDeviceName || '--';
+    document.getElementById('lb-self-id').textContent = 'PLAYER ID: ' + shown;
+    document.getElementById('lb-self-rank').textContent = 'SELF RANK: ' + (_lbSelfRank ? ('#' + _lbSelfRank) : '--');
+
+    if (!_lbFiltered || _lbFiltered.length === 0) {
+        list.innerHTML = '<div class="lb-empty">未找到匹配的排名记录</div>';
+        document.getElementById('lb-page').textContent = '0 / 0';
+        _updateLbSize(1);
+        return;
+    }
+
+    var totalPages = Math.max(1, Math.ceil(_lbFiltered.length / _lbPerPage));
+    _lbPageIndex = Math.max(0, Math.min(totalPages - 1, _lbPageIndex));
+    var start = _lbPageIndex * _lbPerPage;
+    var pageRows = _lbFiltered.slice(start, start + _lbPerPage);
+    list.innerHTML = '';
+    pageRows.forEach(function(e) {
+        var row = document.createElement('div');
+        row.className = 'lb-row';
+        if (e.is_self || (_lbSelfDevice && e.device_id === _lbSelfDevice)) row.className += ' lb-self';
+        if (_lbFocusRank && Number(e.rank) === Number(_lbFocusRank)) row.className += ' lb-jump';
+        var primaryName = _escHtml(e.player_id || e.username || e.device_name || 'Player');
+        var metaBits = [];
+        if (e.username && e.username !== (e.player_id || e.device_name)) metaBits.push('@' + _escHtml(e.username));
+        if (e.profession) metaBits.push(_escHtml(e.profession));
+        row.innerHTML =
+            '<span class="lb-rank">' + (e.rank <= 3 ? ['TOP1','TOP2','TOP3'][e.rank-1] : '#'+e.rank) + '</span>' +
+            '<span class="lb-name">' + primaryName + (metaBits.length ? '<span class="lb-sub">' + metaBits.join(' · ') + '</span>' : '') + '</span>' +
+            '<span class="lb-lv">Lv.' + e.level + '</span>' +
+            '<span class="lb-stat">' + _lbStatValue(e) + '</span>';
+        list.appendChild(row);
+    });
+    document.getElementById('lb-page').textContent = (_lbPageIndex + 1) + ' / ' + totalPages;
+    document.getElementById('lb-prev').style.opacity = _lbPageIndex > 0 ? '1' : '0.42';
+    document.getElementById('lb-next').style.opacity = _lbPageIndex < totalPages - 1 ? '1' : '0.42';
+    _updateLbSize(pageRows.length);
+}
 
 function showLeaderboard(dataJson) {
     var data = (typeof dataJson === 'string') ? JSON.parse(dataJson) : dataJson;
-    var list = document.getElementById('lb-list');
+    _lbCurrentSort = data.sort || _lbCurrentSort;
+    _lbEntries = (data && data.entries) ? data.entries.slice() : [];
+    _lbSelfDevice = data.self_device || '';
+    _lbSelfDeviceName = data.self_player_id || data.self_device_name || '';
+    _lbSelfRank = null;
+    _lbFocusRank = null;
+    _lbEntries.forEach(function(e, idx) {
+        if (e.rank === undefined) e.rank = idx + 1;
+        if (e.is_self || (_lbSelfDevice && e.device_id === _lbSelfDevice)) {
+            _lbSelfRank = e.rank;
+            _lbSelfDeviceName = _lbSelfDeviceName || e.player_id || e.username || e.device_name || '';
+        }
+    });
+    document.querySelectorAll('.lb-tab').forEach(function(t) { t.classList.remove('active'); });
+    var activeTab = document.querySelector('.lb-tab[data-sort="' + _lbCurrentSort + '"]');
+    if (activeTab) activeTab.classList.add('active');
 
-    if (!data || !data.entries || data.entries.length === 0) {
-        list.innerHTML = '<div class="lb-empty">暂无排行数据<br><span style="font-size:11px;color:#bbb;">完成演奏后数据将自动上传</span></div>';
+    if (_lbEntries.length === 0) {
+        document.getElementById('lb-list').innerHTML = '<div class="lb-empty">暂无排行数据<br><span style="font-size:11px;color:#bbb;">完成演奏后数据将自动上传</span></div>';
+        document.getElementById('lb-self-id').textContent = 'PLAYER ID: ' + (_lbSelfDeviceName || '--');
+        document.getElementById('lb-self-rank').textContent = 'SELF RANK: --';
+        document.getElementById('lb-page').textContent = '0 / 0';
+        _updateLbSize(1);
     } else {
-        list.innerHTML = '';
-        var selfDevice = data.self_device || '';
-        data.entries.forEach(function(e) {
-            var row = document.createElement('div');
-            row.className = 'lb-row';
-            if (e.is_self) row.className += ' lb-self';
-
-            var statVal = '';
-            if (_lbCurrentSort === 'xp') statVal = 'XP ' + e.xp;
-            else if (_lbCurrentSort === 'level') statVal = 'Lv.' + e.level;
-            else if (_lbCurrentSort === 'songs_played') statVal = e.songs_played + '曲';
-            else if (_lbCurrentSort === 'play_time') statVal = _fmtTime(e.play_time);
-
-            row.innerHTML =
-                '<span class="lb-rank">' + (e.rank <= 3 ? ['🥇','🥈','🥉'][e.rank-1] : '#'+e.rank) + '</span>' +
-                '<span class="lb-name">' + _escHtml(e.username) + (e.profession ? ' <span style="color:#ccc;font-size:10px;">' + _escHtml(e.profession) + '</span>' : '') + '</span>' +
-                '<span class="lb-lv">Lv.' + e.level + '</span>' +
-                '<span class="lb-stat">' + statVal + '</span>';
-            list.appendChild(row);
-        });
+        _lbApplyFilter(true);
     }
 
     playSound('snd-alert');
@@ -1880,6 +2134,37 @@ function _fmtTime(sec) {
 }
 
 document.getElementById('lb-close').addEventListener('click', closeLeaderboard);
+document.getElementById('lb-prev').addEventListener('click', function() {
+    if (_lbPageIndex > 0) {
+        _lbPageIndex -= 1;
+        _lbRender();
+        playSound('snd-click');
+    }
+});
+document.getElementById('lb-next').addEventListener('click', function() {
+    var totalPages = Math.max(1, Math.ceil(_lbFiltered.length / _lbPerPage));
+    if (_lbPageIndex < totalPages - 1) {
+        _lbPageIndex += 1;
+        _lbRender();
+        playSound('snd-click');
+    }
+});
+document.getElementById('lb-search-btn').addEventListener('click', function() {
+    playSound('snd-click');
+    _lbApplyFilter(true);
+});
+document.getElementById('lb-mine-btn').addEventListener('click', function() {
+    if (!_lbSelfRank) return;
+    document.getElementById('lb-search').value = '#' + _lbSelfRank;
+    playSound('snd-click');
+    _lbApplyFilter(true);
+});
+document.getElementById('lb-search').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        playSound('snd-click');
+        _lbApplyFilter(true);
+    }
+});
 
 document.getElementById('lb-tabs').querySelectorAll('.lb-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {

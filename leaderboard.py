@@ -23,6 +23,7 @@ import hmac
 import base64
 import struct
 import secrets
+import platform
 from typing import Optional, Dict, List
 
 # ═══════════════════════════════════════════════
@@ -32,6 +33,7 @@ from typing import Optional, Dict, List
 SERVER_HOST = '47.82.157.220'
 SERVER_PORT = 9820
 SERVER_URL = f'http://{SERVER_HOST}:{SERVER_PORT}'
+_LAST_GOOD_SERVER_URL = None
 
 # 共享密钥 (客户端 & 服务端一致)
 _SHARED_SECRET = b'SaoMidiPlayer_Leaderboard_2024_v1'
@@ -41,6 +43,88 @@ _base_dir = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
              else os.path.dirname(os.path.abspath(__file__)))
 _CACHE_FILE = os.path.join(_base_dir, '.lb_cache.json')
 _CACHE_TTL = 120  # 缓存有效期 (秒)
+
+
+def _normalize_server_url(url: str) -> str:
+    url = (url or '').strip().rstrip('/')
+    if not url:
+        return ''
+    if '://' not in url:
+        url = 'http://' + url
+    return url
+
+
+def _candidate_server_urls() -> List[str]:
+    """返回客户端会尝试的排行榜服务地址列表."""
+    urls: List[str] = []
+
+    env_url = _normalize_server_url(os.environ.get('SAO_LEADERBOARD_URL', ''))
+    if env_url:
+        urls.append(env_url)
+
+    env_host = (os.environ.get('SAO_LEADERBOARD_HOST') or '').strip()
+    env_port = (os.environ.get('SAO_LEADERBOARD_PORT') or str(SERVER_PORT)).strip()
+    if env_host:
+        urls.extend([
+            _normalize_server_url(f'https://{env_host}:{env_port}'),
+            _normalize_server_url(f'http://{env_host}:{env_port}'),
+            _normalize_server_url(f'https://{env_host}'),
+            _normalize_server_url(f'http://{env_host}'),
+        ])
+
+    urls.extend([
+        _normalize_server_url(SERVER_URL),
+        _normalize_server_url(f'https://{SERVER_HOST}:{SERVER_PORT}'),
+        _normalize_server_url(f'https://{SERVER_HOST}'),
+        _normalize_server_url(f'http://localhost:{SERVER_PORT}'),
+        _normalize_server_url(f'http://127.0.0.1:{SERVER_PORT}'),
+    ])
+
+    out: List[str] = []
+    seen = set()
+    global _LAST_GOOD_SERVER_URL
+    if _LAST_GOOD_SERVER_URL:
+        seen.add(_LAST_GOOD_SERVER_URL)
+        out.append(_LAST_GOOD_SERVER_URL)
+    for url in urls:
+        if url and url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def _post_json(path: str, payload: dict, timeout: float) -> Optional[dict]:
+    """POST 到第一个可用服务端，成功则返回 JSON 响应."""
+    import urllib.request
+    import urllib.error
+    import ssl
+
+    body = json.dumps(payload).encode('utf-8')
+    last_error = None
+
+    for base_url in _candidate_server_urls():
+        try:
+            req = urllib.request.Request(
+                f'{base_url}{path}',
+                data=body,
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            kwargs = {'timeout': timeout}
+            if base_url.startswith('https://'):
+                kwargs['context'] = ssl._create_unverified_context()
+            with urllib.request.urlopen(req, **kwargs) as resp:
+                global _LAST_GOOD_SERVER_URL
+                _LAST_GOOD_SERVER_URL = base_url
+                raw = resp.read().decode('utf-8')
+                return json.loads(raw) if raw else {}
+        except Exception as e:
+            last_error = e
+            continue
+
+    if last_error:
+        raise last_error
+    return None
 
 
 # ═══════════════════════════════════════════════
@@ -151,6 +235,54 @@ def _get_device_id() -> str:
     return did
 
 
+def _sanitize_device_name(name: str) -> str:
+    raw = (name or '').strip()
+    safe = ''.join(ch for ch in raw if ch.isalnum() or ch in ' -_#@.[]()（）【】')
+    safe = safe.strip(' -_')
+    return (safe or 'Local Device')[:32]
+
+
+def _get_device_name() -> str:
+    """兼容旧逻辑，现返回本地玩家输入的 playerID(username)."""
+    try:
+        from character_profile import load_profile
+        profile = load_profile() or {}
+        player_id = _sanitize_device_name(profile.get('username', ''))
+        if player_id and player_id != 'Local Device':
+            return player_id
+    except Exception:
+        pass
+
+    env_name = os.environ.get('SAO_PLAYER_ID', '') or os.environ.get('SAO_DEVICE_NAME', '')
+    if env_name:
+        return _sanitize_device_name(env_name)
+    return 'Player'
+
+
+def get_local_identity() -> Dict[str, str]:
+    """返回本机排行榜身份信息。"""
+    return {
+        'device_id': _get_device_id(),
+        'device_name': _get_device_name(),
+        'player_id': _get_device_name(),
+    }
+
+
+def _normalize_entries(entries: Optional[List[Dict]]) -> List[Dict]:
+    out: List[Dict] = []
+    for i, row in enumerate(entries or []):
+        item = dict(row or {})
+        item.setdefault('rank', i + 1)
+        player_id = _sanitize_device_name(
+            item.get('player_id', '') or item.get('username', '') or item.get('device_name', '') or 'Player'
+        )
+        item['player_id'] = player_id
+        item['device_name'] = player_id
+        item.setdefault('device_id', '')
+        out.append(item)
+    return out
+
+
 # ═══════════════════════════════════════════════
 #  API 接口
 # ═══════════════════════════════════════════════
@@ -165,13 +297,12 @@ def upload_stats(username: str = '', level: int = 1, xp: int = 0,
     Returns: True if successful
     """
     try:
-        import urllib.request
-        import urllib.error
-
-        device_id = _get_device_id()
+        identity = get_local_identity()
         payload = {
             'action': 'upload',
-            'device_id': device_id,
+            'device_id': identity['device_id'],
+            'device_name': identity['player_id'],
+            'player_id': identity['player_id'],
             'username': username or 'Player',
             'level': level,
             'xp': xp,
@@ -181,16 +312,8 @@ def upload_stats(username: str = '', level: int = 1, xp: int = 0,
             'timestamp': int(time.time()),
         }
         encrypted = encrypt_payload(payload)
-        body = json.dumps({'data': encrypted}).encode('utf-8')
-
-        req = urllib.request.Request(
-            f'{SERVER_URL}/api/upload',
-            data=body,
-            headers={'Content-Type': 'application/json'},
-            method='POST',
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
+        resp = _post_json('/api/upload', {'data': encrypted}, timeout=5)
+        return isinstance(resp, dict) and not resp.get('error')
     except Exception:
         return False
 
@@ -213,32 +336,23 @@ def fetch_leaderboard(sort_by: str = 'xp', limit: int = 50) -> Optional[List[Dic
     if cache and time.time() - cache.get('ts', 0) < _CACHE_TTL:
         cached_list = cache.get(sort_by)
         if cached_list:
-            return cached_list
+            return _normalize_entries(cached_list)
 
     try:
-        import urllib.request
-
         payload = {
             'action': 'fetch',
             'sort_by': sort_by,
             'limit': limit,
             'device_id': _get_device_id(),
+            'device_name': _get_device_name(),
+            'player_id': _get_device_name(),
         }
         encrypted = encrypt_payload(payload)
-        body = json.dumps({'data': encrypted}).encode('utf-8')
-
-        req = urllib.request.Request(
-            f'{SERVER_URL}/api/leaderboard',
-            data=body,
-            headers={'Content-Type': 'application/json'},
-            method='POST',
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            resp_data = json.loads(resp.read().decode('utf-8'))
+        resp_data = _post_json('/api/leaderboard', {'data': encrypted}, timeout=8)
 
         if 'data' in resp_data:
             result = decrypt_payload(resp_data['data'])
-            entries = result.get('leaderboard', [])
+            entries = _normalize_entries(result.get('leaderboard', []))
             # 更新缓存
             _save_cache(sort_by, entries)
             return entries
@@ -247,7 +361,7 @@ def fetch_leaderboard(sort_by: str = 'xp', limit: int = 50) -> Optional[List[Dic
 
     # 回退到缓存 (即使过期)
     if cache:
-        return cache.get(sort_by, [])
+        return _normalize_entries(cache.get(sort_by, []))
     return None
 
 

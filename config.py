@@ -182,7 +182,7 @@ CHORD_PRESERVE_BASS = True   # 保留低音根音（和弦基础）
 CHORD_PRESERVE_TOP = True    # 保留高音旋律（最重要）
 
 # GUI设置
-WINDOW_TITLE = "咏 Midiplayer v3.4.5+3405 60/88键位"
+WINDOW_TITLE = "咏 Midiplayer v3.4.6+3406 60/88键位"
 WINDOW_SIZE = "900x980"
 BUTTON_WIDTH = 60
 BUTTON_HEIGHT = 60

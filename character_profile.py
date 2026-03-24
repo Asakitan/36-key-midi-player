@@ -316,7 +316,7 @@ class SAOWelcomeDialog:
         final_w, final_h = 520, 520
         initial_w = 135
 
-        # 居中
+        # 固定在屏幕中央弹出（不跟随父窗口）
         sx = self._dlg.winfo_screenwidth()
         sy = self._dlg.winfo_screenheight()
         px = (sx - final_w) // 2

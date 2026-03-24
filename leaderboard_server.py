@@ -140,6 +140,13 @@ def encrypt_payload(data: dict) -> str:
 _data_lock = threading.Lock()
 
 
+def _sanitize_device_name(name: str) -> str:
+    raw = (name or '').strip()
+    safe = ''.join(ch for ch in raw if ch.isalnum() or ch in ' -_#@.[]()（）【】')
+    safe = safe.strip(' -_')
+    return (safe or 'Local Device')[:32]
+
+
 def _load_data() -> dict:
     """加载玩家数据 {device_id: {username, level, xp, ...}}."""
     with _data_lock:
@@ -201,6 +208,7 @@ def handle_upload(payload: dict) -> dict:
         return {'error': 'invalid device_id'}
 
     username = str(payload.get('username', 'Player'))[:32]
+    player_id = _sanitize_device_name(payload.get('player_id', '') or username or payload.get('device_name', '') or 'Player')
     level = min(9999, max(1, int(payload.get('level', 1))))
     xp = min(99999999, max(0, int(payload.get('xp', 0))))
     songs_played = min(999999, max(0, int(payload.get('songs_played', 0))))
@@ -210,6 +218,8 @@ def handle_upload(payload: dict) -> dict:
     data = _load_data()
     data[device_id] = {
         'username': username,
+        'device_name': player_id,
+        'player_id': player_id,
         'level': level,
         'xp': xp,
         'songs_played': songs_played,
@@ -218,7 +228,7 @@ def handle_upload(payload: dict) -> dict:
         'last_seen': int(time.time()),
     }
     _save_data(data)
-    _log(f'upload: {username} Lv.{level} XP:{xp} songs:{songs_played}')
+    _log(f'upload: {player_id} Lv.{level} XP:{xp} songs:{songs_played}')
     return {'ok': True}
 
 
@@ -231,7 +241,15 @@ def handle_leaderboard(payload: dict) -> dict:
         sort_by = 'xp'
 
     data = _load_data()
-    entries = list(data.values())
+    entries = []
+    for device_id, entry in data.items():
+        row = dict(entry or {})
+        row['device_id'] = device_id
+        row['player_id'] = _sanitize_device_name(
+            row.get('player_id', '') or row.get('username', '') or row.get('device_name', '') or 'Player'
+        )
+        row['device_name'] = row['player_id']
+        entries.append(row)
 
     # 排序
     entries.sort(key=lambda e: e.get(sort_by, 0), reverse=True)
@@ -242,6 +260,9 @@ def handle_leaderboard(payload: dict) -> dict:
     for i, e in enumerate(entries):
         result.append({
             'rank': i + 1,
+            'device_id': e.get('device_id', ''),
+            'device_name': e.get('device_name', ''),
+            'player_id': e.get('player_id', ''),
             'username': e.get('username', 'Player'),
             'level': e.get('level', 1),
             'xp': e.get('xp', 0),

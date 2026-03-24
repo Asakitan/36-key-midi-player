@@ -31,6 +31,7 @@ from config import (
 )
 from sao_theme import (
     SAOColors, SAOButton, SAOProgressBar, SAOTitleBar, SAODialog,
+    SAOLeaderboardDialog,
     SAOStatusPill, SAOResizeGrip, SAOFilePicker, SAOSeparator,
     SAOPopUpMenu, SAOHPBar, SAOLinkStart, SAOCircleButton,
     Animator, lerp, lerp_color, ease_out
@@ -140,6 +141,87 @@ def _apply_panel_style(panel):
         pass
 
 
+# ── SAO HUD 面板样式常量 ──
+_SAO_PANEL_BG = '#fafafa'          # 面板主背景
+_SAO_PANEL_HEADER_BG = '#1a2030'   # 深色标题栏
+_SAO_PANEL_HEADER_FG = '#e8f4f8'   # 标题文字
+_SAO_PANEL_BORDER = '#d1d1d6'      # 外边框
+_SAO_PANEL_ACCENT = '#86dfff'      # 青色强调
+_SAO_PANEL_GOLD = '#f3af12'        # 金色强调
+_SAO_PANEL_SEP = '#e0e0e0'         # 分隔线
+_SAO_PANEL_BODY_BG = '#ffffff'     # 内容区背景
+_SAO_PANEL_LABEL_FG = '#999999'    # 标签文字
+_SAO_PANEL_VALUE_FG = '#333333'    # 数值文字
+
+
+def _sao_panel_header(parent, title_icon, title_text, close_cmd):
+    """创建 SAO 风格深色标题栏，返回 (header_frame, close_label)"""
+    hdr = tk.Frame(parent, bg=_SAO_PANEL_HEADER_BG, height=28)
+    hdr.pack(fill=tk.X)
+    hdr.pack_propagate(False)
+    # 左侧角标 + 标题
+    accent = tk.Frame(hdr, bg=_SAO_PANEL_ACCENT, width=3, height=16)
+    accent.pack(side=tk.LEFT, padx=(6, 0), pady=6)
+    tk.Label(hdr, text=f'{title_icon} {title_text}',
+             bg=_SAO_PANEL_HEADER_BG, fg=_SAO_PANEL_HEADER_FG,
+             font=get_sao_font(8, True)).pack(side=tk.LEFT, padx=6)
+    # 右侧系统标记
+    tk.Label(hdr, text='◇', bg=_SAO_PANEL_HEADER_BG, fg='#4a5a6a',
+             font=get_sao_font(7)).pack(side=tk.RIGHT, padx=(0, 2))
+    close_lbl = tk.Label(hdr, text='×', bg=_SAO_PANEL_HEADER_BG, fg='#8a9aaa',
+                          font=get_sao_font(10, True), cursor='hand2')
+    close_lbl.pack(side=tk.RIGHT, padx=4)
+    close_lbl.bind('<Button-1>', lambda e: close_cmd())
+    # hover 效果
+    def _enter(e): close_lbl.configure(fg='#ff6666')
+    def _leave(e): close_lbl.configure(fg='#8a9aaa')
+    close_lbl.bind('<Enter>', _enter)
+    close_lbl.bind('<Leave>', _leave)
+    return hdr, close_lbl
+
+
+def _sao_panel_body(parent):
+    """创建 SAO 风格面板内容区 (带角标装饰)"""
+    # 分隔线
+    tk.Frame(parent, bg=_SAO_PANEL_ACCENT, height=1).pack(fill=tk.X)
+    body = tk.Frame(parent, bg=_SAO_PANEL_BODY_BG)
+    body.pack(fill=tk.BOTH, expand=True, padx=1, pady=(0, 1))
+    return body
+
+
+def _sao_panel_hud_canvas(parent):
+    """在面板底部添加一个 HUD 装饰画布层"""
+    cv = tk.Canvas(parent, height=16, bg=_SAO_PANEL_BODY_BG,
+                   highlightthickness=0, bd=0)
+    cv.pack(fill=tk.X, side=tk.BOTTOM)
+    return cv
+
+
+def _sao_row(parent, label_text, value_text='', value_fg=None, value_font=None):
+    """创建 SAO 风格的 标签: 值 行"""
+    row = tk.Frame(parent, bg=_SAO_PANEL_BODY_BG)
+    row.pack(fill=tk.X, pady=2)
+    tk.Label(row, text=label_text, bg=_SAO_PANEL_BODY_BG,
+             fg=_SAO_PANEL_LABEL_FG, font=get_sao_font(8),
+             anchor='w').pack(side=tk.LEFT)
+    val_lbl = tk.Label(row, text=value_text, bg=_SAO_PANEL_BODY_BG,
+                        fg=value_fg or _SAO_PANEL_VALUE_FG,
+                        font=value_font or get_sao_font(9, True))
+    val_lbl.pack(side=tk.RIGHT)
+    return val_lbl
+
+
+def _sao_pill(parent, text, active, command):
+    """创建 SAO 风格切换按钮"""
+    bg = _SAO_PANEL_GOLD if active else '#1a2030'
+    fg = '#ffffff' if active else '#8a9aaa'
+    lbl = tk.Label(parent, text=text, bg=bg, fg=fg,
+                   font=get_cjk_font(8, True),
+                   padx=8, pady=2, cursor='hand2', relief=tk.FLAT)
+    lbl.bind('<Button-1>', lambda e: command())
+    return lbl
+
+
 def _apply_viz_light_theme(viz):
     """将 MidiVisualizer 内部深色 ModernColors 覆盖为白色 SAO 配色"""
     # ── 关键: 同步更新类属性, 否则渲染代码里的 lerp 仍用暗色底 ──
@@ -189,6 +271,17 @@ def _set_clickthrough_style(win):
         style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         style |= (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW)
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+    except Exception:
+        pass
+
+
+def _disable_native_window_shadow(win):
+    """关闭透明/异形窗口的系统矩形阴影，避免阴影落到错误区域。"""
+    try:
+        win.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id()) or win.winfo_id()
+        policy = ctypes.c_int(1)  # DWMNCRP_DISABLED
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 2, ctypes.byref(policy), 4)
     except Exception:
         pass
 
@@ -546,115 +639,181 @@ class SAOPlayerPanel(tk.Frame):
         self._anim.animate('close', 200, fade)
 
     def _redraw_top(self, w, h):
-        """对标 SAO-UI LeftInfo .top + HP 组件"""
+        """SAO 系统信息面板 .top — HUD 风格"""
         self._top.delete('all')
         if w < 40 or h < 40:
             return
 
-        # ── 背景: 白色半透明 (对标 rgba(255,255,255,.85)) ──
-        self._top.create_rectangle(0, 0, w, h, fill='#ffffff', outline='')
-        self._top.create_line(10, 10, 88, 10, fill='#8adfff', width=1)
-        self._top.create_line(10, 10, 10, 24, fill='#8adfff', width=1)
-        self._top.create_line(w - 12, h - 10, w - 92, h - 10, fill='#f3af12', width=1)
-        self._top.create_line(w - 12, h - 10, w - 12, h - 28, fill='#f3af12', width=1)
-        self._top.create_rectangle(22, 50, 80, 62, outline='#8adfff', width=1)
-        self._top.create_rectangle(w - 86, 66, w - 22, 78, outline='#f3af12', width=1)
-        for i in range(5):
-            x = 28 + i * 10
-            self._top.create_line(x, 68, x, 73 + (i % 2) * 3, fill='#8adfff', width=1)
-            rx = w - 32 - i * 10
-            self._top.create_line(rx, 92, rx, 98 - (i % 2) * 3, fill='#f3af12', width=1)
+        GOLD = '#f3af12'
+        CYAN = '#86dfff'
+        DIM = '#c8c8c8'
+        LABEL = '#aaaaaa'
+        TITLE_FG = '#646364'
 
-        # ── 右三角指示器 (对标 LeftInfo .right-triangle, 连接 MenuBar) ──
-        # clip-path: polygon(100% 50%, 0 100%, 0 0) → 尖头朝右
+        # ── 背景 ──
+        self._top.create_rectangle(0, 0, w, h, fill='#ffffff', outline='')
+
+        # ── HUD 角标 (四角 L 型边框) ──
+        bk = 14  # bracket length
+        self._top.create_line(2, 2, 2 + bk, 2, fill=CYAN, width=1)
+        self._top.create_line(2, 2, 2, 2 + bk, fill=CYAN, width=1)
+        self._top.create_line(w - 2 - bk, 2, w - 2, 2, fill=GOLD, width=1)
+        self._top.create_line(w - 2, 2, w - 2, 2 + bk, fill=GOLD, width=1)
+        self._top.create_line(2, h - 2, 2 + bk, h - 2, fill=CYAN, width=1)
+        self._top.create_line(2, h - 2 - bk, 2, h - 2, fill=CYAN, width=1)
+        self._top.create_line(w - 2 - bk, h - 2, w - 2, h - 2, fill=GOLD, width=1)
+        self._top.create_line(w - 2, h - 2 - bk, w - 2, h - 2, fill=GOLD, width=1)
+
+        # ── 右三角指示器 (连接 MenuBar) ──
         tri_y = int(h * 0.6)
         self._top.create_polygon(w, tri_y, w + 18, tri_y + 7, w, tri_y + 14,
                                  fill='#ffffff', outline='')
 
-        # ── 用户名 (对标 LeftInfo .title, 居中, letter-spacing:1px) ──
-        # 上 padding 10px, 下 border 2px solid #aaa
-        title_y = 22
+        # ── 系统编号标签 ──
+        self._top.create_text(w - 8, 12, text='SYS:PLAYER', anchor='e',
+                              font=get_sao_font(6), fill=DIM)
+
+        # ── 用户名 ──
+        title_y = 26
         display_name = self._username
         if len(display_name) > 18:
             display_name = display_name[:16] + '…'
         self._top.create_text(w // 2, title_y, text=display_name,
-                              font=get_sao_font(13, True), fill='#646364')
+                              font=get_sao_font(13, True), fill=TITLE_FG)
 
-        # 分隔线 (对标 .title border-bottom: 2px solid rgb(170,170,170))
-        sep_y = 40
+        # 分隔线 (对标 .title border-bottom)
+        sep_y = 44
         self._top.create_line(10, sep_y, w - 10, sep_y, fill='#aaaaaa', width=2)
+        # 微型扫描点
+        for i in range(5):
+            dot_x = 14 + i * 8
+            self._top.create_rectangle(dot_x, sep_y - 1, dot_x + 3, sep_y,
+                                       fill=CYAN, outline='')
 
         if h < 60:
             return
 
-        # ── 等级 (居中, 金色大字) ──
-        self._top.create_text(w // 2, 80,
+        # ── 等级区域 ──
+        # 等级标签
+        self._top.create_text(20, 62, text='LEVEL', anchor='w',
+                              font=get_sao_font(7), fill=LABEL)
+        self._top.create_text(w // 2, 84,
                               text=f'Lv. {self._level}',
-                              font=get_sao_font(20, True), fill='#f3af12')
+                              font=get_sao_font(20, True), fill=GOLD)
 
         if h < 120:
             return
 
-        # ── 经验值 ──
+        # ── 经验值条 ──
         from character_profile import calc_level as _cl
         _lv, _cur_xp, _need_xp = _cl(
             getattr(self, '_xp_total', 0) if hasattr(self, '_xp_total') else 0)
-        self._top.create_text(w // 2, 120,
-                              text=f'{_cur_xp} / {_need_xp}',
-                              font=get_sao_font(10), fill='#aaaaaa')
 
-        # ── 经验条 (细线) ──
-        if h > 140:
-            xp_y = 140
-            xp_x = 25
-            xp_w = w - 50
-            xp_h = 3
-            self._top.create_rectangle(xp_x, xp_y,
-                                       xp_x + xp_w, xp_y + xp_h,
-                                       fill='#ececec', outline='')
+        # EXP 标签
+        self._top.create_text(20, 108, text='EXP', anchor='w',
+                              font=get_sao_font(7), fill=LABEL)
+        self._top.create_text(w - 20, 108, text=f'{_cur_xp} / {_need_xp}',
+                              anchor='e', font=get_sao_font(8), fill='#999999')
+
+        # 经验条 (带边框)
+        if h > 124:
+            xp_y = 122
+            xp_x = 20
+            xp_w = w - 40
+            xp_h = 6
+            # 底色
+            self._top.create_rectangle(xp_x, xp_y, xp_x + xp_w, xp_y + xp_h,
+                                       fill='#e8e8e8', outline='#d8d8d8', width=1)
             xp_fill = int(xp_w * self._xp_percent)
             if xp_fill > 0:
-                self._top.create_rectangle(xp_x, xp_y,
-                                           xp_x + xp_fill, xp_y + xp_h,
-                                           fill='#f3af12', outline='')
-        if h > 176:
-            self._top.create_text(22, h - 26, text='COORD', anchor='w',
-                                  font=get_sao_font(8), fill='#8adfff')
-            self._top.create_text(w - 22, h - 26, text='RATE', anchor='e',
-                                  font=get_sao_font(8), fill='#f3af12')
-            self._top.create_line(18, h - 18, 88, h - 18, fill='#8adfff', width=1)
-            self._top.create_line(w - 92, h - 18, w - 18, h - 18, fill='#f3af12', width=1)
+                self._top.create_rectangle(xp_x + 1, xp_y + 1,
+                                           xp_x + xp_fill, xp_y + xp_h - 1,
+                                           fill=GOLD, outline='')
+                # 光泽高亮
+                self._top.create_rectangle(xp_x + 1, xp_y + 1,
+                                           xp_x + xp_fill, xp_y + 3,
+                                           fill='#f5c644', outline='')
+
+        # ── 状态标签行 ──
+        if h > 150:
+            info_y = 140
+            # HP 状态
+            self._top.create_text(20, info_y, text='HP', anchor='w',
+                                  font=get_sao_font(7, True), fill=CYAN)
+            hp_text = f'{self._hp_current}/{self._hp_total}' if self._hp_total > 0 else '—'
+            self._top.create_text(w - 20, info_y, text=hp_text, anchor='e',
+                                  font=get_sao_font(8), fill='#777777')
+
+        if h > 170:
+            info_y2 = 158
+            self._top.create_text(20, info_y2, text='SPD', anchor='w',
+                                  font=get_sao_font(7, True), fill=CYAN)
+            self._top.create_text(w - 20, info_y2, text=f'{self._speed:.2f}x', anchor='e',
+                                  font=get_sao_font(8), fill='#777777')
+
+        if h > 190:
+            info_y3 = 176
+            self._top.create_text(20, info_y3, text='KEY', anchor='w',
+                                  font=get_sao_font(7, True), fill=CYAN)
+            self._top.create_text(w - 20, info_y3, text=f'{self._transpose:+d}', anchor='e',
+                                  font=get_sao_font(8), fill='#777777')
+
+        if h > 210:
+            info_y4 = 194
+            self._top.create_text(20, info_y4, text='BPM', anchor='w',
+                                  font=get_sao_font(7, True), fill=GOLD)
+            self._top.create_text(w - 20, info_y4, text=f'{self._bpm}' if self._bpm else '—',
+                                  anchor='e', font=get_sao_font(8), fill='#777777')
+
+        # ── 底部微型扫描线 ──
+        if h > 220:
+            scan_y = h - 16
+            self._top.create_line(10, scan_y, w - 10, scan_y, fill='#e8e8e8', width=1)
+            t = time.time()
+            scan_x = 10 + int((w - 20) * ((math.sin(t * 1.5) + 1) / 2))
+            self._top.create_rectangle(scan_x - 12, scan_y - 1, scan_x + 12, scan_y + 1,
+                                       fill=CYAN, outline='')
 
     def _redraw_bottom(self, w, h):
-        """对标 SAO-UI LeftInfo .bottom — 描述文字"""
+        """SAO 系统信息面板 .bottom — 状态描述区"""
         self._bottom.delete('all')
         if w < 40 or h < 15:
             return
 
-        # 背景 (对标 rgba(229,227,227,0.8))
+        # 背景
         self._bottom.create_rectangle(0, 0, w, h, fill='#e5e3e3', outline='')
-        self._bottom.create_line(12, 14, 92, 14, fill='#8adfff', width=1)
-        self._bottom.create_line(w - 14, h - 14, w - 102, h - 14, fill='#f3af12', width=1)
-        self._bottom.create_rectangle(16, h - 28, 82, h - 18, outline='#8adfff', width=1)
-        self._bottom.create_rectangle(w - 88, 18, w - 20, 28, outline='#f3af12', width=1)
 
-        # 下三角装饰 (对标 .bottom-triangle)
+        # 下三角装饰 (连接 top/bottom)
         self._bottom.create_polygon(30, 0, 37.5, -10, 45, 0,
                                     fill='#e5e3e3', outline='')
 
-        # 顶部阴影渐变
+        # 顶部微渐变阴影
         for i in range(3):
             av = int(220 + i * 8)
             self._bottom.create_line(0, i, w, i,
                                      fill=f'#{av:02x}{av:02x}{av:02x}', width=1)
 
-        # 描述文字 (对标 .des, text-align:left, padding:15px 10px)
+        # 角标
+        self._bottom.create_line(3, 3, 12, 3, fill='#86dfff', width=1)
+        self._bottom.create_line(3, 3, 3, 12, fill='#86dfff', width=1)
+        self._bottom.create_line(w - 12, h - 3, w - 3, h - 3, fill='#f3af12', width=1)
+        self._bottom.create_line(w - 3, h - 12, w - 3, h - 3, fill='#f3af12', width=1)
+
+        # 状态标签
+        self._bottom.create_text(12, 12, text='STATUS', anchor='w',
+                                 font=get_sao_font(6), fill='#b0b0b0')
+
+        # 描述/职业
         desc = self._profession if self._profession else '咲 Midi Player SAO Edition'
-        self._bottom.create_text(15, h // 2, text=desc,
+        self._bottom.create_text(15, h // 2 + 2, text=desc,
                                  font=get_cjk_font(10), fill='#777777',
                                  anchor='w')
-        self._bottom.create_text(w - 18, h // 2, text='NERVE GEAR',
-                     font=get_sao_font(8), fill='#9a9a9a', anchor='e')
+
+        # 底部系统标签
+        if h > 50:
+            self._bottom.create_text(w - 8, h - 10, text='SAO://SYSTEM',
+                                     anchor='e', font=get_sao_font(5), fill='#c8c8c8')
+
 
 
 # ══════════════════════════════════════════════════════════
@@ -779,6 +938,7 @@ class SAOPlayerGUI:
                 try:
                     win.update_idletasks()
                     _set_clickthrough_style(win)
+                    _disable_native_window_shadow(win)
                 except Exception:
                     pass
                 self._hp_alpha_windows.append({'win': win, 'canvas': cv, 'index': idx, 'photo': None})
@@ -842,7 +1002,7 @@ class SAOPlayerGUI:
         top_h = max(1, self._hp_bar_bot_top - self._hp_bar_y)
         total_h = max(1, self._hp_bar_bot_full - self._hp_bar_y)
         fill_top = int(top_width * pct)
-        fill_bot = int(bot_width * pct)
+        fill_bot = min(fill_top, bot_width)
 
         if pct >= 0.60:
             color_hex = '#9ad334'
@@ -891,24 +1051,38 @@ class SAOPlayerGUI:
                 pass
 
     def _build_float_hud_items(self):
-        """构建悬浮 HP 两侧错层 HUD 元素。"""
+        """构建悬浮 HP 两侧 HUD 数据标签和微型导轨。"""
         cv = self._float_cv
         self._float_hud_ids = []
-        spec = [
-            ('left_far', 24, 20, 78, '#86dfff'),
-            ('left_near', 34, 44, 112, '#f3af12'),
-            ('right_far', 396, 18, 334, '#86dfff'),
-            ('right_near', 392, 46, 302, '#f3af12'),
-        ]
-        for name, x1, y1, x2, color in spec:
-            lid = cv.create_line(x1, y1, x2, y1, fill=color, width=1)
-            vid = cv.create_line(x1, y1 - 10, x1, y1 + 10, fill=color, width=1)
-            rid = cv.create_rectangle(min(x1, x2), y1 + 5, max(x1, x2), y1 + 18, outline=color, width=1)
-            self._float_hud_ids.append((name, lid, vid, rid, color))
-        self._float_hud_text = [
-            cv.create_text(62, 16, text='HP LINK', fill='#86dfff', font=get_sao_font(8), anchor='w'),
-            cv.create_text(356, 16, text='NERVE', fill='#f3af12', font=get_sao_font(8), anchor='e'),
-        ]
+        self._float_hud_text = []
+        FW, FH = self._fw, self._fh
+
+        # ── 左侧: 系统标签 + 细导轨 ──
+        self._float_hud_text.append(
+            cv.create_text(14, 8, text='HP', fill='#86dfff',
+                           font=get_sao_font(6, True), anchor='w'))
+        # 左侧竖线导轨
+        self._float_hud_ids.append(
+            cv.create_line(8, 18, 8, FH - 12, fill='#86dfff', width=1))
+        # 底部状态指示
+        self._float_hud_text.append(
+            cv.create_text(14, FH - 6, text='LINK', fill='#455a70',
+                           font=get_sao_font(5), anchor='w'))
+
+        # ── 右侧: 数据标签 ──
+        self._float_hud_text.append(
+            cv.create_text(FW - 6, 8, text='SAO', fill='#f3af12',
+                           font=get_sao_font(6, True), anchor='e'))
+        # 右侧竖线导轨
+        self._float_hud_ids.append(
+            cv.create_line(FW - 8, 18, FW - 8, FH - 12, fill='#f3af12', width=1))
+
+        # ── 呼吸光点 (左右各一) ──
+        self._hud_dot_left = cv.create_oval(5, 28, 11, 34,
+                                             fill='#86dfff', outline='')
+        self._hud_dot_right = cv.create_oval(FW - 11, 28, FW - 5, 34,
+                                              fill='#f3af12', outline='')
+        self._float_hud_ids.extend([self._hud_dot_left, self._hud_dot_right])
 
     def _animate_float_hud(self):
         if self._destroyed:
@@ -919,26 +1093,24 @@ class SAOPlayerGUI:
         except Exception:
             return
 
+        # ── 呼吸光点动画 ──
         t = time.time()
-        for idx, (name, lid, vid, rid, color) in enumerate(getattr(self, '_float_hud_ids', [])):
-            far = 'far' in name
-            side = -1 if 'left' in name else 1
-            drift_x = int((7 if far else 14) * math.sin(t * (0.72 if far else 1.55) + idx * 0.9))
-            drift_y = int((3 if far else 5) * math.sin(t * (0.48 if far else 1.18) + idx * 1.3))
-            base_y = 20 if idx % 2 == 0 else 44
-            if side < 0:
-                x1 = 24 + drift_x
-                x2 = (82 if far else 118) + drift_x
-            else:
-                x1 = 394 + drift_x
-                x2 = (336 if far else 298) + drift_x
-            y = base_y + drift_y
-            self._float_cv.coords(lid, x1, y, x2, y)
-            self._float_cv.coords(vid, x1, y - 8, x1, y + 8)
-            self._float_cv.coords(rid, min(x1, x2), y + 5, max(x1, x2), y + (14 if far else 18))
-        if getattr(self, '_float_hud_text', None):
-            self._float_cv.coords(self._float_hud_text[0], 58 + int(8 * math.sin(t * 0.95)), 16 + int(2 * math.sin(t * 0.55)))
-            self._float_cv.coords(self._float_hud_text[1], 360 + int(10 * math.sin(t * 1.18 + 1.1)), 16 + int(2 * math.sin(t * 0.7 + 0.5)))
+        if getattr(self, '_hud_dot_left', None):
+            opa_l = 0.3 + 0.7 * ((math.sin(t * 2.0) + 1) / 2)
+            opa_r = 0.3 + 0.7 * ((math.sin(t * 2.0 + math.pi) + 1) / 2)
+            # Tk Canvas 不支持 item alpha，用颜色渐变模拟
+            cl = int(0x86 * opa_l + 0x01 * (1 - opa_l))
+            cr = int(0xf3 * opa_r + 0x01 * (1 - opa_r))
+            cg = int(0xdf * opa_l + 0x02 * (1 - opa_l))
+            try:
+                self._float_cv.itemconfigure(
+                    self._hud_dot_left,
+                    fill=f'#{cl:02x}{cg:02x}{int(0xff * opa_l):02x}')
+                self._float_cv.itemconfigure(
+                    self._hud_dot_right,
+                    fill=f'#{cr:02x}{int(0xaf * opa_r):02x}{int(0x12 * opa_r):02x}')
+            except Exception:
+                pass
 
         self._sync_hp_alpha_strip_windows()
         try:
@@ -1036,6 +1208,7 @@ class SAOPlayerGUI:
             style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
             ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+            _disable_native_window_shadow(self._float)
         except:
             pass
 
@@ -1053,6 +1226,40 @@ class SAOPlayerGUI:
         # ── 布局常量 (匹配 hp.html) ──
         ox, oy = 6, 4          # body padding
         BW, BH = 400, 40       # XTBox size
+        shadow_dx, shadow_dy = 8, 6
+
+        # ── 自定义阴影: 仅贴合 HP 组件形状，避免出现整块矩形窗口阴影 ──
+        xr_x = ox + 22 + 3
+        xr_w = BW - 22 - 3
+        shadow_pts = [
+            xr_x + 75 + shadow_dx,  oy + int(BH * 0.22) + shadow_dy,
+            xr_x + xr_w + shadow_dx, oy + int(BH * 0.22) + shadow_dy,
+            xr_x + xr_w + shadow_dx, oy + shadow_dy,
+            xr_x + shadow_dx,        oy + shadow_dy,
+            xr_x + shadow_dx,        oy + BH + shadow_dy,
+            xr_x + 210 + shadow_dx,  oy + BH + shadow_dy,
+            xr_x + 210 + shadow_dx,  oy + int(BH * 0.80) + shadow_dy,
+            xr_x + xr_w + shadow_dx, oy + int(BH * 0.80) + shadow_dy,
+            xr_x + xr_w + shadow_dx, oy + int(BH * 0.60) + shadow_dy,
+            xr_x + 200 + shadow_dx,  oy + int(BH * 0.60) + shadow_dy,
+            xr_x + 195 + shadow_dx,  oy + int(BH * 0.77) + shadow_dy,
+            xr_x + 75 + shadow_dx,   oy + int(BH * 0.77) + shadow_dy,
+        ]
+        cv.create_polygon(shadow_pts, fill='#1a1e25', outline='')
+        cv.create_rectangle(ox + shadow_dx, oy + shadow_dy,
+                            ox + 22 + shadow_dx, oy + BH + shadow_dy,
+                            fill='#171c24', outline='')
+        cv.create_polygon([
+            ox + 100 + shadow_dx, oy + 8 + shadow_dy,
+            ox + 360 + shadow_dx, oy + 8 + shadow_dy,
+            ox + 355 + shadow_dx, oy + 24 + shadow_dy,
+            ox + 224 + shadow_dx, oy + 24 + shadow_dy,
+            ox + 220 + shadow_dx, oy + 31 + shadow_dy,
+            ox + 100 + shadow_dx, oy + 31 + shadow_dy,
+        ], fill='#10151c', outline='')
+        cv.create_rectangle(ox + 240 + shadow_dx, oy + 36 + shadow_dy,
+                            ox + 395 + shadow_dx, oy + 54 + shadow_dy,
+                            fill='#121821', outline='')
 
         # ═══════════════════════════════════════
         #  1. xt_left 凹口 (22px × 40px)
@@ -1248,7 +1455,6 @@ class SAOPlayerGUI:
         self._float.withdraw()
         self._create_hp_alpha_strip_windows()
         self._build_float_hud_items()
-        self._animate_float_hud()
 
     # ──────── 浮动呼吸动画 ────────
     def _start_float_breath(self):
@@ -1268,43 +1474,30 @@ class SAOPlayerGUI:
     def _breath_step(self):
         if self._destroyed or not self._breath_active:
             return
-        if self._drag.get('dragging', False):
-            try:
-                self.root.after(16, self._breath_step)
-            except Exception:
-                pass
-            return
         try:
-            if not self._float.winfo_exists():
-                return
-            elapsed = time.time() - self._breath_t0
-            # 双正弦 Lissajous 浮动 — 2px 振幅, 60fps 光滑
-            dx = int(2 * math.sin(elapsed * 0.52) + 1 * math.sin(elapsed * 1.13))
-            dy = int(2 * math.sin(elapsed * 0.38 + 1.0) + 1 * math.sin(elapsed * 0.91))
-            self._float.geometry(f'+{self._breath_base_x + dx}+{self._breath_base_y + dy}')
-            self._sync_hp_alpha_strip_windows()
-        except Exception:
-            pass
-        try:
+            t = time.time() - self._breath_t0
+            new_dx = int(round(math.sin(t * 1.25) * 3.0))
+            new_dy = int(round(math.sin(t * 2.1) * 2.0))
+            fx = self._breath_base_x + new_dx
+            fy = self._breath_base_y + new_dy
+            if self._float and self._float.winfo_exists():
+                self._float.geometry(f'+{fx}+{fy}')
+                self._sync_hp_alpha_strip_windows()
             self.root.after(16, self._breath_step)
         except Exception:
             pass
 
     def _stop_float_breath(self):
         self._breath_active = False
-        # 恢复到基准位置
         try:
-            if self._float.winfo_exists():
+            if self._float and self._float.winfo_exists():
                 self._float.geometry(f'+{self._breath_base_x}+{self._breath_base_y}')
+                self._sync_hp_alpha_strip_windows()
         except Exception:
             pass
 
     def _attach_panel_float(self, panel, phase: float = 0.0, amp: float = 2.5):
-        """为任意浮动面板附加 Lissajous微飘动 (拖拽天然兼容: delta方式).
-
-        每帧只施加“连续 sin 偏移的变化量”, 不重置基准位置.
-        用户拖动面板后, 浮动会从新位置继续, 无需修改拖拽处理器.
-        """
+        """给浮动面板附加轻微漂浮动画，且不再叠加额外 HUD 小条。"""
         t0 = time.time()
 
         def _step():
@@ -1315,8 +1508,8 @@ class SAOPlayerGUI:
                     return
             except Exception:
                 return
+
             now = time.time() - t0
-            # 双频 Lissajous (xy 频率不同 → 革花形细基轨迹)
             new_dx = int(amp * math.sin(now * 0.82 + phase))
             new_dy = int(amp * math.sin(now * 0.61 + phase + 1.2))
             old_dx = getattr(panel, '_fdx', 0)
@@ -1362,7 +1555,6 @@ class SAOPlayerGUI:
             self._skip_canvas_click = False
             return
         if self._drag['dragging']:
-            # 拖拽结束 — 记住位置, 从新位置重启呼吸
             try:
                 self._breath_base_x = self._float.winfo_x()
                 self._breath_base_y = self._float.winfo_y()
@@ -1378,7 +1570,7 @@ class SAOPlayerGUI:
             self._toggle_sao_menu()
 
     def _float_enter(self, e):
-        """对标 .XTBox:hover — xt_left/xt_right/number_xt 变为 hover 色"""
+        """高亮悬浮 HP 组件"""
         cv = self._float_cv
         try:
             cv.itemconfig('xt_left', fill='#b5cde0')
@@ -1410,12 +1602,11 @@ class SAOPlayerGUI:
 
         # ── HP 填充 (对标 .xt_in width: percent%) ──
         try:
-            # 上半部分 (x: bar_x+2 到 bar_x+254, y: bar_y+2 到 bar_y+15)
+            # 上下两段共用同一个推进前沿，避免播放时上下分离
             top_max_w = self._hp_bar_right - self._hp_bar_x
             top_fill_w = int(top_max_w * pct)
-            # 下半部分 (x: bar_x+2 到 bar_x+120, y: bar_y+15 到 bar_y+22)
             bot_max_w = self._hp_bar_step_x - self._hp_bar_x
-            bot_fill_w = int(bot_max_w * pct)
+            bot_fill_w = min(top_fill_w, bot_max_w)
 
             if top_fill_w < 1:
                 cv.coords(self._float_hp_fill_top, -1, -1, -1, -1)
@@ -1742,29 +1933,19 @@ class SAOPlayerGUI:
         self._piano_panel = tk.Toplevel(self.root)
         self._piano_panel.overrideredirect(True)
         self._piano_panel.attributes('-topmost', True)
-        self._piano_panel.attributes('-alpha', 0.0)  # 淡入动画起点
+        self._piano_panel.attributes('-alpha', 0.0)
         self._piano_panel.geometry(f'{pw}x{ph}+{fx}+{fy}')
-        self._piano_panel.configure(bg='#ffffff')
+        self._piano_panel.configure(bg=_SAO_PANEL_HEADER_BG)
 
-        # DWM 圆角 + 系统阴影
         _apply_panel_style(self._piano_panel)
 
-        # 边框
-        border = tk.Frame(self._piano_panel, bg='#d1d1d6', padx=1, pady=1)
+        # SAO 标题栏
+        border = tk.Frame(self._piano_panel, bg=_SAO_PANEL_BORDER, padx=1, pady=1)
         border.pack(fill=tk.BOTH, expand=True)
-        inner = tk.Frame(border, bg='#ffffff')
+        inner = tk.Frame(border, bg=_SAO_PANEL_BODY_BG)
         inner.pack(fill=tk.BOTH, expand=True)
 
-        # 标题行
-        hdr = tk.Frame(inner, bg='#f5f5f7', height=20)
-        hdr.pack(fill=tk.X)
-        hdr.pack_propagate(False)
-        tk.Label(hdr, text='◆ Piano', bg='#f5f5f7', fg='#646364',
-                 font=get_sao_font(8)).pack(side=tk.LEFT, padx=8)
-        close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
-                             font=get_sao_font(10, True), cursor='hand2')
-        close_lbl.pack(side=tk.RIGHT, padx=6)
-        close_lbl.bind('<Button-1>', lambda e: self._toggle_piano_panel())
+        hdr, close_lbl = _sao_panel_header(inner, '⌨', 'PIANO', self._toggle_piano_panel)
 
         # 拖拽
         _pd = {'x': 0, 'y': 0}
@@ -1779,9 +1960,11 @@ class SAOPlayerGUI:
             w.bind('<Button-1>', pdstart)
             w.bind('<B1-Motion>', pdmove)
 
+        # 分隔线
+        tk.Frame(inner, bg=_SAO_PANEL_ACCENT, height=1).pack(fill=tk.X)
+
         self._mini_piano = SAOMiniPiano(inner, octaves=5)
         self._mini_piano.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-        self._attach_sao_panel_fx(self._piano_panel, hdr, inner)
         self._fade_panel_in(self._piano_panel, target=0.90)
         self._attach_panel_float(self._piano_panel, phase=0.0)
         self.settings.set('show_piano', True)
@@ -1815,90 +1998,63 @@ class SAOPlayerGUI:
         self._status_panel = tk.Toplevel(self.root)
         self._status_panel.overrideredirect(True)
         self._status_panel.attributes('-topmost', True)
-        self._status_panel.attributes('-alpha', 0.0)  # 淡入动画起点
+        self._status_panel.attributes('-alpha', 0.0)
         self._status_panel.geometry(f'{sw}x{sh}+{fx}+{fy}')
-        self._status_panel.configure(bg='#ffffff')
+        self._status_panel.configure(bg=_SAO_PANEL_HEADER_BG)
         _apply_panel_style(self._status_panel)
 
-        border = tk.Frame(self._status_panel, bg='#d1d1d6', padx=1, pady=1)
+        border = tk.Frame(self._status_panel, bg=_SAO_PANEL_BORDER, padx=1, pady=1)
         border.pack(fill=tk.BOTH, expand=True)
-        inner = tk.Frame(border, bg='#ffffff')
+        inner = tk.Frame(border, bg=_SAO_PANEL_BODY_BG)
         inner.pack(fill=tk.BOTH, expand=True)
 
-        # 标题行
-        hdr = tk.Frame(inner, bg='#f5f5f7', height=22)
-        hdr.pack(fill=tk.X)
-        hdr.pack_propagate(False)
-        tk.Label(hdr, text='◉ 状态', bg='#f5f5f7', fg='#646364',
-                 font=get_sao_font(8, True)).pack(side=tk.LEFT, padx=8)
-        close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
-                             font=get_sao_font(10, True), cursor='hand2')
-        close_lbl.pack(side=tk.RIGHT, padx=6)
-        close_lbl.bind('<Button-1>', lambda e: self._toggle_status_panel())
+        hdr, close_lbl = _sao_panel_header(inner, '◉', 'STATUS', self._toggle_status_panel)
 
-        # 分隔线
-        tk.Frame(inner, bg='#e0e0e0', height=1).pack(fill=tk.X)
-
-        body = tk.Frame(inner, bg='#ffffff')
-        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+        body = _sao_panel_body(inner)
+        body_pad = tk.Frame(body, bg=_SAO_PANEL_BODY_BG)
+        body_pad.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
 
         # 模式行
-        mode_row = tk.Frame(body, bg='#ffffff')
-        mode_row.pack(fill=tk.X, pady=3)
-        tk.Label(mode_row, text='模式', bg='#ffffff', fg='#999999',
-                 font=get_sao_font(8)).pack(side=tk.LEFT)
-        self._status_mode_lbl = tk.Label(mode_row, text=self._get_mode_text(),
-                                          bg='#ffffff', fg='#f3af12',
-                                          font=get_cjk_font(9, True))
-        self._status_mode_lbl.pack(side=tk.RIGHT)
+        self._status_mode_lbl = _sao_row(body_pad, '模式', self._get_mode_text(),
+                                          value_fg=_SAO_PANEL_GOLD,
+                                          value_font=get_cjk_font(9, True))
 
-        # 键位模式行 (normal/shift/ctrl)
-        shift_row = tk.Frame(body, bg='#ffffff')
-        shift_row.pack(fill=tk.X, pady=3)
-        tk.Label(shift_row, text='键位切换', bg='#ffffff', fg='#999999',
-                 font=get_sao_font(8)).pack(side=tk.LEFT)
+        # 键位模式行
         _sm_labels = {'normal': '普通模式', 'shift': 'SHIFT 高音',
                       'ctrl': 'CTRL 低音', 'lt': 'LT 极低', 'gt': 'GT 极高'}
         _sm_text = _sm_labels.get(self._shift_mode, self._shift_mode)
-        self._status_shift_lbl = tk.Label(shift_row, text=_sm_text,
-                                           bg='#ffffff', fg='#2196f3',
-                                           font=get_sao_font(9, True))
-        self._status_shift_lbl.pack(side=tk.RIGHT)
+        self._status_shift_lbl = _sao_row(body_pad, '键位切换', _sm_text,
+                                           value_fg='#2196f3')
+
+        # 分隔线
+        tk.Frame(body_pad, bg=_SAO_PANEL_SEP, height=1).pack(fill=tk.X, pady=3)
 
         # 延音行
-        sus_row = tk.Frame(body, bg='#ffffff')
-        sus_row.pack(fill=tk.X, pady=3)
-        tk.Label(sus_row, text='延音踏板', bg='#ffffff', fg='#999999',
-                 font=get_sao_font(8)).pack(side=tk.LEFT)
+        sus_row = tk.Frame(body_pad, bg=_SAO_PANEL_BODY_BG)
+        sus_row.pack(fill=tk.X, pady=2)
+        tk.Label(sus_row, text='延音踏板', bg=_SAO_PANEL_BODY_BG,
+                 fg=_SAO_PANEL_LABEL_FG, font=get_sao_font(8)).pack(side=tk.LEFT)
         self._status_sus_dot = tk.Canvas(sus_row, width=12, height=12,
-                                          bg='#ffffff', highlightthickness=0)
+                                          bg=_SAO_PANEL_BODY_BG, highlightthickness=0)
         self._status_sus_dot.pack(side=tk.RIGHT, padx=(4, 0))
         self._status_sus_lbl = tk.Label(sus_row, text='OFF',
-                                         bg='#ffffff', fg='#bbbbbb',
+                                         bg=_SAO_PANEL_BODY_BG, fg='#556677',
                                          font=get_sao_font(8, True))
         self._status_sus_lbl.pack(side=tk.RIGHT)
 
         # BPM行
-        bpm_row = tk.Frame(body, bg='#ffffff')
-        bpm_row.pack(fill=tk.X, pady=3)
-        tk.Label(bpm_row, text='BPM', bg='#ffffff', fg='#999999',
-                 font=get_sao_font(8)).pack(side=tk.LEFT)
         bpm_val = getattr(getattr(self.player, 'parser', None), 'bpm', 0)
-        self._status_bpm_lbl = tk.Label(bpm_row,
-                                         text=f'{bpm_val:.0f}' if bpm_val else '—',
-                                         bg='#ffffff', fg='#333333',
-                                         font=get_sao_font(9, True))
-        self._status_bpm_lbl.pack(side=tk.RIGHT)
+        self._status_bpm_lbl = _sao_row(body_pad, 'BPM',
+                                         f'{bpm_val:.0f}' if bpm_val else '—')
 
         # 速度行
-        spd_row = tk.Frame(body, bg='#ffffff')
-        spd_row.pack(fill=tk.X, pady=3)
-        tk.Label(spd_row, text='速度', bg='#ffffff', fg='#999999',
-                 font=get_sao_font(8)).pack(side=tk.LEFT)
-        self._status_spd_lbl = tk.Label(spd_row, text=f'{self._speed:.2f}×',
-                                         bg='#ffffff', fg='#333333',
-                                         font=get_sao_font(9, True))
-        self._status_spd_lbl.pack(side=tk.RIGHT)
+        self._status_spd_lbl = _sao_row(body_pad, '速度', f'{self._speed:.2f}×')
+
+        # 底部 HUD 装饰
+        hud_cv = _sao_panel_hud_canvas(body)
+        hud_cv.create_text(4, 8, text='SYS:STATUS', anchor='w',
+                           font=('Consolas', 6), fill='#d0d0d0')
+        hud_cv.create_line(80, 8, sw - 10, 8, fill='#e8e8e8', width=1)
 
         # 拖拽
         _sd = {'x': 0, 'y': 0}
@@ -1912,7 +2068,6 @@ class SAOPlayerGUI:
         hdr.bind('<Button-1>', sdstart)
         hdr.bind('<B1-Motion>', sdmove)
 
-        self._attach_sao_panel_fx(self._status_panel, hdr, inner)
         self._fade_panel_in(self._status_panel, target=0.92)
         self._attach_panel_float(self._status_panel, phase=2.0)
         self._update_status_panel()
@@ -1933,9 +2088,9 @@ class SAOPlayerGUI:
             self._status_sus_dot.delete('all')
             self._status_sus_dot.create_oval(1, 1, 11, 11, fill='#3ad86c', outline='')
         else:
-            self._status_sus_lbl.configure(text='OFF', fg='#bbbbbb')
+            self._status_sus_lbl.configure(text='OFF', fg='#556677')
             self._status_sus_dot.delete('all')
-            self._status_sus_dot.create_oval(1, 1, 11, 11, fill='#e0e0e0', outline='#d1d1d6')
+            self._status_sus_dot.create_oval(1, 1, 11, 11, fill='#2a3545', outline='#3a4a5a')
         # 模式
         if hasattr(self, '_status_mode_lbl'):
             self._status_mode_lbl.configure(text=self._get_mode_text())
@@ -1979,26 +2134,18 @@ class SAOPlayerGUI:
         self._viz_panel = tk.Toplevel(self.root)
         self._viz_panel.overrideredirect(True)
         self._viz_panel.attributes('-topmost', True)
-        self._viz_panel.attributes('-alpha', 0.0)  # 淡入动画起点
+        self._viz_panel.attributes('-alpha', 0.0)
         self._viz_panel.geometry(f'{vw}x{vh}+{fx}+{fy}')
-        self._viz_panel.configure(bg='#ffffff')
+        self._viz_panel.configure(bg=_SAO_PANEL_HEADER_BG)
 
         _apply_panel_style(self._viz_panel)
 
-        border = tk.Frame(self._viz_panel, bg='#d1d1d6', padx=1, pady=1)
+        border = tk.Frame(self._viz_panel, bg=_SAO_PANEL_BORDER, padx=1, pady=1)
         border.pack(fill=tk.BOTH, expand=True)
-        inner = tk.Frame(border, bg='#ffffff')
+        inner = tk.Frame(border, bg=_SAO_PANEL_BODY_BG)
         inner.pack(fill=tk.BOTH, expand=True)
 
-        hdr = tk.Frame(inner, bg='#f5f5f7', height=20)
-        hdr.pack(fill=tk.X)
-        hdr.pack_propagate(False)
-        tk.Label(hdr, text='◆ Visualizer', bg='#f5f5f7', fg='#646364',
-                 font=get_sao_font(8)).pack(side=tk.LEFT, padx=8)
-        close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
-                             font=get_sao_font(10, True), cursor='hand2')
-        close_lbl.pack(side=tk.RIGHT, padx=6)
-        close_lbl.bind('<Button-1>', lambda e: self._toggle_viz_panel())
+        hdr, close_lbl = _sao_panel_header(inner, '≡', 'VISUALIZER', self._toggle_viz_panel)
 
         _vd = {'x': 0, 'y': 0}
         def vdstart(e): _vd['x'], _vd['y'] = e.x_root, e.y_root
@@ -2012,10 +2159,12 @@ class SAOPlayerGUI:
             w.bind('<Button-1>', vdstart)
             w.bind('<B1-Motion>', vdmove)
 
+        # 分隔线
+        tk.Frame(inner, bg=_SAO_PANEL_ACCENT, height=1).pack(fill=tk.X)
+
         self._visualizer = MidiVisualizer(inner, settings=self.settings)
         self._visualizer.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         _apply_viz_light_theme(self._visualizer)
-        self._attach_sao_panel_fx(self._viz_panel, hdr, inner)
         if self._playing:
             self._visualizer.start()
         self._fade_panel_in(self._viz_panel, target=0.90)
@@ -2054,24 +2203,16 @@ class SAOPlayerGUI:
         self._control_panel.attributes('-topmost', True)
         self._control_panel.attributes('-alpha', 0.0)
         self._control_panel.geometry(f'{PW}x{PH}+{fx}+{fy}')
-        self._control_panel.configure(bg='#ffffff')
+        self._control_panel.configure(bg=_SAO_PANEL_HEADER_BG)
         _apply_panel_style(self._control_panel)
 
-        border = tk.Frame(self._control_panel, bg='#d1d1d6', padx=1, pady=1)
+        border = tk.Frame(self._control_panel, bg=_SAO_PANEL_BORDER, padx=1, pady=1)
         border.pack(fill=tk.BOTH, expand=True)
-        inner = tk.Frame(border, bg='#ffffff')
+        inner = tk.Frame(border, bg=_SAO_PANEL_BODY_BG)
         inner.pack(fill=tk.BOTH, expand=True)
 
-        # 标题栏
-        hdr = tk.Frame(inner, bg='#f5f5f7', height=24)
-        hdr.pack(fill=tk.X)
-        hdr.pack_propagate(False)
-        tk.Label(hdr, text='⚙ 控制面板', bg='#f5f5f7', fg='#646364',
-                 font=get_sao_font(8, True)).pack(side=tk.LEFT, padx=8)
-        close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
-                              font=get_sao_font(10, True), cursor='hand2')
-        close_lbl.pack(side=tk.RIGHT, padx=6)
-        close_lbl.bind('<Button-1>', lambda e: self._toggle_control_panel())
+        # SAO 标题栏
+        hdr, close_lbl = _sao_panel_header(inner, '⚙', 'CONTROL', self._toggle_control_panel)
         _cd = {'x': 0, 'y': 0}
         def cdstart(e): _cd['x'], _cd['y'] = e.x_root, e.y_root
         def cdmove(e):
@@ -2082,24 +2223,18 @@ class SAOPlayerGUI:
             self.settings.set('ctrl_x', nx); self.settings.set('ctrl_y', ny)
         hdr.bind('<Button-1>', cdstart); hdr.bind('<B1-Motion>', cdmove)
 
-        tk.Frame(inner, bg='#e0e0e0', height=1).pack(fill=tk.X)
-        body = tk.Frame(inner, bg='#ffffff')
-        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+        body = _sao_panel_body(inner)
+        body_pad = tk.Frame(body, bg=_SAO_PANEL_BODY_BG)
+        body_pad.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
 
-        # ── pill 切换按钮辅助 ──
-        def pill(parent, text, active, command):
-            lbl = tk.Label(parent, text=text,
-                           bg='#f3af12' if active else '#eeeeee',
-                           fg='#ffffff' if active else '#999999',
-                           font=get_cjk_font(8, True),
-                           padx=8, pady=2, cursor='hand2', relief=tk.FLAT)
-            lbl.bind('<Button-1>', lambda e: command())
-            return lbl
+        # ── pill 切换按钮辅助 (使用 SAO 风格) ──
+        pill = _sao_pill
 
         # ── 键位模式 ──
-        row_mode = tk.Frame(body, bg='#ffffff')
+        row_mode = tk.Frame(body_pad, bg=_SAO_PANEL_BODY_BG)
         row_mode.pack(fill=tk.X, pady=(2, 3))
-        tk.Label(row_mode, text='键位', bg='#ffffff', fg='#999999',
+        tk.Label(row_mode, text='键位', bg=_SAO_PANEL_BODY_BG,
+                 fg=_SAO_PANEL_LABEL_FG,
                  font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
         cur_mode = self.settings.get('mode_system', 'classic')
         p60 = pill(row_mode, '60键 CTRL/SHIFT', cur_mode == 'classic',  lambda: self._set_mode('classic'))
@@ -2108,12 +2243,12 @@ class SAOPlayerGUI:
         p88.pack(side=tk.LEFT)
         self._control_panel._mode_pills = (p60, p88)
 
-        tk.Frame(body, bg='#eeeeee', height=1).pack(fill=tk.X, pady=4)
+        tk.Frame(body_pad, bg=_SAO_PANEL_SEP, height=1).pack(fill=tk.X, pady=4)
 
         # ── 音部控制 ──
-        row_part = tk.Frame(body, bg='#ffffff')
+        row_part = tk.Frame(body_pad, bg=_SAO_PANEL_BODY_BG)
         row_part.pack(fill=tk.X, pady=2)
-        tk.Label(row_part, text='音部', bg='#ffffff', fg='#999999',
+        tk.Label(row_part, text='音部', bg=_SAO_PANEL_BODY_BG, fg=_SAO_PANEL_LABEL_FG,
                  font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
         pm = pill(row_part, '✓ 主旋律' if self._melody_on else '✗ 主旋律', self._melody_on, self._toggle_melody)
         pm.pack(side=tk.LEFT, padx=(0, 4))
@@ -2122,70 +2257,71 @@ class SAOPlayerGUI:
         self._control_panel._part_pills = (pm, pb)
 
         # ── 伴奏密度 ──
-        row_dens = tk.Frame(body, bg='#ffffff')
+        row_dens = tk.Frame(body_pad, bg=_SAO_PANEL_BODY_BG)
         row_dens.pack(fill=tk.X, pady=2)
-        tk.Label(row_dens, text='伴奏密度', bg='#ffffff', fg='#999999',
+        tk.Label(row_dens, text='伴奏密度', bg=_SAO_PANEL_BODY_BG, fg=_SAO_PANEL_LABEL_FG,
                  font=get_sao_font(8), anchor='w').pack(side=tk.LEFT)
         dens_var = tk.DoubleVar(value=self._bass_density)
         dens_scale = tk.Scale(row_dens, from_=0.2, to=1.0, resolution=0.1,
                               orient=tk.HORIZONTAL, variable=dens_var,
-                              bg='#ffffff', fg='#646364', troughcolor='#e8e8e8',
+                              bg=_SAO_PANEL_BODY_BG, fg=_SAO_PANEL_LABEL_FG,
+                              troughcolor='#1a2a3a',
                               highlightthickness=0, bd=0, length=100, sliderlength=14,
                               width=10, showvalue=False,
                               command=lambda v: self._set_bass_density_direct(float(v)))
         dens_scale.pack(side=tk.LEFT, padx=(6, 2))
-        dens_lbl = tk.Label(row_dens, text=f'{self._bass_density:.0%}', bg='#ffffff',
-                             fg='#333333', font=get_sao_font(8, True), width=4)
+        dens_lbl = tk.Label(row_dens, text=f'{self._bass_density:.0%}', bg=_SAO_PANEL_BODY_BG,
+                             fg=_SAO_PANEL_VALUE_FG, font=get_sao_font(8, True), width=4)
         dens_lbl.pack(side=tk.LEFT)
         self._control_panel._dens_var = dens_var
         self._control_panel._dens_lbl = dens_lbl
 
-        tk.Frame(body, bg='#eeeeee', height=1).pack(fill=tk.X, pady=4)
+        tk.Frame(body_pad, bg=_SAO_PANEL_SEP, height=1).pack(fill=tk.X, pady=4)
 
         # ── 速度 ──
-        row_spd = tk.Frame(body, bg='#ffffff')
+        row_spd = tk.Frame(body_pad, bg=_SAO_PANEL_BODY_BG)
         row_spd.pack(fill=tk.X, pady=2)
-        tk.Label(row_spd, text='速度', bg='#ffffff', fg='#999999',
+        tk.Label(row_spd, text='速度', bg=_SAO_PANEL_BODY_BG, fg=_SAO_PANEL_LABEL_FG,
                  font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
-        btn_sm = tk.Label(row_spd, text='−', bg='#eeeeee', fg='#646364',
+        btn_sm = tk.Label(row_spd, text='−', bg='#1a2030', fg=_SAO_PANEL_LABEL_FG,
                           font=get_sao_font(10, True), padx=7, pady=1, cursor='hand2')
         btn_sm.pack(side=tk.LEFT)
         btn_sm.bind('<Button-1>', lambda e: self._speed_down())
-        spd_lbl = tk.Label(row_spd, text=f'{self._speed:.2f}×', bg='#ffffff',
-                            fg='#333333', font=get_sao_font(9, True), width=6)
+        spd_lbl = tk.Label(row_spd, text=f'{self._speed:.2f}×', bg=_SAO_PANEL_BODY_BG,
+                            fg=_SAO_PANEL_VALUE_FG, font=get_sao_font(9, True), width=6)
         spd_lbl.pack(side=tk.LEFT, padx=4)
-        btn_sp = tk.Label(row_spd, text='+', bg='#eeeeee', fg='#646364',
+        btn_sp = tk.Label(row_spd, text='+', bg='#1a2030', fg=_SAO_PANEL_LABEL_FG,
                           font=get_sao_font(10, True), padx=7, pady=1, cursor='hand2')
         btn_sp.pack(side=tk.LEFT)
         btn_sp.bind('<Button-1>', lambda e: self._speed_up())
         self._control_panel._spd_lbl = spd_lbl
 
         # ── 移调 ──
-        row_tr = tk.Frame(body, bg='#ffffff')
+        row_tr = tk.Frame(body_pad, bg=_SAO_PANEL_BODY_BG)
         row_tr.pack(fill=tk.X, pady=2)
-        tk.Label(row_tr, text='移调', bg='#ffffff', fg='#999999',
+        tk.Label(row_tr, text='移调', bg=_SAO_PANEL_BODY_BG, fg=_SAO_PANEL_LABEL_FG,
                  font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
-        btn_tm = tk.Label(row_tr, text='−', bg='#eeeeee', fg='#646364',
+        btn_tm = tk.Label(row_tr, text='−', bg='#1a2030', fg=_SAO_PANEL_LABEL_FG,
                           font=get_sao_font(10, True), padx=7, pady=1, cursor='hand2')
         btn_tm.pack(side=tk.LEFT)
         btn_tm.bind('<Button-1>', lambda e: self._transpose_down())
-        tr_lbl = tk.Label(row_tr, text=f'{self._transpose:+d} 半音', bg='#ffffff',
-                           fg='#333333', font=get_sao_font(9, True), width=7)
+        tr_lbl = tk.Label(row_tr, text=f'{self._transpose:+d} 半音', bg=_SAO_PANEL_BODY_BG,
+                           fg=_SAO_PANEL_VALUE_FG, font=get_sao_font(9, True), width=7)
         tr_lbl.pack(side=tk.LEFT, padx=4)
-        btn_tp = tk.Label(row_tr, text='+', bg='#eeeeee', fg='#646364',
+        btn_tp = tk.Label(row_tr, text='+', bg='#1a2030', fg=_SAO_PANEL_LABEL_FG,
                           font=get_sao_font(10, True), padx=7, pady=1, cursor='hand2')
         btn_tp.pack(side=tk.LEFT)
         btn_tp.bind('<Button-1>', lambda e: self._transpose_up())
-        btn_rst = tk.Label(row_tr, text='重置', bg='#eeeeee', fg='#646364',
+        btn_rst = tk.Label(row_tr, text='重置', bg='#1a2030', fg=_SAO_PANEL_LABEL_FG,
                            font=get_sao_font(8), padx=6, pady=2, cursor='hand2')
         btn_rst.pack(side=tk.LEFT, padx=(6, 0))
         btn_rst.bind('<Button-1>', lambda e: self._auto_transpose())
         self._control_panel._tr_lbl = tr_lbl
 
-        tk.Frame(body, bg='#eeeeee', height=1).pack(fill=tk.X, pady=4)
+        tk.Frame(body_pad, bg=_SAO_PANEL_SEP, height=1).pack(fill=tk.X, pady=4)
 
         # ── 选项行 1 ──
-        row_opt1 = tk.Frame(body, bg='#ffffff')
+        row_opt1 = tk.Frame(body_pad, bg=_SAO_PANEL_BODY_BG)
         row_opt1.pack(fill=tk.X, pady=2)
         dc_lbl = pill(row_opt1, 'C调直转 ✓' if self._direct_c else 'C调直转',
                       self._direct_c, self._toggle_direct_c)
@@ -2197,18 +2333,17 @@ class SAOPlayerGUI:
         self._control_panel._pf_lbl = pf_lbl
 
         # ── 选项行 2 ──
-        row_opt2 = tk.Frame(body, bg='#ffffff')
+        row_opt2 = tk.Frame(body_pad, bg=_SAO_PANEL_BODY_BG)
         row_opt2.pack(fill=tk.X, pady=2)
         gl_lbl = pill(row_opt2, '结尾滑奏 ✓' if self._glissando else '结尾滑奏',
                       self._glissando, self._toggle_glissando)
         gl_lbl.pack(side=tk.LEFT, padx=(0, 6))
-        midi_btn = tk.Label(row_opt2, text='MIDI通道…', bg='#eeeeee', fg='#646364',
+        midi_btn = tk.Label(row_opt2, text='MIDI通道…', bg='#1a2030', fg=_SAO_PANEL_LABEL_FG,
                             font=get_sao_font(8), padx=8, pady=2, cursor='hand2')
         midi_btn.pack(side=tk.LEFT)
         midi_btn.bind('<Button-1>', lambda e: self._show_channel_settings())
         self._control_panel._gl_lbl = gl_lbl
 
-        self._attach_sao_panel_fx(self._control_panel, hdr, inner)
         self._fade_panel_in(self._control_panel, target=0.95)
         self._attach_panel_float(self._control_panel, phase=3.0)
         self.settings.set('show_control', True)
@@ -2229,34 +2364,34 @@ class SAOPlayerGUI:
             p._dens_var.set(self._bass_density)
         if hasattr(p, '_part_pills'):
             pm, pb = p._part_pills
-            pm.configure(bg='#f3af12' if self._melody_on else '#eeeeee',
-                         fg='#ffffff' if self._melody_on else '#999999',
+            pm.configure(bg='#f3af12' if self._melody_on else '#1a2030',
+                         fg='#ffffff' if self._melody_on else '#8a9aaa',
                          text='✓ 主旋律' if self._melody_on else '✗ 主旋律')
-            pb.configure(bg='#f3af12' if self._bass_on else '#eeeeee',
-                         fg='#ffffff' if self._bass_on else '#999999',
+            pb.configure(bg='#f3af12' if self._bass_on else '#1a2030',
+                         fg='#ffffff' if self._bass_on else '#8a9aaa',
                          text='✓ 低音部' if self._bass_on else '✗ 低音部')
         if hasattr(p, '_mode_pills'):
             p60, p88 = p._mode_pills
             cur = self.settings.get('mode_system', 'classic')
-            p60.configure(bg='#f3af12' if cur == 'classic' else '#eeeeee',
-                          fg='#ffffff' if cur == 'classic' else '#999999')
-            p88.configure(bg='#f3af12' if cur == 'extended' else '#eeeeee',
-                          fg='#ffffff' if cur == 'extended' else '#999999')
+            p60.configure(bg='#f3af12' if cur == 'classic' else '#1a2030',
+                          fg='#ffffff' if cur == 'classic' else '#8a9aaa')
+            p88.configure(bg='#f3af12' if cur == 'extended' else '#1a2030',
+                          fg='#ffffff' if cur == 'extended' else '#8a9aaa')
         if hasattr(p, '_dc_lbl'):
             p._dc_lbl.configure(
                 text='C调直转 ✓' if self._direct_c else 'C调直转',
-                bg='#f3af12' if self._direct_c else '#eeeeee',
-                fg='#ffffff' if self._direct_c else '#999999')
+                bg='#f3af12' if self._direct_c else '#1a2030',
+                fg='#ffffff' if self._direct_c else '#8a9aaa')
         if hasattr(p, '_pf_lbl'):
             p._pf_lbl.configure(
                 text='熟练度 ✓' if self._proficiency_enabled else '熟练度',
-                bg='#f3af12' if self._proficiency_enabled else '#eeeeee',
-                fg='#ffffff' if self._proficiency_enabled else '#999999')
+                bg='#f3af12' if self._proficiency_enabled else '#1a2030',
+                fg='#ffffff' if self._proficiency_enabled else '#8a9aaa')
         if hasattr(p, '_gl_lbl'):
             p._gl_lbl.configure(
                 text='结尾滑奏 ✓' if self._glissando else '结尾滑奏',
-                bg='#f3af12' if self._glissando else '#eeeeee',
-                fg='#ffffff' if self._glissando else '#999999')
+                bg='#f3af12' if self._glissando else '#1a2030',
+                fg='#ffffff' if self._glissando else '#8a9aaa')
 
     def _set_bass_density_direct(self, val: float):
         """直接设置伴奏密度 (由控制面板滑块调用)"""
@@ -3532,9 +3667,12 @@ class SAOPlayerGUI:
                     self._hotkey_mgr.cleanup()
                 self._stop_fisheye_overlay()
                 self._sao_menu.unbind_events()
+                if self._sao_menu.visible:
+                    self._sao_menu.close()
             except Exception:
                 pass
             self.player.stop()
+            self._destroy_hp_alpha_strip_windows()
             for panel in [self._piano_panel, self._viz_panel,
                           self._status_panel, self._control_panel]:
                 try:
@@ -3545,6 +3683,11 @@ class SAOPlayerGUI:
             try:
                 if self._float and self._float.winfo_exists():
                     self._float.destroy()
+            except Exception:
+                pass
+            # Flush pending after-callbacks before destroying root
+            try:
+                self.root.update_idletasks()
             except Exception:
                 pass
             try:
@@ -3577,9 +3720,12 @@ class SAOPlayerGUI:
                     self._hotkey_mgr.cleanup()
                 self._stop_fisheye_overlay()
                 self._sao_menu.unbind_events()
+                if self._sao_menu.visible:
+                    self._sao_menu.close()
             except Exception:
                 pass
             self.player.stop()
+            self._destroy_hp_alpha_strip_windows()
             # 销毁所有浮动面板
             for panel in [self._piano_panel, self._viz_panel,
                           self._status_panel, self._control_panel]:
@@ -3591,6 +3737,11 @@ class SAOPlayerGUI:
             try:
                 if self._float and self._float.winfo_exists():
                     self._float.destroy()
+            except Exception:
+                pass
+            # Flush pending after-callbacks before destroying root
+            try:
+                self.root.update_idletasks()
             except Exception:
                 pass
             # 销毁隐藏的 root
@@ -3612,7 +3763,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.5+3405\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.6+3406\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3644,29 +3795,30 @@ class SAOPlayerGUI:
         if self._sao_menu.visible:
             self._sao_menu.close()
 
+        holder = {'dlg': None}
+
+        def _ensure_dialog():
+            if holder['dlg'] is None:
+                holder['dlg'] = SAOLeaderboardDialog(self._float, '排行榜', sort_by='xp')
+            return holder['dlg']
+
+        self.root.after(0, lambda: _ensure_dialog().set_loading('正在获取排行榜...'))
+
         def _do():
             try:
-                from leaderboard import fetch_leaderboard, _get_device_id
+                from leaderboard import fetch_leaderboard, get_local_identity
                 data = fetch_leaderboard(sort_by='xp', limit=50)
                 if data is None:
-                    SAODialog.showinfo(self._float, "排行榜", "无法连接服务器，请稍后再试")
+                    self.root.after(0, lambda: _ensure_dialog().set_error('无法连接服务器，请稍后再试'))
                     return
-                my_id = _get_device_id()
+                identity = get_local_identity()
                 rows = data if isinstance(data, list) else data.get('players', [])
-                lines = ["◆ LEADERBOARD ◆\n"]
                 for i, r in enumerate(rows):
-                    rank = i + 1
-                    name = r.get('username', '???')[:12]
-                    lv = r.get('level', 1)
-                    xp = r.get('xp', r.get('total_xp', 0))
-                    marker = '  ◄ YOU' if r.get('device_id', '') == my_id else ''
-                    lines.append(f"#{rank:<3} Lv.{lv:<4} {name:<14} XP:{xp}{marker}")
-                if not rows:
-                    lines.append("暂无数据")
-                SAODialog.showinfo(self._float, "排行榜", "\n".join(lines))
+                    r['rank'] = i + 1
+                self.root.after(0, lambda: _ensure_dialog().set_entries(rows, identity['device_id'], identity.get('player_id', identity.get('device_name', '')), 'xp'))
             except Exception as e:
                 print(f"[SAO] leaderboard: {e}")
-                SAODialog.showinfo(self._float, "排行榜", f"加载失败: {e}")
+                self.root.after(0, lambda: _ensure_dialog().set_error(f'加载失败: {e}'))
 
         self.root.after(600, lambda: threading.Thread(target=_do, daemon=True).start())
 

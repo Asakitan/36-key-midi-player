@@ -663,7 +663,7 @@ class SAOChildBar(tk.Frame):
         outer.pack(fill=tk.X, pady=(0, 3))
 
         row = tk.Frame(outer, bg='#ffffff', highlightthickness=0,
-                       width=160, height=40)
+                       width=220, height=40)
         row.pack(fill=tk.X)
         row.pack_propagate(False)
 
@@ -739,7 +739,7 @@ class SAOChildBar(tk.Frame):
             a = Animator(r)
 
             def grow(t, r2=r):
-                w = max(1, int(160 * ease_out(t)))
+                w = max(1, int(220 * ease_out(t)))
                 r2.configure(width=w)
 
             a.animate('slide', 250, grow)
@@ -791,6 +791,11 @@ class SAOPopUpMenu:
         self._visible = False
         self._throttle_timer = None
         self._breath_job = None
+        self._menu_hud_job = None
+        self._menu_hud_cv = None
+        self._menu_hud_backdrop = None
+        self._menu_hud_backdrop_key = None
+        self._root_click_id = None
         self._first_y = 0
         self._first_time = 0
         self._slide_threshold = 250
@@ -856,6 +861,8 @@ class SAOPopUpMenu:
     def visible(self):
         return self._visible
 
+    _TRANSPARENT_KEY = '#010101'   # 透明色键 (Windows -transparentcolor)
+
     def _create_overlay(self):
         self._overlay = tk.Toplevel(self.root)
         self._overlay.overrideredirect(True)
@@ -864,13 +871,26 @@ class SAOPopUpMenu:
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         self._overlay.geometry(f'{sw}x{sh}+0+0')
-        self._overlay.configure(bg='#111111')
+        self._overlay.configure(bg=self._TRANSPARENT_KEY)
         self._overlay.attributes('-alpha', 0.0)
-        self._overlay.bind('<Button-1>', self._on_overlay_click)
+        # 透明色键: 使 overlay 背景完全透明, 只保留 HUD 元素和内容组件
+        try:
+            self._overlay.attributes('-transparentcolor', self._TRANSPARENT_KEY)
+        except Exception:
+            pass
         self._overlay.bind('<Escape>', lambda e: self.close())
+        self._overlay.bind('<FocusOut>', self._on_overlay_focus_out)
+
+        self._menu_hud_cv = tk.Canvas(
+            self._overlay, bg=self._TRANSPARENT_KEY, highlightthickness=0, bd=0)
+        self._menu_hud_cv.place(x=0, y=0, relwidth=1, relheight=1)
+
+        # 在 root 窗口层检测点击 → 实现 "点击外部关闭" (透明区域点击穿透到 root)
+        self._root_click_id = self.root.bind('<Button-1>',
+            self._on_root_click_outside, add='+')
 
         # 内容定位: anchor_widget 模式 → 贴近浮动按钮右上角向左上展开; 否则居中
-        self._content = tk.Frame(self._overlay, bg='#111111', highlightthickness=0)
+        self._content = tk.Frame(self._overlay, bg=self._TRANSPARENT_KEY, highlightthickness=0)
         try:
             aw = self.anchor_widget
             if aw and aw.winfo_exists():
@@ -879,7 +899,8 @@ class SAOPopUpMenu:
                 ay = aw.winfo_rooty()
                 awd = aw.winfo_width()
                 # SE 角贴近 float 右上角 (向左上展开)
-                self._content_x = ax + awd - 8
+                # 确保右侧不超出屏幕
+                self._content_x = min(ax + awd - 8, sw - 20)
                 self._content_y = ay - 8
                 self._content.place(x=self._content_x, y=self._content_y, anchor='se')
             else:
@@ -911,6 +932,9 @@ class SAOPopUpMenu:
         for name, items in self.child_menus.items():
             self._child_bar.register_menu(name, items)
 
+        self._overlay.update_idletasks()
+        self._draw_menu_hud(0, 0, phase=0.0)
+
         # fadeIn 0.4s + 弹出入场动画
         self._anim = Animator(self._overlay)
 
@@ -926,7 +950,7 @@ class SAOPopUpMenu:
                 return 1.0 + (1.06 - 1.0) * (1.0 - (t - 0.7) / 0.3)  # 回弹到 1.0
 
         def _anim_frame(t: float):
-            alpha = t * 0.85
+            alpha = t * 0.92
             self._set_alpha(alpha)
             # 内容各sprite 从偏移位置弹至目标
             st = _spring_ease(t)
@@ -948,9 +972,15 @@ class SAOPopUpMenu:
         # 菜单栏入场动画
         self._menu_bar.play_enter_animation()
         self._start_breath()
+        self._start_menu_hud_anim()
 
         if self.on_open_callback:
             self.on_open_callback()
+
+        try:
+            self._overlay.focus_force()
+        except Exception:
+            pass
 
     def _set_alpha(self, a):
         try:
@@ -959,8 +989,209 @@ class SAOPopUpMenu:
         except Exception:
             pass
 
-    def _on_overlay_click(self, e):
-        if e.widget == self._overlay:
+    def _get_visual_bounds(self):
+        """返回当前实际可见菜单区域边界，忽略透明占位区域."""
+        if not self._content or not self._content.winfo_exists():
+            return None
+        try:
+            self._content.update_idletasks()
+            boxes = []
+            for child in self._content.winfo_children():
+                w = child.winfo_width() or child.winfo_reqwidth()
+                h = child.winfo_height() or child.winfo_reqheight()
+                if w <= 4 or h <= 4:
+                    continue
+                x = child.winfo_x()
+                y = child.winfo_y()
+                boxes.append((x, y, x + w, y + h))
+            if not boxes:
+                x = self._content.winfo_x()
+                y = self._content.winfo_y()
+                w = self._content.winfo_width() or self._content.winfo_reqwidth()
+                h = self._content.winfo_height() or self._content.winfo_reqheight()
+                return (x, y, x + w, y + h)
+            return (
+                min(b[0] for b in boxes),
+                min(b[1] for b in boxes),
+                max(b[2] for b in boxes),
+                max(b[3] for b in boxes),
+            )
+        except Exception:
+            return None
+
+    def _get_menu_backdrop_sprite(self, width: int, height: int):
+        width = max(260, int(width))
+        height = max(180, int(height))
+        key = (width, height)
+        if self._menu_hud_backdrop_key == key and self._menu_hud_backdrop is not None:
+            return self._menu_hud_backdrop
+
+        pad = 64
+        img_w = width + pad * 2
+        img_h = height + pad * 2
+
+        shadow = Image.new('RGBA', (img_w, img_h), (0, 0, 0, 0))
+        sdraw = ImageDraw.Draw(shadow)
+        sdraw.rounded_rectangle((pad + 12, pad + 16, pad + width + 12, pad + height + 16),
+                radius=46, fill=(0, 0, 0, 56))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(radius=22))
+
+        plate = Image.new('RGBA', (img_w, img_h), (0, 0, 0, 0))
+        pdraw = ImageDraw.Draw(plate)
+        outer = (pad, pad, pad + width, pad + height)
+        inner = (pad + 10, pad + 10, pad + width - 10, pad + height - 10)
+        pdraw.rounded_rectangle(outer, radius=44,
+                fill=(10, 16, 24, 180), outline=(110, 210, 240, 60), width=1)
+        pdraw.rounded_rectangle(inner, radius=36,
+                fill=(14, 20, 30, 140), outline=(160, 230, 255, 36), width=1)
+        gloss = Image.new('RGBA', (img_w, img_h), (0, 0, 0, 0))
+        gdraw = ImageDraw.Draw(gloss)
+        gdraw.rounded_rectangle((pad + 10, pad + 8, pad + width - 12, int(pad + height * 0.40)),
+                radius=34, fill=(200, 240, 255, 18))
+        gloss = gloss.filter(ImageFilter.GaussianBlur(radius=18))
+        plate = Image.alpha_composite(plate, gloss)
+
+        merged = Image.alpha_composite(shadow, plate)
+        self._menu_hud_backdrop = ImageTk.PhotoImage(merged)
+        self._menu_hud_backdrop_key = key
+        return self._menu_hud_backdrop
+
+    def _draw_menu_hud(self, dx: int = 0, dy: int = 0, phase: float = 0.0):
+        if not self._menu_hud_cv or not self._overlay or not self._overlay.winfo_exists():
+            return
+        try:
+            self._content.update_idletasks()
+            sw = self._overlay.winfo_width()
+            sh = self._overlay.winfo_height()
+            cw = max(120, self._content.winfo_width() or self._content.winfo_reqwidth())
+            ch = max(120, self._content.winfo_height() or self._content.winfo_reqheight())
+            left = self._content.winfo_x()
+            top = self._content.winfo_y()
+            right = left + cw
+            bottom = top + ch
+        except Exception:
+            return
+
+        cv = self._menu_hud_cv
+        cv.delete('all')
+
+        CYAN = '#5eb8ca'
+        GOLD = '#f3af12'
+        DIM_CYAN = '#2a4f5a'
+        DIM_GOLD = '#4a3a10'
+
+        # ── 2. 内容区角标 (四角 L 型支架) ──
+        bk = 20
+        m = 12  # margin outside content
+        cx1, cy1 = left - m, top - m
+        cx2, cy2 = right + m, bottom + m
+        for (x, y, dx1, dy1, dx2, dy2, col) in [
+            (cx1, cy1, bk, 0, 0, bk, CYAN),
+            (cx2, cy1, -bk, 0, 0, bk, GOLD),
+            (cx1, cy2, bk, 0, 0, -bk, CYAN),
+            (cx2, cy2, -bk, 0, 0, -bk, GOLD),
+        ]:
+            cv.create_line(x, y, x + dx1, y + dy1, fill=col, width=1)
+            cv.create_line(x, y, x + dx2, y + dy2, fill=col, width=1)
+
+        # ── 4. 水平扫描线 (动态, 从上到下缓慢移动) ──
+        scan_period = 6.0  # seconds for full sweep
+        scan_pos = (phase % scan_period) / scan_period
+        scan_y = int(cy1 + (cy2 - cy1) * scan_pos)
+        # 扫描线本体
+        cv.create_line(cx1, scan_y, cx2, scan_y, fill=CYAN, width=1)
+        # 扫描线拖影 (上方2条渐淡)
+        for i, a_hex in enumerate(['#1a3a42', '#0d1f24']):
+            cv.create_line(cx1, scan_y - 3 - i * 3,
+                           cx2, scan_y - 3 - i * 3,
+                           fill=a_hex, width=1)
+
+        # ── 5. 数据标签 (系统信息风格) ──
+        # 左上
+        cv.create_text(cx1 + 4, cy1 - 4, text='SYS:MENU', anchor='sw',
+                       font=('Consolas', 7), fill=DIM_CYAN)
+        # 右上
+        cv.create_text(cx2 - 4, cy1 - 4, text=f'RES:{sw}x{sh}', anchor='se',
+                       font=('Consolas', 7), fill=DIM_GOLD)
+        # 左下
+        cv.create_text(cx1 + 4, cy2 + 4, text='ACTIVE', anchor='nw',
+                       font=('Consolas', 7), fill=DIM_CYAN)
+        # 右下时间戳
+        import datetime
+        ts = datetime.datetime.now().strftime('%H:%M:%S')
+        cv.create_text(cx2 - 4, cy2 + 4, text=ts, anchor='ne',
+                       font=('Consolas', 7), fill=DIM_GOLD)
+
+        # ── 6. 侧边导轨 (左右各一条, 带呼吸光点) ──
+        rail_x_l = cx1 - 8
+        rail_x_r = cx2 + 8
+        cv.create_line(rail_x_l, cy1 + bk, rail_x_l, cy2 - bk,
+                       fill=DIM_CYAN, width=1)
+        cv.create_line(rail_x_r, cy1 + bk, rail_x_r, cy2 - bk,
+                       fill=DIM_GOLD, width=1)
+
+        # 呼吸光点沿导轨上下移动
+        dot_travel = cy2 - cy1 - bk * 2
+        dot_y_l = cy1 + bk + int(dot_travel * ((math.sin(phase * 0.8) + 1) / 2))
+        dot_y_r = cy1 + bk + int(dot_travel * ((math.sin(phase * 0.8 + math.pi) + 1) / 2))
+        cv.create_oval(rail_x_l - 3, dot_y_l - 3, rail_x_l + 3, dot_y_l + 3,
+                       fill=CYAN, outline='')
+        cv.create_oval(rail_x_r - 3, dot_y_r - 3, rail_x_r + 3, dot_y_r + 3,
+                       fill=GOLD, outline='')
+
+    def _start_menu_hud_anim(self):
+        if not self._overlay or not self._overlay.winfo_exists():
+            return
+
+        t0 = time.time()
+
+        def _tick():
+            if not self._visible or not self._overlay or not self._overlay.winfo_exists():
+                return
+            elapsed = time.time() - t0
+            self._draw_menu_hud(0, 0, elapsed)
+            self._menu_hud_job = self._overlay.after(16, _tick)
+
+        _tick()
+
+    def _on_root_click_outside(self, e):
+        """root 层点击处理: 透明区域的点击穿透到 root, 判断是否在内容区外."""
+        if not self._visible or not self._content:
+            return
+        try:
+            bounds = self._get_visual_bounds()
+            if bounds is None:
+                self.close()
+                return
+            x1, y1, x2, y2 = bounds
+            ox = self._overlay.winfo_rootx()
+            oy = self._overlay.winfo_rooty()
+            cx1, cy1 = ox + x1 - 12, oy + y1 - 12
+            cx2, cy2 = ox + x2 + 12, oy + y2 + 12
+            if cx1 <= e.x_root <= cx2 and cy1 <= e.y_root <= cy2:
+                return  # 点击在内容区内, 不关闭
+        except Exception:
+            pass
+        self.close()
+
+    def _on_overlay_focus_out(self, _e=None):
+        if not self._visible or not self._overlay or not self._overlay.winfo_exists():
+            return
+
+        def _check():
+            if not self._visible or not self._overlay or not self._overlay.winfo_exists():
+                return
+            try:
+                focus = self._overlay.focus_displayof()
+                if focus is None or str(focus) == 'None':
+                    self.close()
+                    return
+            except Exception:
+                self.close()
+
+        try:
+            self._overlay.after(1, _check)
+        except Exception:
             self.close()
 
     def _on_menu_activate(self, item):
@@ -999,9 +1230,16 @@ class SAOPopUpMenu:
         if not self._overlay or not self._overlay.winfo_exists():
             return
         self._stop_breath()
+        # 解除 root 层点击监听
+        try:
+            if hasattr(self, '_root_click_id') and self._root_click_id:
+                self.root.unbind('<Button-1>', self._root_click_id)
+                self._root_click_id = None
+        except Exception:
+            pass
 
         def fade(t):
-            self._set_alpha(0.85 * (1 - t))
+            self._set_alpha(0.92 * (1 - t))
 
         def destroy():
             if self._overlay and self._overlay.winfo_exists():
@@ -1048,6 +1286,12 @@ class SAOPopUpMenu:
             except Exception:
                 pass
             self._breath_job = None
+        if self._menu_hud_job and self._overlay and self._overlay.winfo_exists():
+            try:
+                self._overlay.after_cancel(self._menu_hud_job)
+            except Exception:
+                pass
+            self._menu_hud_job = None
 
 
 # ──────────────────── SAO 对话框 (Alert) ────────────────────
@@ -1097,12 +1341,8 @@ class SAODialog:
         final_h = 240
         initial_w = 135
 
-        if parent and parent.winfo_exists():
-            px = parent.winfo_rootx() + (parent.winfo_width() - final_w) // 2
-            py = parent.winfo_rooty() + (parent.winfo_height() - final_h) // 2
-        else:
-            px = (dlg.winfo_screenwidth() - final_w) // 2
-            py = (dlg.winfo_screenheight() - final_h) // 2
+        px = (dlg.winfo_screenwidth() - final_w) // 2
+        py = (dlg.winfo_screenheight() - final_h) // 2
 
         dlg.geometry(f'{initial_w}x{final_h}+{px + (final_w - initial_w) // 2}+{py}')
 
@@ -1289,6 +1529,303 @@ def _close_alert(dlg: tk.Toplevel):
     anim.animate('close', 350, shrink, on_done=finish)
 
 
+class SAOLeaderboardDialog:
+    """SAO 风格排行榜对话框：分页、搜索、自适应高度、显示自身设备名与排名。"""
+
+    def __init__(self, parent, title='排行榜', sort_by='xp'):
+        self._parent = parent
+        self._title = title
+        self._sort_by = sort_by
+        self._entries: List[Dict] = []
+        self._filtered: List[Dict] = []
+        self._page = 0
+        self._per_page = 10
+        self._self_device = ''
+        self._self_device_name = ''
+        self._self_rank = None
+        self._focus_rank = None
+
+        self._dlg = tk.Toplevel(parent)
+        self._dlg.overrideredirect(True)
+        self._dlg.attributes('-topmost', True)
+        self._dlg.configure(bg='#d9dde3')
+
+        try:
+            self._dlg.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self._dlg.winfo_id())
+            val = ctypes.c_int(2)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val), 4)
+        except Exception:
+            pass
+
+        self._final_w = 660
+        self._min_h = 300
+        self._max_h = 600
+        self._initial_w = 180
+        self._current_h = self._min_h
+        self._px = (self._dlg.winfo_screenwidth() - self._final_w) // 2
+        self._py = (self._dlg.winfo_screenheight() - self._current_h) // 2
+        self._dlg.geometry(f'{self._initial_w}x{self._current_h}+{self._px + (self._final_w - self._initial_w)//2}+{self._py}')
+
+        main = tk.Frame(self._dlg, bg='#ffffff')
+        main.pack(fill=tk.BOTH, expand=True)
+
+        header = tk.Frame(main, bg='#ffffff', height=58)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+        tk.Frame(header, bg='#f3af12', height=3).pack(fill=tk.X)
+        self._title_lbl = tk.Label(header, text=title, bg='#ffffff', fg='#646364', font=_sao_font(13, True))
+        self._title_lbl.pack(expand=True)
+
+        toolbar = tk.Frame(main, bg='#f4f5f7', height=54)
+        toolbar.pack(fill=tk.X)
+        toolbar.pack_propagate(False)
+        search_wrap = tk.Frame(toolbar, bg='#d1d7df')
+        search_wrap.pack(side=tk.LEFT, padx=(14, 8), pady=10, fill=tk.X, expand=True)
+        self._search_var = tk.StringVar()
+        self._search_entry = tk.Entry(search_wrap, textvariable=self._search_var,
+                                      relief='flat', bd=0, bg='#ffffff', fg='#333333',
+                                      font=_cjk_font(9), insertbackground='#f3af12')
+        self._search_entry.pack(fill=tk.X, padx=2, pady=2, ipady=5)
+        self._search_entry.bind('<Return>', lambda e: self._apply_search())
+        search_btn = tk.Label(toolbar, text='搜索', bg='#1a2030', fg='#e8f4f8', font=_cjk_font(8, True),
+                              padx=10, pady=5, cursor='hand2')
+        search_btn.pack(side=tk.LEFT, padx=(0, 14), pady=10)
+        search_btn.bind('<Button-1>', lambda e: self._apply_search())
+        self._mine_btn = tk.Label(toolbar, text='我的排名', bg='#273244', fg='#f5f8fb', font=_cjk_font(8, True),
+                      padx=10, pady=5, cursor='hand2')
+        self._mine_btn.pack(side=tk.LEFT, padx=(0, 14), pady=10)
+        self._mine_btn.bind('<Button-1>', lambda e: self._jump_to_self())
+
+        self._info_bar = tk.Frame(main, bg='#eef1f5', height=34)
+        self._info_bar.pack(fill=tk.X)
+        self._info_bar.pack_propagate(False)
+        self._self_lbl = tk.Label(self._info_bar, text='PLAYER ID: --', bg='#eef1f5', fg='#5b6978', font=_sao_font(8))
+        self._self_lbl.pack(side=tk.LEFT, padx=14)
+        self._rank_lbl = tk.Label(self._info_bar, text='SELF RANK: --', bg='#eef1f5', fg='#f3af12', font=_sao_font(8, True))
+        self._rank_lbl.pack(side=tk.RIGHT, padx=14)
+
+        list_host = tk.Frame(main, bg='#ececec')
+        list_host.pack(fill=tk.BOTH, expand=True)
+        self._list_wrap = tk.Frame(list_host, bg='#ececec')
+        self._list_wrap.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+
+        head = tk.Frame(self._list_wrap, bg='#dde3ea', height=28)
+        head.pack(fill=tk.X)
+        head.pack_propagate(False)
+        for text, width, anchor in [('RANK', 8, 'w'), ('NAME', 22, 'w'), ('LV', 7, 'center'), ('STAT', 12, 'e')]:
+            tk.Label(head, text=text, bg='#dde3ea', fg='#6b7888', font=_sao_font(8), width=width, anchor=anchor).pack(side=tk.LEFT, padx=(6, 0))
+
+        self._rows_host = tk.Frame(self._list_wrap, bg='#ececec')
+        self._rows_host.pack(fill=tk.BOTH, expand=True)
+
+        footer = tk.Frame(main, bg='#ffffff', height=68)
+        footer.pack(fill=tk.X)
+        footer.pack_propagate(False)
+        pager = tk.Frame(footer, bg='#ffffff')
+        pager.place(relx=0.5, rely=0.5, anchor='center')
+        self._prev_btn = tk.Label(pager, text='PREV', bg='#1a2030', fg='#e8f4f8', font=_sao_font(8), padx=10, pady=5, cursor='hand2')
+        self._prev_btn.pack(side=tk.LEFT, padx=8)
+        self._prev_btn.bind('<Button-1>', lambda e: self._change_page(-1))
+        self._page_lbl = tk.Label(pager, text='1 / 1', bg='#ffffff', fg='#646364', font=_sao_font(9, True), width=10)
+        self._page_lbl.pack(side=tk.LEFT, padx=8)
+        self._next_btn = tk.Label(pager, text='NEXT', bg='#1a2030', fg='#e8f4f8', font=_sao_font(8), padx=10, pady=5, cursor='hand2')
+        self._next_btn.pack(side=tk.LEFT, padx=8)
+        self._next_btn.bind('<Button-1>', lambda e: self._change_page(1))
+        close_btn = tk.Label(footer, text='CLOSE', bg='#d13d4f', fg='#ffffff', font=_sao_font(8, True), padx=10, pady=5, cursor='hand2')
+        close_btn.place(relx=0.94, rely=0.5, anchor='center')
+        close_btn.bind('<Button-1>', lambda e: self.close())
+
+        self._drag = {'x': 0, 'y': 0}
+        for w in (header, self._title_lbl):
+            w.bind('<Button-1>', self._start_drag)
+            w.bind('<B1-Motion>', self._do_drag)
+
+        self._animate_expand()
+        self.set_loading('加载中...')
+        try:
+            self._dlg.focus_force()
+        except Exception:
+            pass
+
+    def _start_drag(self, e):
+        self._drag['x'], self._drag['y'] = e.x_root, e.y_root
+
+    def _do_drag(self, e):
+        dx = e.x_root - self._drag['x']
+        dy = e.y_root - self._drag['y']
+        self._dlg.geometry(f'+{self._dlg.winfo_x() + dx}+{self._dlg.winfo_y() + dy}')
+        self._drag['x'], self._drag['y'] = e.x_root, e.y_root
+
+    def _animate_expand(self):
+        t0 = time.time()
+        dur = 0.35
+
+        def _step():
+            if not self._dlg.winfo_exists():
+                return
+            t = min(1.0, (time.time() - t0) / dur)
+            et = ease_out(t)
+            w = int(lerp(self._initial_w, self._final_w, et))
+            x = self._px + (self._final_w - w) // 2
+            self._dlg.geometry(f'{w}x{self._current_h}+{x}+{self._py}')
+            if t < 1.0:
+                self._dlg.after(16, _step)
+        _step()
+
+    def close(self):
+        _close_alert(self._dlg)
+
+    def set_loading(self, message='加载中...'):
+        self._entries = []
+        self._filtered = []
+        self._render_rows(message=message, empty=True)
+
+    def set_error(self, message: str):
+        self._render_rows(message=message, empty=True)
+
+    def set_entries(self, entries: List[Dict], self_device: str, self_device_name: str = '', sort_by: str = 'xp'):
+        self._entries = list(entries or [])
+        self._self_device = self_device or ''
+        self._self_device_name = self_device_name or ''
+        self._sort_by = sort_by
+        self._self_rank = None
+        self._focus_rank = None
+        for i, row in enumerate(self._entries):
+            row.setdefault('rank', i + 1)
+            if row.get('device_id', '') == self_device:
+                self._self_rank = row.get('rank', i + 1)
+                self._self_device_name = self._self_device_name or str(row.get('player_id', '') or row.get('username', '')).strip()
+        self._apply_search()
+
+    def _stat_text(self, row: Dict) -> str:
+        if self._sort_by == 'level':
+            return f"LV {row.get('level', 1)}"
+        if self._sort_by == 'songs_played':
+            return f"{row.get('songs_played', 0)}曲"
+        if self._sort_by == 'play_time':
+            sec = float(row.get('play_time', 0) or 0)
+            if sec < 60:
+                return f'{int(sec)}S'
+            if sec < 3600:
+                return f'{int(sec // 60)}M'
+            return f'{sec / 3600:.1f}H'
+        return f"XP {row.get('xp', row.get('total_xp', 0))}"
+
+    def _apply_search(self):
+        q = (self._search_var.get() or '').strip().lower()
+        self._focus_rank = None
+        if not q:
+            self._filtered = list(self._entries)
+        elif (q.startswith('#') and q[1:].isdigit()) or q.isdigit():
+            target_rank = int(q[1:] if q.startswith('#') else q)
+            self._filtered = list(self._entries)
+            idx = next((i for i, row in enumerate(self._filtered) if int(row.get('rank', -1)) == target_rank), -1)
+            if idx >= 0:
+                self._focus_rank = target_rank
+                self._page = idx // self._per_page
+                self._refresh()
+                return
+            self._filtered = []
+        else:
+            self._filtered = []
+            for row in self._entries:
+                hay = ' '.join([
+                    str(row.get('rank', '')),
+                    str(row.get('player_id', '')),
+                    str(row.get('username', '')),
+                    str(row.get('profession', '')),
+                    str(row.get('device_id', '')),
+                ]).lower()
+                if q in hay:
+                    self._filtered.append(row)
+        self._page = 0
+        self._refresh()
+
+    def _jump_to_self(self):
+        if not self._self_rank:
+            return
+        self._search_var.set(f'#{self._self_rank}')
+        self._apply_search()
+
+    def _change_page(self, delta: int):
+        pages = max(1, math.ceil(len(self._filtered) / self._per_page))
+        self._page = max(0, min(pages - 1, self._page + delta))
+        self._refresh()
+
+    def _refresh(self):
+        if self._self_device_name or self._self_device:
+            shown = self._self_device_name or 'Player'
+            self._self_lbl.configure(text=f'PLAYER ID: {shown}')
+        else:
+            self._self_lbl.configure(text='PLAYER ID: --')
+        if self._self_rank:
+            self._rank_lbl.configure(text=f'SELF RANK: #{self._self_rank}')
+        else:
+            self._rank_lbl.configure(text='SELF RANK: --')
+
+        if not self._filtered:
+            self._render_rows(message='未找到匹配的排名记录', empty=True)
+            self._page_lbl.configure(text='0 / 0')
+            return
+
+        pages = max(1, math.ceil(len(self._filtered) / self._per_page))
+        self._page = max(0, min(pages - 1, self._page))
+        start = self._page * self._per_page
+        page_rows = self._filtered[start:start + self._per_page]
+        self._page_lbl.configure(text=f'{self._page + 1} / {pages}')
+        self._prev_btn.configure(bg='#1a2030' if self._page > 0 else '#9aa4b3')
+        self._next_btn.configure(bg='#1a2030' if self._page < pages - 1 else '#9aa4b3')
+        self._render_rows(rows=page_rows)
+
+    def _render_rows(self, rows: Optional[List[Dict]] = None, message: str = '', empty: bool = False):
+        for w in self._rows_host.winfo_children():
+            w.destroy()
+
+        visible_rows = 1
+        if empty:
+            tk.Label(self._rows_host, text=message, bg='#ececec', fg='#8892a0', font=_cjk_font(10), pady=28).pack(fill=tk.BOTH, expand=True)
+        else:
+            rows = rows or []
+            visible_rows = max(1, min(self._per_page, len(rows)))
+            for idx, row in enumerate(rows):
+                bg = '#f7f9fb' if idx % 2 == 0 else '#eef2f6'
+                if row.get('device_id', '') == self._self_device:
+                    bg = '#e7f1fb'
+                if self._focus_rank and int(row.get('rank', -1)) == int(self._focus_rank):
+                    bg = '#fff1d8'
+                line = tk.Frame(self._rows_host, bg=bg, height=34)
+                line.pack(fill=tk.X, pady=1)
+                line.pack_propagate(False)
+                rank_text = f"#{row.get('rank', idx + 1)}"
+                if row.get('rank', 99) <= 3:
+                    rank_text = ['TOP1', 'TOP2', 'TOP3'][row.get('rank', 1) - 1]
+                tk.Label(line, text=rank_text, bg=bg, fg='#f3af12' if row.get('rank', 9) <= 3 else '#7a8796',
+                         font=_sao_font(8, True), width=8, anchor='w').pack(side=tk.LEFT, padx=(8, 0))
+                primary = str(row.get('player_id', '') or row.get('username', '???'))[:18]
+                alt = str(row.get('username', '') or '').strip()
+                prof = row.get('profession', '')
+                pieces = [primary]
+                if alt and alt != primary:
+                    pieces.append(f'@{alt[:10]}')
+                if prof:
+                    pieces.append(f'[{prof}]')
+                tk.Label(line, text='  '.join(pieces), bg=bg, fg='#333333',
+                         font=_cjk_font(9), anchor='w').pack(side=tk.LEFT, fill=tk.X, expand=True)
+                tk.Label(line, text=f"Lv.{row.get('level', 1)}", bg=bg, fg='#428ce6',
+                         font=_sao_font(8), width=7, anchor='center').pack(side=tk.LEFT)
+                tk.Label(line, text=self._stat_text(row), bg=bg, fg='#666666',
+                         font=_sao_font(8), width=12, anchor='e').pack(side=tk.RIGHT, padx=(0, 8))
+
+        target_h = 58 + 54 + 34 + 10 + 28 + visible_rows * 36 + 68
+        self._current_h = max(self._min_h, min(self._max_h, target_h))
+        self._py = (self._dlg.winfo_screenheight() - self._current_h) // 2
+        try:
+            self._dlg.geometry(f'{self._final_w}x{self._current_h}+{self._px}+{self._py}')
+        except Exception:
+            pass
+
+
 # ──────────────────── HP 血条 ────────────────────
 class SAOHPBar(tk.Canvas):
     """
@@ -1460,6 +1997,7 @@ class SAOLinkStart:
     _CAM_Z_START = -1200    # 摄像机起始 z (= CSS translateZ(-1200px))
     _CAM_Z_END = 1500       # 摄像机终止 z (= CSS translateZ(1500px))
     _CAM_DURATION = 3.5     # 单次飞行时长 = SAO-UI animation: 3.5s
+    _STARTUP_PRELUDE = 0.72 # 启动扫描/光阀独占时长, 结束后再进入 P1
 
     # ──── 时间线 ────
     _DURATION = 9.0
@@ -1944,6 +2482,11 @@ void main() {
         self._gl_fbo = ctx.framebuffer(
             color_attachments=[self._gl_color_tex],
             depth_attachment=self._gl_depth_rb)
+        startup_w = max(480, sw // 3)
+        startup_h = max(270, sh // 3)
+        self._gl_startup_tex = ctx.texture((startup_w, startup_h), 3)
+        self._gl_startup_fbo = ctx.framebuffer(color_attachments=[self._gl_startup_tex])
+        self._gl_startup_size = (startup_w, startup_h)
 
         # 启用深度测试
         ctx.enable(moderngl.DEPTH_TEST)
@@ -1986,6 +2529,9 @@ void main() {
                 pass
             self._gl_ctx = None
         self._gl_photo = None
+        self._gl_startup_tex = None
+        self._gl_startup_fbo = None
+        self._gl_startup_size = None
 
     # ════════════════════════════════════════════════════════
     #  构建 View-Projection 矩阵
@@ -2067,6 +2613,36 @@ void main() {
 
         # ── Canvas 2D 回退 ──
         self._draw_tunnel_canvas(cv, particles, cam_z, bg, fade, t)
+
+    def _draw_startup_gl(self, cv: tk.Canvas, bg: str, t: float = 0.0):
+        """启动扫描前奏专用 GPU 渲染：只跑背景 shader，避免几何与后处理拖慢 FPS。"""
+        if not self._gl_ctx:
+            return
+        ctx = self._gl_ctx
+        sw, sh = self._sw, self._sh
+        bgr, bgg, bgb = hex_to_rgb(bg)
+        bg_norm = (bgr / 255.0, bgg / 255.0, bgb / 255.0)
+
+        self._gl_fbo.use()
+        ctx.clear(bg_norm[0], bg_norm[1], bg_norm[2], 1.0)
+        ctx.disable(moderngl.DEPTH_TEST)
+        self._gl_bg_prog['u_time'].value = t
+        self._gl_bg_prog['u_energy'].value = float(getattr(self, '_gl_fx_energy', 0.0))
+        self._gl_bg_prog['u_flash'].value = float(getattr(self, '_gl_fx_flash', 0.0))
+        self._gl_bg_prog['u_startburst'].value = float(getattr(self, '_gl_start_burst', 0.0))
+        self._gl_bg_prog['u_startwave'].value = float(getattr(self, '_gl_start_wave', 0.0))
+        self._gl_bg_prog['u_bg_color'].value = bg_norm
+        self._gl_bg_prog['u_tint'].value = tuple(getattr(self, '_gl_fx_tint', (0.95, 0.85, 0.35)))
+        self._gl_bg_prog['u_aspect'].value = sw / max(1.0, float(sh))
+        self._gl_bg_prog['u_resolution'].value = (float(sw), float(sh))
+        self._gl_bg_vao.render(moderngl.TRIANGLES, vertices=3)
+        ctx.enable(moderngl.DEPTH_TEST)
+
+        raw = self._gl_fbo.read(components=3)
+        arr = np.frombuffer(raw, dtype=np.uint8).reshape(sh, sw, 3)
+        photo = ImageTk.PhotoImage(Image.fromarray(arr[::-1], 'RGB'))
+        self._gl_photo = photo
+        cv.create_image(0, 0, image=photo, anchor='nw')
 
     def _draw_tunnel_gl(self, cv: tk.Canvas, particles: list,
                         cam_z: float, bg: str, fade: float = 1.0,
@@ -2195,9 +2771,8 @@ void main() {
 
         # ── 读回后处理结果: 已含色差+模糊, 无需 CPU 运算 ──
         raw = write_fbo.read(components=3)
-        arr = np.frombuffer(raw, dtype=np.uint8).reshape(sh, sw, 3)[::-1].copy()
-        img = Image.fromarray(arr, 'RGB')
-        photo = ImageTk.PhotoImage(img)
+        arr = np.frombuffer(raw, dtype=np.uint8).reshape(sh, sw, 3)
+        photo = ImageTk.PhotoImage(Image.fromarray(arr[::-1], 'RGB'))
         self._gl_photo = photo   # 防止 GC
         cv.create_image(0, 0, image=photo, anchor='nw')
 
@@ -2314,7 +2889,8 @@ void main() {
             return
 
         elapsed = time.time() - self._start_time
-        if elapsed > self._DURATION:
+        scene_t = elapsed - self._STARTUP_PRELUDE
+        if scene_t > self._DURATION:
             self._finish()
             return
 
@@ -2323,60 +2899,82 @@ void main() {
         sw, sh = self._sw, self._sh
 
         # ── 背景 ──
-        bg = self._calc_bg(elapsed)
+        bg = self._calc_bg(max(0.0, scene_t))
         cv.create_rectangle(0, 0, sw, sh, fill=bg, outline='')
-        text_active = self._P2_START - 0.2 <= elapsed < self._P2_END + 0.3
-        text_state = self._get_text_phase_state(elapsed) if text_active else None
+        text_active = self._P2_START - 0.2 <= scene_t < self._P2_END + 0.3
+        text_state = self._get_text_phase_state(scene_t) if text_active else None
+
+        # ── Startup prelude: 扫描环/光阀先完成, 再进入 P1 ──
+        if scene_t < 0.0:
+            startup_t = max(0.0, elapsed)
+            startup_burst = max(0.0, 1.0 - startup_t / 0.52)
+            startup_wave = min(1.0, startup_t / self._STARTUP_PRELUDE)
+            self._gl_start_burst = startup_burst
+            self._gl_start_wave = startup_wave
+            self._gl_fx_energy = startup_wave * 0.18
+            self._gl_fx_flash = max(0.0, 1.0 - startup_t / self._STARTUP_PRELUDE) * 0.42 + startup_burst * 0.30
+            self._gl_fx_tint = (0.96, 0.78, 0.24)
+            if self._gl_ctx:
+                self._draw_startup_gl(cv, bg, t=elapsed)
+            else:
+                self._draw_start_aperture_cv(cv, startup_t, bg)
+                self._draw_start_connect_cv(cv, startup_t, bg)
+                self._draw_entry_burst_cv(cv, startup_t, bg)
+            _render_ms = (time.perf_counter() - _t0) * 1000
+            _delay = max(1, int(16.67 - _render_ms))
+            self._overlay.after(_delay, self._animate)
+            return
 
         # ── Phase 1: 彩色隧道 (0 ~ P1_END) ──
-        if elapsed < self._P1_END + 0.5:
+        if scene_t < self._P1_END + 0.5:
             # 粒子淡入: 0~0.5s 不可见, 0.5~1.5s 渐入
             particle_fade = 1.0
-            if elapsed < 0.5:
-                particle_fade = 0.0
-            elif elapsed < 1.5:
-                particle_fade = ease_out((elapsed - 0.5) / 1.0)
-            if elapsed > self._P1_END:
-                particle_fade = max(0, 1.0 - (elapsed - self._P1_END) / 0.5)
+            if scene_t < 0.28:
+                particle_fade = lerp(0.22, 0.62, ease_out(scene_t / 0.28))
+            elif scene_t < 1.0:
+                particle_fade = lerp(0.62, 1.0, ease_out((scene_t - 0.28) / 0.72))
+            if scene_t > self._P1_END:
+                particle_fade = max(0, 1.0 - (scene_t - self._P1_END) / 0.5)
 
             # 使用原始 _CAM_DURATION (3.5s) 保持与 P3 相同的飞行速度.
             # z_near < 1.0 的近裁剪guard已处理摄像机追上粒子的情况 → 直接跳过不渲染.
-            cam_z = self._cam_z(elapsed, self._CAM_DURATION)
+            cam_z = self._cam_z(scene_t, self._CAM_DURATION)
 
             # 粒子隧道
-            startup_burst = max(0.0, 1.0 - elapsed / 0.52)
-            startup_wave = min(1.0, elapsed / 0.72)
+            startup_bridge_t = min(self._STARTUP_PRELUDE + 0.64, elapsed)
+            startup_burst = max(0.0, 1.0 - startup_bridge_t / 1.06)
+            startup_wave = min(1.0, startup_bridge_t / (self._STARTUP_PRELUDE + 0.64))
             self._gl_start_burst = startup_burst
             self._gl_start_wave = startup_wave
-            self._gl_fx_energy = min(1.0, particle_fade * (0.20 + 0.88 * min(1.0, elapsed / max(0.01, self._CAM_DURATION))) + startup_burst * 0.28)
-            self._gl_fx_flash = max(0.0, 1.0 - elapsed / 1.00) * 0.44 + startup_burst * 0.36
+            self._gl_fx_energy = min(1.0, particle_fade * (0.20 + 0.88 * min(1.0, scene_t / max(0.01, self._CAM_DURATION))) + startup_burst * 0.28)
+            self._gl_fx_flash = max(0.0, 1.0 - startup_bridge_t / 1.08) * 0.30 + startup_burst * 0.28
             self._gl_fx_tint = (0.96, 0.78, 0.24)
             if not self._gl_ctx:
-                self._draw_start_aperture_cv(cv, elapsed, bg)
-                self._draw_start_connect_cv(cv, elapsed, bg)
-                self._draw_entry_burst_cv(cv, elapsed, bg)
-                self._draw_focus_flow_cv(cv, elapsed, self._CAM_DURATION,
+                self._draw_focus_flow_cv(cv, scene_t, self._CAM_DURATION,
                                          particle_fade, bg, warm=True)
             self._draw_tunnel(cv, self._color_particles, cam_z, bg,
-                              particle_fade, t=elapsed)
+                              particle_fade, t=scene_t)
+
+            # P1 HUD 角标叠加
+            self._draw_tunnel_hud_overlay(cv, scene_t, particle_fade, warm=True)
 
             # P1 收尾: 暗色圆形从中心扩张扫过, 盖住未飞出的圆柱体
-            if elapsed >= self._P1_END - 0.05:
-                self._draw_p1_circle_wipe(cv, elapsed)
+            if scene_t >= self._P1_END - 0.05:
+                self._draw_p1_circle_wipe(cv, scene_t)
 
         # ── Phase 2 underlay: 先画底层 flare / frame，避免在 P3 重叠时盖住圆柱 ──
         if text_state:
-            self._draw_text_phase_underlay(cv, elapsed, text_state)
+            self._draw_text_phase_underlay(cv, scene_t, text_state)
 
         # ── Phase 3: 蓝色隧道 (5.2 ~ 7.5s + 0.3s 渐隐) ──
-        if self._P3_START <= elapsed < self._P3_END + 0.3:
+        if self._P3_START <= scene_t < self._P3_END + 0.3:
             p3_fade = 1.0
-            if elapsed < self._P3_START + 0.5:
-                p3_fade = (elapsed - self._P3_START) / 0.5
-            if elapsed > self._P3_END:
-                p3_fade = max(0, 1.0 - (elapsed - self._P3_END) / 0.3)
+            if scene_t < self._P3_START + 0.5:
+                p3_fade = (scene_t - self._P3_START) / 0.5
+            if scene_t > self._P3_END:
+                p3_fade = max(0, 1.0 - (scene_t - self._P3_END) / 0.3)
 
-            p3_t = elapsed - self._P3_START
+            p3_t = scene_t - self._P3_START
             p3_dur = self._P3_END - self._P3_START  # = 2.3s, 确保摄像机在相结束前走完全程
             cam_z = self._cam_z(p3_t, p3_dur)
             self._gl_start_burst = 0.0
@@ -2388,15 +2986,19 @@ void main() {
                 self._draw_focus_flow_cv(cv, p3_t, p3_dur,
                                          p3_fade, bg, warm=False)
             self._draw_tunnel(cv, self._blue_particles, cam_z, bg,
-                              p3_fade, t=elapsed)
+                              p3_fade, t=scene_t)
+
+            # P3 HUD 角标叠加
+            self._draw_tunnel_hud_overlay(cv, scene_t, p3_fade, warm=False)
 
         # ── Phase 2 overlay: HUD / text 保持可见，但不把底层纹波放到圆柱体上方 ──
         if text_state:
-            self._render_text_phase(cv, elapsed, text_state)
+            self._render_text_phase(cv, scene_t, text_state)
 
         # ── Phase 4: 渐隐 (7.3 ~ 9.0s) ──
-        if elapsed >= self._P4_START:
-            self._draw_whiteout_cv(cv, elapsed)
+        if scene_t >= self._P4_START:
+            self._draw_whiteout_cv(cv, scene_t)
+            self._draw_connected_overlay(cv, scene_t)
 
         # 自适应调度: 用实际渲染耗时虚追 16.7ms 帧限, 尽量维持 60fps
         _render_ms = (time.perf_counter() - _t0) * 1000
@@ -2723,6 +3325,152 @@ void main() {
                            cx + r_ring, cy + r_ring,
                            fill='', outline=color, width=2 - i * 0.3)
 
+    def _draw_linkstart_canvas_text(self, cv: tk.Canvas, x: int, y: int,
+                                    text: str, size: int, fill_rgba,
+                                    stroke_rgba, glow_rgba,
+                                    stroke_width: int = 1,
+                                    blur_radius: float = 1.0,
+                                    anchor: str = 'center'):
+        """使用 LinkStart 的 SAOUI sprite 管线在 Canvas 上绘制英文文本."""
+        sprite = self._get_linkstart_text_sprite(
+            text, 'sao', size,
+            fill_rgba, stroke_rgba, glow_rgba,
+            stroke_width, blur_radius)
+        self._ls_live_photos.append(sprite['photo'])
+
+        ax, ay = x, y
+        w = sprite['width']
+        h = sprite['height']
+        if anchor == 'n':
+            ay = y + h // 2
+        elif anchor == 'ne':
+            ax = x - w // 2
+            ay = y + h // 2
+        elif anchor == 'e':
+            ax = x - w // 2
+        elif anchor == 'se':
+            ax = x - w // 2
+            ay = y - h // 2
+        elif anchor == 's':
+            ay = y - h // 2
+        elif anchor == 'sw':
+            ax = x + w // 2
+            ay = y - h // 2
+        elif anchor == 'w':
+            ax = x + w // 2
+        elif anchor == 'nw':
+            ax = x + w // 2
+            ay = y + h // 2
+        cv.create_image(ax, ay, image=sprite['photo'], anchor='center')
+
+    # ════════════════════════════════════════════════════════
+    #  隧道 HUD 叠加层 — 飞行中的角标 / 系统数据
+    # ════════════════════════════════════════════════════════
+    def _draw_tunnel_hud_overlay(self, cv: tk.Canvas, t: float, fade: float,
+                                  warm: bool = True):
+        """在隧道飞行阶段叠加 SAO 风格 HUD 角标和数据标签."""
+        if fade < 0.08:
+            return
+        sw, sh = self._sw, self._sh
+        m = 32  # 角标到边缘距离
+        arm = 28
+        alpha = min(1.0, fade * 0.55)
+        cyan_rgb = (110, 232, 255) if warm else (92, 190, 255)
+        gold_rgb = (243, 175, 18) if warm else (164, 238, 255)
+        cyan = self._blend_over_bg('#000000', cyan_rgb, alpha)
+        gold = self._blend_over_bg('#000000', gold_rgb, alpha)
+        dim = self._blend_over_bg('#000000', cyan_rgb, alpha * 0.3)
+
+        # ── 四角 L 形角标 ──
+        for (x0, y0, dx, dy, col) in [
+            (m, m, 1, 1, cyan),
+            (sw - m, m, -1, 1, gold),
+            (m, sh - m, 1, -1, cyan),
+            (sw - m, sh - m, -1, -1, gold),
+        ]:
+            cv.create_line(x0, y0, x0 + dx * arm, y0, fill=col, width=1)
+            cv.create_line(x0, y0, x0, y0 + dy * arm, fill=col, width=1)
+
+        # ── 顶部中央: 相位标签 ──
+        phase_tag = 'PHASE:COLORSTREAM' if warm else 'PHASE:BLUESHIFT'
+        tag_alpha = int(255 * alpha * 0.72)
+        self._draw_linkstart_canvas_text(
+            cv, sw // 2, m + 6, phase_tag, 12,
+            (cyan_rgb[0], cyan_rgb[1], cyan_rgb[2], tag_alpha),
+            (10, 20, 28, int(tag_alpha * 0.85)),
+            (cyan_rgb[0], cyan_rgb[1], cyan_rgb[2], int(tag_alpha * 0.22)),
+            stroke_width=1, blur_radius=1.0, anchor='n')
+
+        # ── 左下角: 速度 / 帧数据 ──
+        speed_pct = min(100, int(t * 30))
+        data_alpha = int(255 * alpha * 0.56)
+        self._draw_linkstart_canvas_text(
+            cv, m + 4, sh - m - 26, f'SPD: {speed_pct:03d}%', 10,
+            (cyan_rgb[0], cyan_rgb[1], cyan_rgb[2], data_alpha),
+            (10, 20, 28, int(data_alpha * 0.82)),
+            (cyan_rgb[0], cyan_rgb[1], cyan_rgb[2], int(data_alpha * 0.18)),
+            stroke_width=1, blur_radius=0.8, anchor='sw')
+        self._draw_linkstart_canvas_text(
+            cv, m + 4, sh - m - 14, f'T: {t:.2f}S', 10,
+            (cyan_rgb[0], cyan_rgb[1], cyan_rgb[2], data_alpha),
+            (10, 20, 28, int(data_alpha * 0.82)),
+            (cyan_rgb[0], cyan_rgb[1], cyan_rgb[2], int(data_alpha * 0.18)),
+            stroke_width=1, blur_radius=0.8, anchor='sw')
+
+        # ── 右上角: 系统标签 ──
+        sys_alpha = int(255 * alpha * 0.56)
+        self._draw_linkstart_canvas_text(
+            cv, sw - m - 4, m + 6, 'SAO://LINK', 10,
+            (gold_rgb[0], gold_rgb[1], gold_rgb[2], sys_alpha),
+            (18, 18, 14, int(sys_alpha * 0.82)),
+            (gold_rgb[0], gold_rgb[1], gold_rgb[2], int(sys_alpha * 0.18)),
+            stroke_width=1, blur_radius=0.8, anchor='ne')
+        self._draw_linkstart_canvas_text(
+            cv, sw - m - 4, m + 18, 'NERVE:ACTIVE', 10,
+            (gold_rgb[0], gold_rgb[1], gold_rgb[2], sys_alpha),
+            (18, 18, 14, int(sys_alpha * 0.82)),
+            (gold_rgb[0], gold_rgb[1], gold_rgb[2], int(sys_alpha * 0.18)),
+            stroke_width=1, blur_radius=0.8, anchor='ne')
+
+        # ── 底部中央: 扫描线 (水平细线左到右移动) ──
+        scan_x = int((t * 120) % (sw - 2 * m)) + m
+        scan_w = 80
+        cv.create_line(max(m, scan_x - scan_w), sh - m + 4,
+                       min(sw - m, scan_x), sh - m + 4,
+                       fill=dim, width=1)
+
+    # ════════════════════════════════════════════════════════
+    #  P4 "CONNECTED" 叠加文字
+    # ════════════════════════════════════════════════════════
+    def _draw_connected_overlay(self, cv: tk.Canvas, t: float):
+        """在 P4 早期闪现 'SYSTEM >> CONNECTED' 确认文字."""
+        wt = t - self._P4_START
+        if wt < 0 or wt > 1.2:
+            return
+        alpha = 1.0
+        if wt < 0.15:
+            alpha = wt / 0.15
+        elif wt > 0.7:
+            alpha = max(0.0, 1.0 - (wt - 0.7) / 0.5)
+        if alpha < 0.05:
+            return
+
+        cx, cy = self._cx, self._cy
+        main_alpha = int(255 * alpha * 0.90)
+        sub_alpha = int(255 * alpha * 0.64)
+        self._draw_linkstart_canvas_text(
+            cv, cx, cy - 14, 'SYSTEM >> CONNECTED', 24,
+            (255, 255, 255, main_alpha),
+            (36, 48, 76, int(main_alpha * 0.88)),
+            (160, 224, 255, int(main_alpha * 0.18)),
+            stroke_width=2, blur_radius=1.6, anchor='center')
+        self._draw_linkstart_canvas_text(
+            cv, cx, cy + 14, 'FULL DIVE INITIALIZED', 12,
+            (110, 232, 255, sub_alpha),
+            (22, 34, 48, int(sub_alpha * 0.84)),
+            (110, 232, 255, int(sub_alpha * 0.18)),
+            stroke_width=1, blur_radius=1.0, anchor='center')
+
     # ════════════════════════════════════════════════════════
     #  白闪 + 渐隐
     # ════════════════════════════════════════════════════════
@@ -2820,8 +3568,6 @@ void main() {
         warm_jobs = [
             ('WELCOME TO', 'sao', 42,
              (240, 248, 255, 240), (30, 44, 72, 220), (140, 225, 255, 64), 2, 2.0),
-            ('咲 MIDI PLAYER', 'cjk', 48,
-             (255, 248, 236, 240), (30, 44, 72, 220), (255, 214, 120, 56), 2, 2.0),
             ('SYS CORE', 'sao', 15,
              (112, 232, 255, 192), (18, 34, 56, 164), (112, 232, 255, 44), 1, 1.0),
             ('COORD LOCK', 'sao', 14,
@@ -2834,6 +3580,22 @@ void main() {
              (255, 196, 104, 180), (34, 30, 38, 150), (255, 214, 120, 36), 1, 1.0),
             ('AXIS LOCK', 'sao', 14,
              (112, 232, 255, 176), (18, 34, 56, 150), (112, 232, 255, 34), 1, 1.0),
+              ('PHASE:COLORSTREAM', 'sao', 12,
+               (112, 232, 255, 176), (10, 20, 28, 144), (112, 232, 255, 34), 1, 1.0),
+              ('PHASE:BLUESHIFT', 'sao', 12,
+               (92, 190, 255, 176), (10, 20, 28, 144), (92, 190, 255, 34), 1, 1.0),
+              ('SPD: 100%', 'sao', 10,
+               (112, 232, 255, 160), (10, 20, 28, 132), (112, 232, 255, 28), 1, 0.8),
+              ('T: 7.50S', 'sao', 10,
+               (112, 232, 255, 160), (10, 20, 28, 132), (112, 232, 255, 28), 1, 0.8),
+              ('SAO://LINK', 'sao', 10,
+               (255, 214, 120, 160), (18, 18, 14, 132), (255, 214, 120, 28), 1, 0.8),
+              ('NERVE:ACTIVE', 'sao', 10,
+               (255, 214, 120, 160), (18, 18, 14, 132), (255, 214, 120, 28), 1, 0.8),
+              ('SYSTEM >> CONNECTED', 'sao', 24,
+               (255, 255, 255, 224), (36, 48, 76, 192), (160, 224, 255, 40), 2, 1.5),
+              ('FULL DIVE INITIALIZED', 'sao', 12,
+               (112, 232, 255, 176), (22, 34, 48, 144), (112, 232, 255, 30), 1, 1.0),
         ]
         for text, family, size, fill_rgba, stroke_rgba, glow_rgba, stroke_width, blur_radius in warm_jobs:
             try:
@@ -2843,6 +3605,12 @@ void main() {
                     stroke_width, blur_radius)
             except Exception:
                 pass
+        try:
+            self._get_linkstart_mixed_text_sprite(
+                [('咲 ', 'cjk'), ('MIDI PLAYER', 'sao')], 48,
+                (255, 248, 236, 240), (30, 44, 72, 220), (255, 214, 120, 56), 2, 2.0)
+        except Exception:
+            pass
         self._ls_p2_prewarmed = True
 
     def _draw_text_layer(self, draw: ImageDraw.ImageDraw, pos, text: str, font,
@@ -2897,6 +3665,71 @@ void main() {
         draw = ImageDraw.Draw(img)
         draw.text((gx, gy), text, font=font, fill=qfill,
               stroke_fill=qstroke_rgba, stroke_width=max(0, qstroke))
+
+        photo = ImageTk.PhotoImage(img)
+        payload = {'photo': photo, 'width': w, 'height': h}
+        self._ls_sprite_cache[key] = payload
+        return payload
+
+    def _get_linkstart_mixed_text_sprite(self, segments, size: int,
+                                         fill_rgba, stroke_rgba, glow_rgba,
+                                         stroke_width: int, blur_radius: float = 3.0):
+        """按片段混合 SAOUI / CJK 字体，保证英文数字走 SAOUI。"""
+        qsize = max(6, int(round(size / 4.0) * 4))
+        qstroke = max(0, int(round(stroke_width)))
+        qblur = round(float(blur_radius) * 2.0) / 2.0
+
+        def _q_rgba(rgba):
+            return tuple(max(0, min(255, int(round(v / 16.0) * 16))) for v in rgba)
+
+        qfill = _q_rgba(fill_rgba)
+        qstroke_rgba = _q_rgba(stroke_rgba)
+        qglow = _q_rgba(glow_rgba)
+        norm_segments = tuple((str(text), str(family)) for text, family in segments if text)
+        key = ('mixed', norm_segments, qsize, qfill, qstroke_rgba, qglow, qstroke, qblur)
+        cached = self._ls_sprite_cache.get(key)
+        if cached is not None:
+            return cached
+
+        if len(self._ls_sprite_cache) > 220:
+            self._ls_sprite_cache.clear()
+
+        dummy = Image.new('RGBA', (32, 32), (0, 0, 0, 0))
+        dd = ImageDraw.Draw(dummy)
+        font_infos = []
+        total_w = 0
+        top = 0
+        bottom = 0
+        for text, family in norm_segments:
+            font = self._get_linkstart_pil_font(qsize, family)
+            bbox = dd.textbbox((0, 0), text, font=font, stroke_width=qstroke)
+            seg_w = max(1, bbox[2] - bbox[0])
+            top = min(top, bbox[1])
+            bottom = max(bottom, bbox[3])
+            font_infos.append((text, font, bbox, seg_w))
+            total_w += seg_w
+
+        pad = int(max(12, qsize * 0.55))
+        w = max(8, total_w + pad * 2)
+        h = max(8, bottom - top + pad * 2)
+
+        def _render_layer(fill_rgba_value, blur=False):
+            layer = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(layer)
+            x = pad
+            for text, font, bbox, seg_w in font_infos:
+                draw.text((x - bbox[0], pad - top), text, font=font, fill=fill_rgba_value,
+                          stroke_fill=qstroke_rgba if not blur else None,
+                          stroke_width=qstroke if not blur else 0)
+                x += seg_w
+            if blur:
+                layer = layer.filter(ImageFilter.GaussianBlur(radius=max(0.5, qblur)))
+            return layer
+
+        glow = _render_layer(qglow, blur=True)
+        img = Image.alpha_composite(Image.new('RGBA', (w, h), (0, 0, 0, 0)), glow)
+        main = _render_layer(qfill, blur=False)
+        img = Image.alpha_composite(img, main)
 
         photo = ImageTk.PhotoImage(img)
         payload = {'photo': photo, 'width': w, 'height': h}
@@ -3278,8 +4111,8 @@ void main() {
             (20, 34, 58, int(ghost_alpha * 0.45)),
             (110, 232, 255, int(ghost_alpha * 0.30)),
             max(1, size_1 // 22), max(1.4, size_1 * 0.025))
-        sprite_ghost_2 = self._get_linkstart_text_sprite(
-            txt2, 'cjk', size_2,
+        sprite_ghost_2 = self._get_linkstart_mixed_text_sprite(
+            [('咲 ', 'cjk'), ('MIDI PLAYER', 'sao')], size_2,
             warm,
             (34, 30, 38, int(accent_alpha * 0.40)),
             (255, 214, 120, int(accent_alpha * 0.22)),
@@ -3290,8 +4123,8 @@ void main() {
             stroke,
             (140, 225, 255, int(core_alpha * 0.28)),
             max(1, size_1 // 18), max(1.8, size_1 * 0.032))
-        sprite_main_2 = self._get_linkstart_text_sprite(
-            txt2, 'cjk', size_2,
+        sprite_main_2 = self._get_linkstart_mixed_text_sprite(
+            [('咲 ', 'cjk'), ('MIDI PLAYER', 'sao')], size_2,
             (255, 248, 236, core_alpha),
             stroke,
             (255, 214, 120, int(core_alpha * 0.22)),
@@ -3904,7 +4737,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.4.5+3405", on_close=None, **kw):
+                 version="v3.4.6+3406", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close

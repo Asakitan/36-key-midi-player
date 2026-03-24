@@ -6,17 +6,38 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 @font-face {
     font-family: 'sao';
-    src: url('../assets/fonts/SAOUI.ttf') format('truetype');
+    src: url('fonts/SAOUI.ttf') format('truetype');
     font-style: normal;
     font-weight: 400;
     font-display: block;
 }
 @font-face {
-    font-family: 'yuanJWD';
-    src: url('../assets/fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-family: 'saoLatin';
+    src: url('fonts/SAOUI.ttf') format('truetype');
     font-style: normal;
     font-weight: 400;
     font-display: block;
+    unicode-range: U+0000-00FF, U+0100-024F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF;
+}
+@font-face {
+    font-family: 'yuanJWD';
+    src: url('fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+}
+@font-face {
+    font-family: 'yuanJWDCJK';
+    src: url('fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+    unicode-range: U+2E80-2EFF, U+3000-303F, U+31C0-31EF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
+}
+
+:root {
+    --font-sao: 'saoLatin', 'sao', 'Segoe UI', sans-serif;
+    --font-ui: 'saoLatin', 'sao', 'yuanJWDCJK', 'yuanJWD', 'Segoe UI', sans-serif;
 }
 
 html, body {
@@ -113,7 +134,7 @@ body:not(.opening):not(.closing) .panel {
     border-radius: 4px;
     box-shadow: 0 2px 16px rgba(0,0,0,0.18);
     overflow: hidden;
-    font-family: 'sao', 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
+    font-family: var(--font-ui);
     font-size: 12px;
     color: #555;
     filter: blur(0px);
@@ -189,7 +210,7 @@ body:not(.opening):not(.closing) .panel {
     top: 50%;
     transform: translateY(-50%);
     left: 12px;
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     font-size: 10px;
     letter-spacing: 1.2px;
     color: rgba(104, 228, 255, 0.78);
@@ -218,7 +239,7 @@ body:not(.opening):not(.closing) .panel {
     color: #646364;
     padding-left: 10px;
     flex: 1;
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     letter-spacing: 1px;
 }
 
@@ -261,7 +282,7 @@ body:not(.opening):not(.closing) .panel {
 .ctrl-value {
     min-width: 65px;
     text-align: center;
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     font-size: 12px;
     color: #333;
 }
@@ -354,12 +375,6 @@ body:not(.opening):not(.closing) .panel {
 </head>
 <body>
 <div class="panel" id="panel">
-    <div class="panel-hud" aria-hidden="true">
-        <div class="hud-lane hud-left-far"><span class="hud-label">SYS CORE</span></div>
-        <div class="hud-lane gold hud-left-near"><span class="hud-label">GAIN ROUTE</span></div>
-        <div class="hud-lane hud-right-far"><span class="hud-label">NERVE GEAR</span></div>
-        <div class="hud-lane gold hud-right-near"><span class="hud-label">LINK RATE</span></div>
-    </div>
     <div class="panel-header" id="panel-header">
         <span class="panel-title" id="panel-title">面板</span>
         <span class="panel-close" id="panel-close">×</span>
@@ -616,7 +631,7 @@ function initPanel(type, state) {
     var title = document.getElementById('panel-title');
 
     if (type === 'control') {
-        title.textContent = '⚙ 控制面板';
+        title.textContent = 'CTRL 控制面板';
         var body = document.getElementById('panel-body');
         body.className = 'panel-body ctrl-body';
         body.innerHTML =
@@ -646,7 +661,7 @@ function initPanel(type, state) {
                 '<span class="ctrl-toggle off" id="tog-midi" onclick="doAction(\'midi_channel\')">⊞ MIDI通道控制</span>' +
             '</div>';
     } else if (type === 'status') {
-        title.textContent = '◉ 状态面板';
+        title.textContent = 'STAT 状态面板';
         var body2 = document.getElementById('panel-body');
         body2.className = 'panel-body stat-body';
         body2.innerHTML =
@@ -663,10 +678,10 @@ function initPanel(type, state) {
             '<div class="stat-row"><span class="stat-label">音域</span>' +
                 '<span class="stat-value" id="stat-kbmode">正常</span></div>';
     } else if (type === 'piano') {
-        title.textContent = '⌨ 钢琴面板';
+        title.textContent = 'KEYS 钢琴面板';
         _buildPiano();
     } else if (type === 'viz') {
-        title.textContent = '≡ 可视化';
+        title.textContent = 'VIZ 可视化';
         _buildViz();
     }
 
