@@ -110,6 +110,51 @@ class SAOColors:
     APP_GOLD = '#ffd700'
 
 
+def _aa_circle_icon(kind: str, outer: str, inner: str, size: int = 40, scale: int = 4) -> ImageTk.PhotoImage:
+    """Render an anti-aliased circular SAO action icon as a PhotoImage."""
+    sw = size * scale
+    img = Image.new('RGBA', (sw, sw), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    def S(v):
+        return int(round(v * scale))
+
+    draw.ellipse((S(2), S(2), S(size - 2), S(size - 2)), outline=_hex_to_rgba(outer), width=max(1, S(3)))
+    if kind == 'ok':
+        draw.ellipse((S(9), S(9), S(31), S(31)), fill=_hex_to_rgba('#ffffff'))
+        draw.ellipse((S(12), S(12), S(28), S(28)), fill=_hex_to_rgba(inner))
+    else:
+        draw.ellipse((S(9), S(9), S(31), S(31)), fill=_hex_to_rgba(inner))
+        draw.line((S(14), S(14), S(26), S(26)), fill=_hex_to_rgba('#ffffff'), width=max(1, S(3)))
+        draw.line((S(14), S(26), S(26), S(14)), fill=_hex_to_rgba('#ffffff'), width=max(1, S(3)))
+
+    img = img.resize((size, size), Image.LANCZOS)
+    return ImageTk.PhotoImage(img)
+
+
+def _make_aa_icon_button(parent, kind: str, command, outer: str, inner: str, bg: str = '#ffffff'):
+    """Create a reusable anti-aliased popup icon button."""
+    lbl = tk.Label(parent, bg=bg, cursor='hand2', bd=0, highlightthickness=0)
+    normal = _aa_circle_icon(kind, outer, inner)
+    hover_inner = '#ffffff' if kind == 'ok' else '#ff6b7b'
+    hover = _aa_circle_icon(kind, outer, hover_inner if kind == 'close' else inner)
+    lbl.configure(image=normal)
+    lbl.image = normal
+    lbl._img_normal = normal
+    lbl._img_hover = hover
+    lbl.bind('<Enter>', lambda e: lbl.configure(image=lbl._img_hover))
+    lbl.bind('<Leave>', lambda e: lbl.configure(image=lbl._img_normal))
+    lbl.bind('<Button-1>', lambda e: command())
+    return lbl
+
+
+def _hex_to_rgba(hex_color: str, alpha: int = 255):
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 3:
+        hex_color = ''.join(ch * 2 for ch in hex_color)
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4)) + (alpha,)
+
+
 # ──────────────────── 动画工具 ────────────────────
 def ease_out(t: float) -> float:
     return 1 - (1 - t) ** 3
@@ -207,7 +252,7 @@ class SAOCircleButton(tk.Canvas):
     def __init__(self, parent, icon_text: str = '●', name: str = '',
                  can_activate: bool = True, command: Optional[Callable] = None, **kw):
         super().__init__(parent, width=self.SIZE, height=self.SIZE,
-                         highlightthickness=0, bg=parent.cget('bg'), **kw)
+                         highlightthickness=0, bd=0, bg=parent.cget('bg'), **kw)
         self.icon_text = icon_text
         self.name = name
         self.can_activate = can_activate
@@ -243,27 +288,58 @@ class SAOCircleButton(tk.Canvas):
         else:
             border_color = lerp_color(SAOColors.CIRCLE_BORDER, SAOColors.ACTIVE_BORDER, t)
 
-        # ── 微弱投影 ──
-        shadow_a = int(lerp(35, 55, t if not self._active else 1.0))
-        shadow_c = f'#{shadow_a:02x}{shadow_a:02x}{shadow_a:02x}'
-        self.create_oval(3, 4, _s - 1, _s,
-                         outline=shadow_c, width=1, fill='')
+        # ── PIL 4× 超采样抗锯齿 (premultiplied-alpha composite) ──
+        scale = 4
+        ss = _s * scale
+        scx, scy = ss // 2, ss // 2
+        # 在透明底上绘制, 避免 LANCZOS ringing 污染背景 RGB
+        img = Image.new('RGBA', (ss, ss), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
 
-        # ── 主边框 ──
-        self.create_oval(2, 2, _s - 2, _s - 2,
-                         outline=border_color, width=2, fill='')
+        # 主边框
+        border_rgba = _hex_to_rgba(border_color, 255)
+        draw.ellipse((2 * scale, 2 * scale, ss - 2 * scale, ss - 2 * scale),
+                     outline=border_rgba, width=2 * scale, fill=None)
 
-        # ── 内圆填充 ──
-        ir = _s // 2 - 4
+        # 内圆填充
+        ir = scx - 4 * scale
         if self._active:
-            inner_fill = SAOColors.ACTIVE_BG
+            inner_fill = _hex_to_rgba(SAOColors.ACTIVE_BG, 255)
         else:
-            inner_fill = lerp_color('#ffffff', SAOColors.HOVER_BG, t)
+            inner_hex = lerp_color('#ffffff', SAOColors.HOVER_BG, t)
+            inner_fill = _hex_to_rgba(inner_hex, 255)
+        draw.ellipse((scx - ir, scy - ir, scx + ir, scy + ir),
+                     fill=inner_fill, outline=None)
 
-        self.create_oval(cx - ir, cy - ir, cx + ir, cy + ir,
-                         fill=inner_fill, outline='')
+        # ── premultiplied-alpha LANCZOS → 消除 dark-halo ──
+        arr = np.array(img, dtype=np.float32)
+        a = arr[:, :, 3:4] / 255.0
+        arr[:, :, :3] *= a                          # premultiply
+        premul = Image.fromarray(arr.clip(0, 255).astype(np.uint8), 'RGBA')
+        resized = premul.resize((_s, _s), Image.LANCZOS)
 
-        # ── 图标 (字号随尺寸等比缩放) ──
+        # ── composite against transparent-key bg (1,1,1) ──
+        r_arr = np.array(resized, dtype=np.float32)
+        fg_a = r_arr[:, :, 3:4] / 255.0
+        # premul composite:  result = fg_premul + bg*(1-fg_a)
+        key_f = np.float32(1.0)                      # key color channel value
+        out_rgb = r_arr[:, :, :3] + key_f * (1.0 - fg_a)
+        # build final opaque image
+        final_arr = np.empty((_s, _s, 4), dtype=np.uint8)
+        final_arr[:, :, :3] = out_rgb.clip(0, 255).astype(np.uint8)
+        final_arr[:, :, 3] = 255
+        # snap background (original alpha ≈ 0) to exact key → 100% match
+        bg_mask = r_arr[:, :, 3] < 32.0
+        final_arr[bg_mask, 0] = 1
+        final_arr[bg_mask, 1] = 1
+        final_arr[bg_mask, 2] = 1
+
+        final = Image.fromarray(final_arr, 'RGBA')
+        photo = ImageTk.PhotoImage(final)
+        self._bg_photo = photo  # prevent GC
+        self.create_image(0, 0, image=photo, anchor='nw')
+
+        # ── 图标 (保留 Tk 文字渲染 — ClearType 抗锯齿) ──
         if self._active:
             icon_color = SAOColors.ACTIVE_ICON
         else:
@@ -985,7 +1061,11 @@ class SAOPopUpMenu:
     def _set_alpha(self, a):
         try:
             if self._overlay and self._overlay.winfo_exists():
-                self._overlay.attributes('-alpha', a)
+                # 映射 0..0.92 → 0..1.0, 最终态 alpha=1.0 消除 transparentcolor 黑色描边
+                if a <= 0.005:
+                    self._overlay.attributes('-alpha', 0.0)
+                else:
+                    self._overlay.attributes('-alpha', min(1.0, a / 0.92))
         except Exception:
             pass
 
@@ -1077,8 +1157,8 @@ class SAOPopUpMenu:
 
         CYAN = '#5eb8ca'
         GOLD = '#f3af12'
-        DIM_CYAN = '#2a4f5a'
-        DIM_GOLD = '#4a3a10'
+        DIM_CYAN = '#5eb8ca'
+        DIM_GOLD = '#c8910e'
 
         # ── 2. 内容区角标 (四角 L 型支架) ──
         bk = 20
@@ -1101,7 +1181,7 @@ class SAOPopUpMenu:
         # 扫描线本体
         cv.create_line(cx1, scan_y, cx2, scan_y, fill=CYAN, width=1)
         # 扫描线拖影 (上方2条渐淡)
-        for i, a_hex in enumerate(['#1a3a42', '#0d1f24']):
+        for i, a_hex in enumerate(['#3a6a78', '#2a5060']):
             cv.create_line(cx1, scan_y - 3 - i * 3,
                            cx2, scan_y - 3 - i * 3,
                            fill=a_hex, width=1)
@@ -1126,9 +1206,9 @@ class SAOPopUpMenu:
         rail_x_l = cx1 - 8
         rail_x_r = cx2 + 8
         cv.create_line(rail_x_l, cy1 + bk, rail_x_l, cy2 - bk,
-                       fill=DIM_CYAN, width=1)
+                       fill=CYAN, width=1)
         cv.create_line(rail_x_r, cy1 + bk, rail_x_r, cy2 - bk,
-                       fill=DIM_GOLD, width=1)
+                       fill=GOLD, width=1)
 
         # 呼吸光点沿导轨上下移动
         dot_travel = cy2 - cy1 - bk * 2
@@ -1351,6 +1431,7 @@ class SAODialog:
 
         main_box = tk.Frame(dlg, bg='#ffffff')
         main_box.pack(fill=tk.BOTH, expand=True)
+        main_box.pack_forget()
 
         # 标题区 (68px)
         header = tk.Frame(main_box, bg='#ffffff', height=68)
@@ -1397,24 +1478,13 @@ class SAODialog:
                 on_ok()
 
         if show_icon:
-            # OK 蓝圆 (白底)
-            ok_cv = tk.Canvas(btn_container, width=40, height=40,
-                              bg='#ffffff', highlightthickness=0, cursor='hand2')
-            ok_cv.pack(side=tk.LEFT, padx=20)
-            ok_cv.create_oval(2, 2, 38, 38, outline=SAOColors.OK_BLUE, width=3, fill='')
-            ok_cv.create_oval(9, 9, 31, 31, fill='#ffffff', outline='')
-            ok_cv.create_oval(12, 12, 28, 28, fill=SAOColors.OK_BLUE, outline='')
-            ok_cv.bind('<Button-1>', lambda e: do_ok())
+            ok_btn = _make_aa_icon_button(btn_container, 'ok', do_ok,
+                                          SAOColors.OK_BLUE, SAOColors.OK_BLUE, bg='#ffffff')
+            ok_btn.pack(side=tk.LEFT, padx=20)
 
-            # Close 红圆 (白底)
-            close_cv = tk.Canvas(btn_container, width=40, height=40,
-                                 bg='#ffffff', highlightthickness=0, cursor='hand2')
-            close_cv.pack(side=tk.LEFT, padx=20)
-            close_cv.create_oval(2, 2, 38, 38, outline=SAOColors.CLOSE_RED, width=3, fill='')
-            close_cv.create_oval(9, 9, 31, 31, fill=SAOColors.CLOSE_RED, outline='')
-            close_cv.create_line(14, 14, 26, 26, fill='#ffffff', width=3)
-            close_cv.create_line(14, 26, 26, 14, fill='#ffffff', width=3)
-            close_cv.bind('<Button-1>', lambda e: do_close())
+            close_btn = _make_aa_icon_button(btn_container, 'close', do_close,
+                                             SAOColors.CLOSE_RED, SAOColors.CLOSE_RED, bg='#ffffff')
+            close_btn.pack(side=tk.LEFT, padx=20)
         else:
             dlg.bind('<Button-1>', lambda e: do_close())
 
@@ -1429,6 +1499,9 @@ class SAODialog:
             dlg.geometry(f'{w}x{final_h}+{x}+{py}')
 
         def reveal_text():
+            if not main_box.winfo_manager():
+                main_box.pack(fill=tk.BOTH, expand=True)
+                dlg.update_idletasks()
             _clip_reveal(title_lbl, title, dlg, 400, delay=100)
             _clip_reveal(content_lbl, message, dlg, 350, delay=600)
 
@@ -4204,6 +4277,8 @@ class SAOFilePicker(tk.Toplevel):
             pass
 
         self._build_ui(self._final_w, self._final_h, title)
+        if getattr(self, '_main_box', None):
+            self._main_box.pack_forget()
         self._load_dir(self._current_dir)
         self.update_idletasks()
 
@@ -4254,6 +4329,9 @@ class SAOFilePicker(tk.Toplevel):
                     self.attributes('-alpha', 1.0)
                 except Exception:
                     pass
+                if getattr(self, '_main_box', None) and not self._main_box.winfo_manager():
+                    self._main_box.pack(fill=tk.BOTH, expand=True)
+                    self.update_idletasks()
                 if hasattr(self, '_title_lbl'):
                     _clip_reveal(self._title_lbl, self._dialog_title, self, 380, delay=40)
                 # 展开完成, grab 焦点
@@ -4264,6 +4342,7 @@ class SAOFilePicker(tk.Toplevel):
         # ── SAODialog 式三段壳 ──
         main_box = tk.Frame(self, bg='#ffffff')
         main_box.pack(fill=tk.BOTH, expand=True)
+        self._main_box = main_box
 
         # 标题区 (68px)
         header = tk.Frame(main_box, bg='#ffffff', height=68)
@@ -4283,16 +4362,9 @@ class SAOFilePicker(tk.Toplevel):
         self._title_lbl.place(relx=0.5, rely=0.5, anchor='center')
 
         # 关闭 ×
-        close_cv = tk.Canvas(header, width=40, height=40,
-                             bg='#ffffff', highlightthickness=0, cursor='hand2')
-        close_cv.pack(side=tk.RIGHT, padx=16, pady=14)
-        close_cv.create_oval(2, 2, 38, 38,
-                             outline=SAOColors.CLOSE_RED, width=3, fill='')
-        close_cv.create_oval(9, 9, 31, 31,
-                             fill=SAOColors.CLOSE_RED, outline='')
-        close_cv.create_line(14, 14, 26, 26, fill='#ffffff', width=3)
-        close_cv.create_line(14, 26, 26, 14, fill='#ffffff', width=3)
-        close_cv.bind('<Button-1>', lambda e: self._cancel())
+        close_btn = _make_aa_icon_button(header, 'close', self._cancel,
+                         SAOColors.CLOSE_RED, SAOColors.CLOSE_RED, bg='#ffffff')
+        close_btn.pack(side=tk.RIGHT, padx=16, pady=14)
 
         tk.Frame(main_box, bg='#e0e0e0', height=1).pack(fill=tk.X)
 
@@ -4373,37 +4445,22 @@ class SAOFilePicker(tk.Toplevel):
 
         # 目录模式: 添加 "选择此文件夹" 按钮
         if self._mode == 'dir':
-            sel_dir_cv = tk.Canvas(btn_frame, width=40, height=40,
-                                   bg='#ffffff', highlightthickness=0, cursor='hand2')
-            sel_dir_cv.pack(side=tk.LEFT, padx=(0, 10))
-            sel_dir_cv.create_oval(2, 2, 38, 38, outline='#4caf50', width=3, fill='')
-            sel_dir_cv.create_oval(9, 9, 31, 31, fill='#ffffff', outline='')
-            sel_dir_cv.create_oval(12, 12, 28, 28, fill='#4caf50', outline='')
-            sel_dir_cv.bind('<Button-1>', lambda e: self._confirm_dir())
+            sel_dir_btn = _make_aa_icon_button(btn_frame, 'ok', self._confirm_dir,
+                                               '#4caf50', '#4caf50', bg='#ffffff')
+            sel_dir_btn.pack(side=tk.LEFT, padx=(0, 10))
             tk.Label(btn_frame, text='选择此文件夹', bg='#ffffff', fg='#999999',
                      font=_sao_font(8)).pack(side=tk.LEFT, padx=(0, 18))
 
-        # 确认 (蓝圆)
-        ok_cv = tk.Canvas(btn_frame, width=40, height=40,
-                          bg='#ffffff', highlightthickness=0, cursor='hand2')
-        ok_cv.pack(side=tk.LEFT, padx=20)
-        ok_cv.create_oval(2, 2, 38, 38, outline=SAOColors.OK_BLUE, width=3, fill='')
-        ok_cv.create_oval(9, 9, 31, 31, fill='#ffffff', outline='')
-        ok_cv.create_oval(12, 12, 28, 28, fill=SAOColors.OK_BLUE, outline='')
-        ok_cv.bind('<Button-1>', lambda e: self._confirm())
+        ok_btn = _make_aa_icon_button(btn_frame, 'ok', self._confirm,
+                                      SAOColors.OK_BLUE, SAOColors.OK_BLUE, bg='#ffffff')
+        ok_btn.pack(side=tk.LEFT, padx=20)
 
         tk.Label(btn_frame, text='确认', bg='#ffffff', fg='#999999',
                  font=_sao_font(8)).pack(side=tk.LEFT, padx=(0, 20))
 
-        # 取消 (红圆)
-        cancel_cv = tk.Canvas(btn_frame, width=40, height=40,
-                              bg='#ffffff', highlightthickness=0, cursor='hand2')
-        cancel_cv.pack(side=tk.LEFT, padx=(0, 4))
-        cancel_cv.create_oval(2, 2, 38, 38, outline=SAOColors.CLOSE_RED, width=3, fill='')
-        cancel_cv.create_oval(9, 9, 31, 31, fill=SAOColors.CLOSE_RED, outline='')
-        cancel_cv.create_line(14, 14, 26, 26, fill='#ffffff', width=3)
-        cancel_cv.create_line(14, 26, 26, 14, fill='#ffffff', width=3)
-        cancel_cv.bind('<Button-1>', lambda e: self._cancel())
+        cancel_btn = _make_aa_icon_button(btn_frame, 'close', self._cancel,
+                          SAOColors.CLOSE_RED, SAOColors.CLOSE_RED, bg='#ffffff')
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 4))
 
         tk.Label(btn_frame, text='取消', bg='#ffffff', fg='#999999',
                  font=_sao_font(8)).pack(side=tk.LEFT)
@@ -4737,7 +4794,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.4.6+3406", on_close=None, **kw):
+                 version="v3.4.7+3407", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close

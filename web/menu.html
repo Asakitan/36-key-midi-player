@@ -1730,6 +1730,20 @@ function closeMenu() {
     }, 550);
 }
 
+var _exitPending = false;
+function exitApplication() {
+    if (_exitPending) return;
+    _exitPending = true;
+    closeMenu();
+    setTimeout(function() {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.exit_app) {
+            window.pywebview.api.exit_app();
+        } else if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.menu_action('exit');
+        }
+    }, 560);
+}
+
 /* Click backdrop to close — route through Python so window hides properly */
 overlay.addEventListener('click', function(e) {
     if (e.target === overlay) {
@@ -1913,6 +1927,10 @@ document.querySelectorAll('.child-menu li').forEach(function(li) {
         e.stopPropagation();
         playSound('snd-click');
         var action = this.getAttribute('data-action');
+        if (action === 'exit') {
+            exitApplication();
+            return;
+        }
         if (window.pywebview && window.pywebview.api) {
             window.pywebview.api.menu_action(action);
         }
@@ -2183,6 +2201,7 @@ document.getElementById('lb-tabs').querySelectorAll('.lb-tab').forEach(function(
 window.SAO = {
     openMenu: openMenu,
     closeMenu: closeMenu,
+    exitApp: exitApplication,
     updateInfo: updateInfo,
     updateBadge: updateBadge,
     showAlert: showAlert,

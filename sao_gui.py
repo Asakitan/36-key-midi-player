@@ -18,7 +18,8 @@ import time
 import threading
 from typing import Optional
 
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageTk, ImageFilter, ImageFont
+import numpy as np
 
 from player import MidiPlayer
 from midi_parser import NoteEvent
@@ -34,7 +35,7 @@ from sao_theme import (
     SAOLeaderboardDialog,
     SAOStatusPill, SAOResizeGrip, SAOFilePicker, SAOSeparator,
     SAOPopUpMenu, SAOHPBar, SAOLinkStart, SAOCircleButton,
-    Animator, lerp, lerp_color, ease_out
+    Animator, lerp, lerp_color, ease_out, ease_in_out
 )
 from gui import MidiVisualizer, ModernColors, SmoothButton
 from character_profile import (
@@ -128,7 +129,7 @@ def _apply_panel_style(panel):
     """为浮动 Toplevel 面板添加 DWM 圆角 + 系统阴影 — 增强浮动质感"""
     try:
         panel.update_idletasks()
-        hwnd = ctypes.windll.user32.GetParent(panel.winfo_id())
+        hwnd = int(_user32.GetParent(ctypes.c_void_p(panel.winfo_id())))
         # DWM 圆角 (Win11+)
         val = ctypes.c_int(2)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val), 4)
@@ -168,15 +169,8 @@ def _sao_panel_header(parent, title_icon, title_text, close_cmd):
     # 右侧系统标记
     tk.Label(hdr, text='◇', bg=_SAO_PANEL_HEADER_BG, fg='#4a5a6a',
              font=get_sao_font(7)).pack(side=tk.RIGHT, padx=(0, 2))
-    close_lbl = tk.Label(hdr, text='×', bg=_SAO_PANEL_HEADER_BG, fg='#8a9aaa',
-                          font=get_sao_font(10, True), cursor='hand2')
-    close_lbl.pack(side=tk.RIGHT, padx=4)
-    close_lbl.bind('<Button-1>', lambda e: close_cmd())
-    # hover 效果
-    def _enter(e): close_lbl.configure(fg='#ff6666')
-    def _leave(e): close_lbl.configure(fg='#8a9aaa')
-    close_lbl.bind('<Enter>', _enter)
-    close_lbl.bind('<Leave>', _leave)
+    close_lbl = _make_panel_close_button(hdr, close_cmd, bg=_SAO_PANEL_HEADER_BG)
+    close_lbl.pack(side=tk.RIGHT, padx=6)
     return hdr, close_lbl
 
 
@@ -279,7 +273,7 @@ def _disable_native_window_shadow(win):
     """关闭透明/异形窗口的系统矩形阴影，避免阴影落到错误区域。"""
     try:
         win.update_idletasks()
-        hwnd = ctypes.windll.user32.GetParent(win.winfo_id()) or win.winfo_id()
+        hwnd = int(_user32.GetParent(ctypes.c_void_p(win.winfo_id())) or win.winfo_id())
         policy = ctypes.c_int(1)  # DWMNCRP_DISABLED
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 2, ctypes.byref(policy), 4)
     except Exception:
@@ -291,8 +285,168 @@ def _make_sao_panel_hud(parent, width: int, height: int, alpha: float = 0.18):
     cv = tk.Canvas(parent, width=width, height=height, bg=parent.cget('bg'),
                    highlightthickness=0, bd=0)
     cv.place(x=0, y=0, relwidth=1, relheight=1)
-    cv.lower()
+    cv.tk.call('lower', cv._w)
     return cv
+
+
+def _hex_rgba(hex_color: str, alpha: int = 255):
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 3:
+        hex_color = ''.join(ch * 2 for ch in hex_color)
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4)) + (alpha,)
+
+
+def _make_panel_close_button(parent, command, bg=_SAO_PANEL_HEADER_BG):
+    size = 18
+    scale = 4
+    sw = size * scale
+    img = Image.new('RGBA', (sw, sw), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    def S(v):
+        return int(round(v * scale))
+
+    draw.line((S(4), S(4), S(14), S(14)), fill=_hex_rgba('#ff707a'), width=max(1, S(2)))
+    draw.line((S(4), S(14), S(14), S(4)), fill=_hex_rgba('#ff707a'), width=max(1, S(2)))
+    normal = ImageTk.PhotoImage(img.resize((size, size), Image.LANCZOS))
+
+    img_h = Image.new('RGBA', (sw, sw), (0, 0, 0, 0))
+    draw_h = ImageDraw.Draw(img_h)
+    draw_h.ellipse((S(1), S(1), S(17), S(17)), outline=_hex_rgba('#ff707a', 210), width=max(1, S(1)))
+    draw_h.line((S(4), S(4), S(14), S(14)), fill=_hex_rgba('#ffffff'), width=max(1, S(2)))
+    draw_h.line((S(4), S(14), S(14), S(4)), fill=_hex_rgba('#ffffff'), width=max(1, S(2)))
+    hover = ImageTk.PhotoImage(img_h.resize((size, size), Image.LANCZOS))
+
+    lbl = tk.Label(parent, bg=bg, image=normal, cursor='hand2', bd=0, highlightthickness=0)
+    lbl._img_normal = normal
+    lbl._img_hover = hover
+    lbl.configure(image=normal)
+    lbl.bind('<Enter>', lambda e: lbl.configure(image=lbl._img_hover))
+    lbl.bind('<Leave>', lambda e: lbl.configure(image=lbl._img_normal))
+    lbl.bind('<Button-1>', lambda e: command())
+    return lbl
+
+
+# ══════════════════════════════════════════════════════════
+#  Win32 per-pixel alpha 分层窗口 (UpdateLayeredWindow)
+# ══════════════════════════════════════════════════════════
+
+class _BLENDFUNCTION(ctypes.Structure):
+    _fields_ = [('BlendOp', ctypes.c_byte), ('BlendFlags', ctypes.c_byte),
+                ('SourceConstantAlpha', ctypes.c_byte), ('AlphaFormat', ctypes.c_byte)]
+
+class _ULW_SIZE(ctypes.Structure):
+    _fields_ = [('cx', ctypes.c_long), ('cy', ctypes.c_long)]
+
+class _ULW_POINT(ctypes.Structure):
+    _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ('biSize', ctypes.c_ulong), ('biWidth', ctypes.c_long),
+        ('biHeight', ctypes.c_long), ('biPlanes', ctypes.c_ushort),
+        ('biBitCount', ctypes.c_ushort), ('biCompression', ctypes.c_ulong),
+        ('biSizeImage', ctypes.c_ulong), ('biXPelsPerMeter', ctypes.c_long),
+        ('biYPelsPerMeter', ctypes.c_long), ('biClrUsed', ctypes.c_ulong),
+        ('biClrImportant', ctypes.c_ulong),
+    ]
+
+
+# Win32 函数签名 (64-bit 安全, 防止 HWND/HDC 截断)
+_user32 = ctypes.windll.user32
+_gdi32 = ctypes.windll.gdi32
+for _fn, _res, _args in [
+    (_user32.GetDC, ctypes.c_void_p, [ctypes.c_void_p]),
+    (_user32.ReleaseDC, ctypes.c_int, [ctypes.c_void_p, ctypes.c_void_p]),
+    (_user32.GetParent, ctypes.c_void_p, [ctypes.c_void_p]),
+    (_user32.GetWindowLongW, ctypes.c_long, [ctypes.c_void_p, ctypes.c_int]),
+    (_user32.SetWindowLongW, ctypes.c_long, [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]),
+    (_user32.UpdateLayeredWindow, ctypes.c_int,
+        [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong]),
+    (_gdi32.CreateCompatibleDC, ctypes.c_void_p, [ctypes.c_void_p]),
+    (_gdi32.CreateDIBSection, ctypes.c_void_p,
+        [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint,
+         ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.c_uint]),
+    (_gdi32.SelectObject, ctypes.c_void_p, [ctypes.c_void_p, ctypes.c_void_p]),
+    (_gdi32.DeleteObject, ctypes.c_int, [ctypes.c_void_p]),
+    (_gdi32.DeleteDC, ctypes.c_int, [ctypes.c_void_p]),
+]:
+    _fn.restype = _res
+    _fn.argtypes = _args
+del _fn, _res, _args
+
+
+def _update_layered_win(hwnd, rgba_image, overall_alpha=255, dst_pos=None):
+    """使用 Win32 UpdateLayeredWindow 实现真正的逐像素 alpha 透明窗口。
+    rgba_image: PIL RGBA Image;  overall_alpha: 0-255 整体 alpha。"""
+    if not hwnd:
+        return False
+    w, h = rgba_image.size
+    # RGBA -> 预乘 BGRA (ULW 要求预乘 alpha)
+    arr = np.array(rgba_image, dtype=np.float32)
+    a = arr[:, :, 3:4] / 255.0
+    bgra = np.empty((h, w, 4), dtype=np.uint8)
+    bgra[:, :, 0] = np.clip(arr[:, :, 2] * a[:, :, 0], 0, 255)  # B
+    bgra[:, :, 1] = np.clip(arr[:, :, 1] * a[:, :, 0], 0, 255)  # G
+    bgra[:, :, 2] = np.clip(arr[:, :, 0] * a[:, :, 0], 0, 255)  # R
+    bgra[:, :, 3] = arr[:, :, 3].astype(np.uint8)
+
+    bmi = _BITMAPINFOHEADER()
+    bmi.biSize = ctypes.sizeof(bmi)
+    bmi.biWidth = w
+    bmi.biHeight = -h   # top-down
+    bmi.biPlanes = 1
+    bmi.biBitCount = 32
+
+    hdcS = _user32.GetDC(None)
+    hdcM = _gdi32.CreateCompatibleDC(hdcS)
+    bits = ctypes.c_void_p()
+    hbmp = _gdi32.CreateDIBSection(hdcM, ctypes.byref(bmi), 0,
+                                    ctypes.byref(bits), None, 0)
+    if not hbmp:
+        _gdi32.DeleteDC(hdcM)
+        _user32.ReleaseDC(None, hdcS)
+        return False
+    old = _gdi32.SelectObject(hdcM, hbmp)
+    raw = bgra.tobytes()
+    ctypes.memmove(bits, raw, len(raw))
+
+    pt = _ULW_POINT(0, 0)
+    sz = _ULW_SIZE(w, h)
+    bf = _BLENDFUNCTION(0, 0, min(255, max(0, int(overall_alpha))), 1)
+    dst = None
+    if dst_pos is not None:
+        try:
+            dx, dy = dst_pos
+            dst = _ULW_POINT(int(dx), int(dy))
+        except Exception:
+            dst = None
+    ok = _user32.UpdateLayeredWindow(
+        ctypes.c_void_p(hwnd), hdcS, ctypes.byref(dst) if dst is not None else None, ctypes.byref(sz),
+        hdcM, ctypes.byref(pt), 0, ctypes.byref(bf), 2)
+
+    _gdi32.SelectObject(hdcM, old)
+    _gdi32.DeleteObject(hbmp)
+    _gdi32.DeleteDC(hdcM)
+    _user32.ReleaseDC(None, hdcS)
+    return bool(ok)
+
+
+def _get_hp_pil_font(size, family='sao', _cache={}):
+    """加载 PIL 字体用于 HP 条渲染 (带缓存)。"""
+    key = (family, size)
+    if key in _cache:
+        return _cache[key]
+    base = os.path.dirname(os.path.abspath(__file__))
+    fname = 'SAOUI.ttf' if family == 'sao' else 'ZhuZiAYuanJWD.ttf'
+    fp = os.path.join(base, 'assets', 'fonts', fname)
+    try:
+        font = ImageFont.truetype(fp, size=size)
+    except Exception:
+        font = ImageFont.load_default()
+    _cache[key] = font
+    return font
 
 
 # ══════════════════════════════════════════════════════════
@@ -891,6 +1045,9 @@ class SAOPlayerGUI:
         self._float_hud_ids = []
         self._float_hud_text = []
         self._destroyed = False  # hot-switch 守卫: 阻止 after() 回调在 root 销毁后执行
+        self._exit_animating = False
+        self._close_finalized = False
+        self._exit_overlay = None
         # 浮动呼吸动画
         self._breath_active = False
         self._breath_base_x = 0
@@ -919,34 +1076,9 @@ class SAOPlayerGUI:
             pass
 
     def _create_hp_alpha_strip_windows(self):
-        """创建 HP 填充条带窗口组：每条独立 alpha，实现右透左实的桌面透过。"""
+        """(ULW 模式下 HP 填充已由 PIL alpha 梯度渲染, 不再需要条带窗口)"""
         self._hp_alpha_windows = []
         self._hp_alpha_photos = []
-        trans = '#010201'
-        strip_count = 20
-        for idx in range(strip_count):
-            try:
-                win = tk.Toplevel(self.root)
-                win.overrideredirect(True)
-                win.attributes('-topmost', True)
-                win.attributes('-transparentcolor', trans)
-                win.attributes('-alpha', 0.0)
-                win.configure(bg=trans)
-                cv = tk.Canvas(win, width=12, height=26, bg=trans, highlightthickness=0, bd=0)
-                cv.pack(fill=tk.BOTH, expand=True)
-                win.withdraw()
-                try:
-                    win.update_idletasks()
-                    _set_clickthrough_style(win)
-                    _disable_native_window_shadow(win)
-                except Exception:
-                    pass
-                self._hp_alpha_windows.append({'win': win, 'canvas': cv, 'index': idx, 'photo': None})
-                self._hp_alpha_photos.append(None)
-            except Exception:
-                self._hp_alpha_windows = []
-                self._hp_alpha_photos = []
-                break
 
     def _destroy_hp_alpha_strip_windows(self):
         for item in getattr(self, '_hp_alpha_windows', []):
@@ -957,164 +1089,238 @@ class SAOPlayerGUI:
         self._hp_alpha_windows = []
         self._hp_alpha_photos = []
 
-    def _render_hp_strip_image(self, strip_w: int, strip_h: int, alpha: float, color_hex: str,
-                               draw_top: bool, draw_bottom: bool) -> ImageTk.PhotoImage:
-        """渲染单个 HP 条带：矩形 + 台阶底边，依赖独立窗口 alpha 形成真实透过。"""
-        strip_w = max(2, int(strip_w))
-        strip_h = max(4, int(strip_h))
-        rgba = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5)) + (255,)
-        img = Image.new('RGBA', (strip_w, strip_h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        if draw_top:
-            draw.rectangle((0, 0, strip_w, min(strip_h, 14)), fill=rgba)
-        if draw_bottom:
-            bottom_top = max(12, strip_h - 9)
-            draw.rectangle((0, bottom_top, strip_w, strip_h), fill=rgba)
-        if not draw_top and not draw_bottom:
-            draw.rectangle((0, 0, strip_w, strip_h), fill=(0, 0, 0, 0))
-        return ImageTk.PhotoImage(img)
+    def _render_hp_strip_image(self, *a, **kw):
+        return None
 
     def _sync_hp_alpha_strip_windows(self):
-        """同步 HP 条带窗口位置/显隐/alpha，形成从左实到右透的真实桌面透过。"""
-        if not getattr(self, '_hp_alpha_windows', None):
+        """(ULW 模式下不需要同步条带窗口)"""
+        pass
+
+    def _build_float_hud_items(self):
+        """(ULW 模式下 HUD 已统一由 PIL 渲染, 此方法保留接口兼容)"""
+        pass
+
+    def _render_hp_shell(self, hover=False, scale=4):
+        """渲染静态 HP 外壳为 RGBA PIL Image (4× 超采样 + LANCZOS)。"""
+        FW, FH = self._fw, self._fh
+        ox, oy = 6, 4
+        BW, BH = 400, 40
+        xt_w = 22
+        xr_x = ox + xt_w + 3
+        xr_w = BW - xt_w - 3
+        bar_x = ox + 100
+        bar_y = oy + 8
+        PW, PT, PH, PS = 260, 16, 23, 124
+        num_x = ox + int(BW * 0.60)
+        num_y = oy + int(BH * 0.90)
+        xp_w = int(150 * 0.69)
+        lv_x = num_x + xp_w + 3
+        lv_w = int(150 * 0.30)
+
+        bg = '#b5cde0' if hover else '#9db5d0'
+        border = '#e7e4e4' if hover else '#dad7d7'
+        glow_cyan = '#9cecff' if hover else '#86dfff'
+        glow_gold = '#ffd06a' if hover else '#f3af12'
+
+        sw, sh = FW * scale, FH * scale
+        img = Image.new('RGBA', (sw, sh), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        def S(v):
+            return int(round(v * scale))
+
+        def P(pts):
+            return [(S(x), S(y)) for x, y in pts]
+
+        # ── xt_left 方块 ──
+        draw.rectangle((S(ox), S(oy), S(ox + xt_w), S(oy + BH)), fill=_hex_rgba(bg, 248))
+        draw.rectangle((S(ox), S(oy + BH / 4), S(ox + xt_w / 2), S(oy + BH * 3 / 4)),
+                        fill=(0, 0, 0, 0))
+
+        # ── xt_right 异形多边形 ──
+        xr_pts = [
+            (xr_x + 75, oy + int(BH * 0.22)),
+            (xr_x + xr_w, oy + int(BH * 0.22)),
+            (xr_x + xr_w, oy),
+            (xr_x, oy), (xr_x, oy + BH),
+            (xr_x + 210, oy + BH),
+            (xr_x + 210, oy + int(BH * 0.80)),
+            (xr_x + xr_w, oy + int(BH * 0.80)),
+            (xr_x + xr_w, oy + int(BH * 0.60)),
+            (xr_x + 200, oy + int(BH * 0.60)),
+            (xr_x + 195, oy + int(BH * 0.77)),
+            (xr_x + 75, oy + int(BH * 0.77)),
+        ]
+        draw.polygon(P(xr_pts), fill=_hex_rgba(bg, 242))
+
+        # ── 右侧渐隐条纹 ──
+        fade_start = xr_x + int(xr_w * 0.40)
+        fade_end = xr_x + xr_w
+        n_strips = 72
+        bg_rgb = _hex_rgba(bg, 255)
+        for i in range(n_strips):
+            t = i / max(1, n_strips - 1)
+            alpha = int(210 * (1.0 - t * t))
+            sx = fade_start + (fade_end - fade_start) * i / n_strips
+            ex = fade_start + (fade_end - fade_start) * (i + 1) / n_strips + 1
+            fill = (bg_rgb[0], bg_rgb[1], bg_rgb[2], alpha)
+            draw.rectangle((S(sx), S(oy), S(ex), S(oy + BH * 0.22)), fill=fill)
+            draw.rectangle((S(sx), S(oy + BH * 0.60), S(ex), S(oy + BH * 0.80)), fill=fill)
+
+        # ── HP 条边框 ──
+        bar_pts = [
+            (bar_x, bar_y), (bar_x + PW, bar_y),
+            (bar_x + PW - 5, bar_y + PT), (bar_x + PS, bar_y + PT),
+            (bar_x + PS - 4, bar_y + PH), (bar_x, bar_y + PH),
+        ]
+        draw.polygon(P(bar_pts), fill=(92, 114, 140, 118 if not hover else 138))
+        draw.line(P(bar_pts + [bar_pts[0]]),
+                  fill=_hex_rgba(border, 255), width=max(1, scale))
+        draw.line(P([(bar_x + 2, bar_y + 1), (bar_x + PW - 2, bar_y + 1)]),
+                  fill=_hex_rgba(border, 220), width=max(1, scale))
+        draw.line(P([(bar_x + 2, bar_y + PH - 1), (bar_x + PS - 5, bar_y + PH - 1)]),
+                  fill=_hex_rgba(border, 220), width=max(1, scale))
+        draw.polygon(P([
+            (bar_x + 2, bar_y + 2), (bar_x + PW - 3, bar_y + 2),
+            (bar_x + PW - 8, bar_y + PT - 1), (bar_x + PS + 1, bar_y + PT - 1),
+            (bar_x + PS - 6, bar_y + PH - 3), (bar_x + 2, bar_y + PH - 3),
+        ]), fill=(176, 202, 226, 32 if not hover else 42))
+
+        # ── 数值底框 ──
+        draw.rectangle((S(num_x), S(num_y), S(num_x + xp_w), S(num_y + 18)),
+                        fill=_hex_rgba(bg, 236))
+        draw.rectangle((S(lv_x), S(num_y), S(lv_x + lv_w), S(num_y + 18)),
+                        fill=_hex_rgba(bg, 236))
+
+        return img.resize((FW, FH), Image.LANCZOS)
+
+    def _render_hp_dynamic(self):
+        """合成完整 HP 帧: 静态外壳 + HP 填充 + 文字 + HUD 呼吸光点。"""
+        FW, FH = self._fw, self._fh
+        shell = self._hp_shell_hover.copy() if self._hp_hover else self._hp_shell_normal.copy()
+        draw = ImageDraw.Draw(shell)
+
+        # ── HP 填充 (带从左到右的 alpha 梯度) ──
+        pct = self._float_progress_pct
+        if pct > 0:
+            if pct >= 0.60:
+                c = (154, 211, 52)
+            elif pct >= 0.25:
+                c = (244, 250, 73)
+            else:
+                c = (239, 104, 78)
+            top_max_w = self._hp_bar_right - self._hp_bar_x
+            top_fill_w = max(1, int(top_max_w * pct))
+            bot_max_w = self._hp_bar_step_x - self._hp_bar_x
+            bot_fill_w = min(top_fill_w, bot_max_w)
+            alpha_base = 0.96 if self._playing and not self._paused else 0.86
+
+            # 上层
+            h_top = max(1, self._hp_bar_bot_top - self._hp_bar_y)
+            grad_top = np.zeros((h_top, top_fill_w, 4), dtype=np.uint8)
+            grad_top[:, :, :3] = c
+            ts = np.linspace(0, 1, top_fill_w)
+            alphas = (255 * alpha_base * (0.18 + (1.0 - ts) * 0.74)).clip(0, 255).astype(np.uint8)
+            grad_top[:, :, 3] = alphas[np.newaxis, :]
+            fill_top_img = Image.fromarray(grad_top)
+            shell.paste(fill_top_img, (self._hp_bar_x, self._hp_bar_y), fill_top_img)
+
+            # 下层
+            if bot_fill_w > 0:
+                h_bot = max(1, self._hp_bar_bot_full - self._hp_bar_bot_top)
+                grad_bot = np.zeros((h_bot, bot_fill_w, 4), dtype=np.uint8)
+                grad_bot[:, :, :3] = c
+                ts_b = np.linspace(0, 1, bot_fill_w)
+                alphas_b = (255 * alpha_base * (0.18 + (1.0 - ts_b) * 0.74)).clip(0, 255).astype(np.uint8)
+                grad_bot[:, :, 3] = alphas_b[np.newaxis, :]
+                fill_bot_img = Image.fromarray(grad_bot)
+                shell.paste(fill_bot_img, (self._hp_bar_x, self._hp_bar_bot_top), fill_bot_img)
+
+        # ── 文字: 用户名 ──
+        name = getattr(self, '_hp_display_name', 'Player')
+        ox, oy = 6, 4
+        BW, BH = 400, 40
+        xr_x = ox + 22 + 3
+        name_cx = (xr_x + xr_x + 75) // 2
+        name_cy = oy + BH // 2
+        try:
+            fn = _get_hp_pil_font(14, 'cjk')
+            draw.text((name_cx, name_cy), name, fill=(225, 222, 222, 255),
+                      font=fn, anchor='mm')
+        except Exception:
+            draw.text((name_cx - 10, name_cy - 6), name, fill=(225, 222, 222, 255))
+
+        # ── 文字: XP / 等级 ──
+        num_x = ox + int(BW * 0.60)
+        num_y = oy + int(BH * 0.90)
+        xp_w = int(150 * 0.69)
+        lv_x = num_x + xp_w + 3
+        lv_w = int(150 * 0.30)
+        _lv, _cur_xp, _need_xp = calc_level(self._xp)
+        try:
+            fn_num = _get_hp_pil_font(12, 'sao')
+            draw.text((num_x + xp_w - 5, num_y + 9),
+                      f'{_cur_xp}/{_need_xp}', fill=(225, 222, 222, 255),
+                      font=fn_num, anchor='rm')
+            draw.text((lv_x + lv_w - 5, num_y + 9),
+                      f'lv.{self._level}', fill=(225, 222, 222, 255),
+                      font=fn_num, anchor='rm')
+        except Exception:
+            pass
+
+        return shell
+
+    def _refresh_hp_layered(self):
+        """重新渲染并更新分层 HP 窗口。"""
+        if self._destroyed:
+            return
+        try:
+            if not self._float or not self._float.winfo_exists():
+                return
+        except Exception:
+            return
+        if not self._float_hwnd:
+            return
+        alpha = getattr(self, '_float_alpha', 0.82)
+        try:
+            if alpha <= 0.01:
+                # alpha ≈ 0: 仍然调用 ULW (全透明), 防止 Tk 黑底暴露
+                _blank = Image.new('RGBA', (self._fw, self._fh), (0, 0, 0, 0))
+                _update_layered_win(self._float_hwnd, _blank, 0)
+                return
+            img = self._render_hp_dynamic()
+            dst_pos = None
+            try:
+                dst_pos = (self._float.winfo_rootx(), self._float.winfo_rooty())
+            except Exception:
+                pass
+            ok = _update_layered_win(self._float_hwnd, img, int(255 * alpha), dst_pos=dst_pos)
+            if not ok and not getattr(self, '_ulw_warned', False):
+                self._ulw_warned = True
+                print(f'[SAO-HP] UpdateLayeredWindow FAILED, hwnd=0x{self._float_hwnd:X}')
+        except Exception as e:
+            if not getattr(self, '_ulw_warned', False):
+                self._ulw_warned = True
+                print(f'[SAO-HP] _refresh_hp_layered error: {e}')
+                import traceback; traceback.print_exc()
+
+    def _set_float_alpha(self, alpha):
+        """设置 HP 窗口整体透明度并刷新。"""
+        self._float_alpha = alpha
+        self._refresh_hp_layered()
+
+    def _animate_float_hud(self):
+        """30fps HUD 呼吸动画循环 — 每帧重新渲染分层窗口。"""
+        if self._destroyed:
             return
         try:
             if not self._float.winfo_exists():
                 return
         except Exception:
             return
-
-        if not self._float.winfo_viewable():
-            for item in self._hp_alpha_windows:
-                try:
-                    item['win'].withdraw()
-                except Exception:
-                    pass
-            return
-
-        pct = max(0.0, min(1.0, self._float_progress_pct))
-        bar_left = self._float.winfo_x() + self._hp_bar_x
-        bar_top = self._float.winfo_y() + self._hp_bar_y
-        top_width = max(1, self._hp_bar_right - self._hp_bar_x)
-        bot_width = max(1, self._hp_bar_step_x - self._hp_bar_x)
-        bot_y = self._float.winfo_y() + self._hp_bar_bot_top
-        bot_h = max(1, self._hp_bar_bot_full - self._hp_bar_bot_top)
-        top_h = max(1, self._hp_bar_bot_top - self._hp_bar_y)
-        total_h = max(1, self._hp_bar_bot_full - self._hp_bar_y)
-        fill_top = int(top_width * pct)
-        fill_bot = min(fill_top, bot_width)
-
-        if pct >= 0.60:
-            color_hex = '#9ad334'
-        elif pct >= 0.25:
-            color_hex = '#f4fa49'
-        else:
-            color_hex = '#ef684e'
-
-        strip_count = len(self._hp_alpha_windows)
-        strip_w = max(4, int(math.ceil(top_width / max(1, strip_count))))
-        for idx, item in enumerate(self._hp_alpha_windows):
-            sx = bar_left + idx * strip_w
-            ex = min(bar_left + top_width, sx + strip_w)
-            if ex <= sx:
-                try:
-                    item['win'].withdraw()
-                except Exception:
-                    pass
-                continue
-
-            local_x1 = sx - bar_left
-            local_x2 = ex - bar_left
-            draw_top = local_x1 < fill_top
-            draw_bottom = local_x1 < fill_bot
-            if not draw_top and not draw_bottom:
-                try:
-                    item['win'].withdraw()
-                except Exception:
-                    pass
-                continue
-
-            alpha = 0.18 + (1.0 - idx / max(1, strip_count - 1)) * 0.74
-            alpha *= 0.96 if self._playing and not self._paused else 0.86
-            photo = self._render_hp_strip_image(ex - sx, total_h, alpha, color_hex, draw_top, draw_bottom)
-            self._hp_alpha_photos[idx] = photo
-            item['photo'] = photo
-            try:
-                item['canvas'].configure(width=ex - sx, height=total_h)
-                item['canvas'].delete('all')
-                item['canvas'].create_image(0, 0, image=photo, anchor='nw')
-                item['win'].geometry(f'{ex - sx}x{total_h}+{sx}+{bar_top}')
-                item['win'].attributes('-alpha', alpha)
-                item['win'].deiconify()
-                item['win'].lift(self._float)
-            except Exception:
-                pass
-
-    def _build_float_hud_items(self):
-        """构建悬浮 HP 两侧 HUD 数据标签和微型导轨。"""
-        cv = self._float_cv
-        self._float_hud_ids = []
-        self._float_hud_text = []
-        FW, FH = self._fw, self._fh
-
-        # ── 左侧: 系统标签 + 细导轨 ──
-        self._float_hud_text.append(
-            cv.create_text(14, 8, text='HP', fill='#86dfff',
-                           font=get_sao_font(6, True), anchor='w'))
-        # 左侧竖线导轨
-        self._float_hud_ids.append(
-            cv.create_line(8, 18, 8, FH - 12, fill='#86dfff', width=1))
-        # 底部状态指示
-        self._float_hud_text.append(
-            cv.create_text(14, FH - 6, text='LINK', fill='#455a70',
-                           font=get_sao_font(5), anchor='w'))
-
-        # ── 右侧: 数据标签 ──
-        self._float_hud_text.append(
-            cv.create_text(FW - 6, 8, text='SAO', fill='#f3af12',
-                           font=get_sao_font(6, True), anchor='e'))
-        # 右侧竖线导轨
-        self._float_hud_ids.append(
-            cv.create_line(FW - 8, 18, FW - 8, FH - 12, fill='#f3af12', width=1))
-
-        # ── 呼吸光点 (左右各一) ──
-        self._hud_dot_left = cv.create_oval(5, 28, 11, 34,
-                                             fill='#86dfff', outline='')
-        self._hud_dot_right = cv.create_oval(FW - 11, 28, FW - 5, 34,
-                                              fill='#f3af12', outline='')
-        self._float_hud_ids.extend([self._hud_dot_left, self._hud_dot_right])
-
-    def _animate_float_hud(self):
-        if self._destroyed:
-            return
+        self._refresh_hp_layered()
         try:
-            if not self._float_cv.winfo_exists():
-                return
-        except Exception:
-            return
-
-        # ── 呼吸光点动画 ──
-        t = time.time()
-        if getattr(self, '_hud_dot_left', None):
-            opa_l = 0.3 + 0.7 * ((math.sin(t * 2.0) + 1) / 2)
-            opa_r = 0.3 + 0.7 * ((math.sin(t * 2.0 + math.pi) + 1) / 2)
-            # Tk Canvas 不支持 item alpha，用颜色渐变模拟
-            cl = int(0x86 * opa_l + 0x01 * (1 - opa_l))
-            cr = int(0xf3 * opa_r + 0x01 * (1 - opa_r))
-            cg = int(0xdf * opa_l + 0x02 * (1 - opa_l))
-            try:
-                self._float_cv.itemconfigure(
-                    self._hud_dot_left,
-                    fill=f'#{cl:02x}{cg:02x}{int(0xff * opa_l):02x}')
-                self._float_cv.itemconfigure(
-                    self._hud_dot_right,
-                    fill=f'#{cr:02x}{int(0xaf * opa_r):02x}{int(0x12 * opa_r):02x}')
-            except Exception:
-                pass
-
-        self._sync_hp_alpha_strip_windows()
-        try:
-            self.root.after(16, self._animate_float_hud)
+            self.root.after(33, self._animate_float_hud)
         except Exception:
             pass
 
@@ -1146,14 +1352,6 @@ class SAOPlayerGUI:
             body_cv.delete('all')
             cyan = '#86dfff'
             gold = '#f3af12'
-            hx = int(12 + 8 * math.sin(tt * 1.18))
-            rx = int(pw - 14 + 10 * math.sin(tt * 0.92 + 1.2))
-            header_cv.create_line(hx, 7, hx + 88, 7, fill=cyan, width=1)
-            header_cv.create_line(hx, 7, hx, 18, fill=cyan, width=1)
-            header_cv.create_line(rx - 96, 16, rx, 16, fill=gold, width=1)
-            header_cv.create_line(rx, 6, rx, 16, fill=gold, width=1)
-            header_cv.create_rectangle(hx + 12, 11, hx + 56, 19, outline=cyan, width=1)
-            header_cv.create_rectangle(rx - 72, 4, rx - 18, 11, outline=gold, width=1)
 
             left_far = int(10 + 5 * math.sin(tt * 0.66))
             left_near = int(20 + 12 * math.sin(tt * 1.35 + 0.8))
@@ -1171,7 +1369,7 @@ class SAOPlayerGUI:
             body_cv.create_rectangle(left_near + 8, ph - 36, left_near + 66, ph - 24, outline=cyan, width=1)
             body_cv.create_rectangle(right_near - 74, 22, right_near - 12, 34, outline=gold, width=1)
             try:
-                self.root.after(16, _tick)
+                self.root.after(33, _tick)
             except Exception:
                 pass
 
@@ -1181,180 +1379,56 @@ class SAOPlayerGUI:
     #  悬浮触发按钮 — 纯 SAO-UI HP 组件 (对标 HP/src/index.vue)
     # ══════════════════════════════════════════════
     def _create_floating_widget(self):
-        """SAO-UI HP 组件:
-        XTBox 400×40, xt_left 22px, xt_right flex, xt_border 260×23 at (100,8)
-        SVG polygon: 0,0 260,0 255,16 124,16 120,23 0,23
-        number_xt at top:90% left:60%
+        """SAO-UI HP 组件 — Win32 分层窗口 (per-pixel alpha) 版本。
+        使用 UpdateLayeredWindow 实现真正的逐像素 alpha 透明，
+        所有内容(外壳/HP填充/文字/HUD)统一由 PIL 渲染后一次性刷新。
         """
         # ── 尺寸 ──
         FW, FH = 420, 64
         self._fw, self._fh = FW, FH
+        self._float_alpha = 0.0
+        self._hp_hover = False
 
-        TRANS = '#010201'
         self._float = tk.Toplevel(self.root)
         self._float.overrideredirect(True)
         self._float.attributes('-topmost', True)
-        self._float.attributes('-alpha', 0.0)
-        self._float.attributes('-transparentcolor', TRANS)
-        self._float.configure(bg=TRANS)
+        self._float.geometry(f'{FW}x{FH}')
+        self._float.configure(bg='#000000')
 
-        # Win32: 任务栏可见
+        # Win32: 设为分层窗口 + 任务栏可见
+        self._float_hwnd = 0
         try:
             self._float.update_idletasks()
             GWL_EXSTYLE = -20
             WS_EX_APPWINDOW = 0x00040000
             WS_EX_TOOLWINDOW = 0x00000080
-            hwnd = ctypes.windll.user32.GetParent(self._float.winfo_id())
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
-            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+            WS_EX_LAYERED = 0x00080000
+            hwnd = int(_user32.GetParent(ctypes.c_void_p(self._float.winfo_id())))
+            self._float_hwnd = hwnd
+            style = _user32.GetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
+            style = (style | WS_EX_APPWINDOW | WS_EX_LAYERED) & ~WS_EX_TOOLWINDOW
+            _user32.SetWindowLongW(ctypes.c_void_p(hwnd), GWL_EXSTYLE, style)
             _disable_native_window_shadow(self._float)
-        except:
-            pass
+            # 立即绘制一帧全透明 ULW, 让 Win32 接管渲染 (Tk 黑底永不显示)
+            try:
+                _blank = Image.new('RGBA', (FW, FH), (0, 0, 0, 0))
+                _update_layered_win(hwnd, _blank, 0)
+            except Exception:
+                pass
+            print(f'[SAO-HP] ULW hwnd=0x{hwnd:X}, layered OK')
+        except Exception as e:
+            print(f'[SAO-HP] ULW init FAILED: {e}')
+            import traceback; traceback.print_exc()
+            self._float_hwnd = 0
 
-        cv = tk.Canvas(self._float, width=FW, height=FH,
-                       bg=TRANS, highlightthickness=0)
-        cv.pack(fill=tk.BOTH, expand=True)
-        self._float_cv = cv
+        # ── 预渲染静态外壳 (normal / hover) ──
+        self._hp_shell_normal = self._render_hp_shell(hover=False)
+        self._hp_shell_hover = self._render_hp_shell(hover=True)
 
-        # ── 颜色 (匹配 hp.html CSS 变量) ──
-        BG       = '#9db5d0'   # --bgColor
-        BORDER   = '#dad7d7'   # stroke: rgb(218,215,215)
-        FONT_C   = '#e1dede'   # --fontcolor
-        BAR_BG   = '#2c3040'   # HP 条内底色
-
-        # ── 布局常量 (匹配 hp.html) ──
-        ox, oy = 6, 4          # body padding
-        BW, BH = 400, 40       # XTBox size
-        shadow_dx, shadow_dy = 8, 6
-
-        # ── 自定义阴影: 仅贴合 HP 组件形状，避免出现整块矩形窗口阴影 ──
-        xr_x = ox + 22 + 3
-        xr_w = BW - 22 - 3
-        shadow_pts = [
-            xr_x + 75 + shadow_dx,  oy + int(BH * 0.22) + shadow_dy,
-            xr_x + xr_w + shadow_dx, oy + int(BH * 0.22) + shadow_dy,
-            xr_x + xr_w + shadow_dx, oy + shadow_dy,
-            xr_x + shadow_dx,        oy + shadow_dy,
-            xr_x + shadow_dx,        oy + BH + shadow_dy,
-            xr_x + 210 + shadow_dx,  oy + BH + shadow_dy,
-            xr_x + 210 + shadow_dx,  oy + int(BH * 0.80) + shadow_dy,
-            xr_x + xr_w + shadow_dx, oy + int(BH * 0.80) + shadow_dy,
-            xr_x + xr_w + shadow_dx, oy + int(BH * 0.60) + shadow_dy,
-            xr_x + 200 + shadow_dx,  oy + int(BH * 0.60) + shadow_dy,
-            xr_x + 195 + shadow_dx,  oy + int(BH * 0.77) + shadow_dy,
-            xr_x + 75 + shadow_dx,   oy + int(BH * 0.77) + shadow_dy,
-        ]
-        cv.create_polygon(shadow_pts, fill='#1a1e25', outline='')
-        cv.create_rectangle(ox + shadow_dx, oy + shadow_dy,
-                            ox + 22 + shadow_dx, oy + BH + shadow_dy,
-                            fill='#171c24', outline='')
-        cv.create_polygon([
-            ox + 100 + shadow_dx, oy + 8 + shadow_dy,
-            ox + 360 + shadow_dx, oy + 8 + shadow_dy,
-            ox + 355 + shadow_dx, oy + 24 + shadow_dy,
-            ox + 224 + shadow_dx, oy + 24 + shadow_dy,
-            ox + 220 + shadow_dx, oy + 31 + shadow_dy,
-            ox + 100 + shadow_dx, oy + 31 + shadow_dy,
-        ], fill='#10151c', outline='')
-        cv.create_rectangle(ox + 240 + shadow_dx, oy + 36 + shadow_dy,
-                            ox + 395 + shadow_dx, oy + 54 + shadow_dy,
-                            fill='#121821', outline='')
-
-        # ═══════════════════════════════════════
-        #  1. xt_left 凹口 (22px × 40px)
-        # ═══════════════════════════════════════
-        xt_w = 22
-        cv.create_rectangle(ox, oy, ox + xt_w, oy + BH,
-                            fill=BG, outline='', tags='xt_left')
-        # 中心凹口 (clip-path: 0% 25%, 50% 25%, 50% 75%, 0% 75%)
-        cv.create_rectangle(ox, oy + BH // 4,
-                            ox + xt_w // 2, oy + BH * 3 // 4,
-                            fill=TRANS, outline='')
-
-        # ═══════════════════════════════════════
-        #  2. xt_right 背景 (完整 clip-path 多边形, 含 HP 条周围延伸)
-        #     CSS clip-path: polygon(75px 22%, 100% 22%, 100% 0%, 0% 0%,
-        #       0 100%, 210px 100%, 210px 80%, 100% 80%,
-        #       100% 60%, 200px 60%, 195px 77%, 75px 77%)
-        #     xt_right: flex:1 → w=375, h=40, starts at x=25 in XTBox
-        # ═══════════════════════════════════════
-        xr_x = ox + xt_w + 3       # 31 (xt_right left edge)
-        xr_w = BW - xt_w - 3       # 375 (xt_right width)
-        xr_pts = [
-            xr_x + 75,  oy + int(BH * 0.22),     # (106, ~13) HP bar左上
-            xr_x + xr_w, oy + int(BH * 0.22),    # (406, ~13) 顶部右延伸
-            xr_x + xr_w, oy,                      # (406, 4)   右上角
-            xr_x,        oy,                      # (31, 4)    左上角
-            xr_x,        oy + BH,                 # (31, 44)   左下角
-            xr_x + 210,  oy + BH,                 # (241, 44)  底部延伸
-            xr_x + 210,  oy + int(BH * 0.80),     # (241, 36)  底部→右侧
-            xr_x + xr_w, oy + int(BH * 0.80),    # (406, 36)  右下延伸
-            xr_x + xr_w, oy + int(BH * 0.60),    # (406, 28)  右中
-            xr_x + 200,  oy + int(BH * 0.60),     # (231, 28)  台阶
-            xr_x + 195,  oy + int(BH * 0.77),     # (226, ~35) 斜切
-            xr_x + 75,   oy + int(BH * 0.77),     # (106, ~35) HP bar左下
-        ]
-        cv.create_polygon(xr_pts, fill=BG, outline='', tags='xt_right_bg')
-
-        # ── 右侧渐隐 (模拟 CSS linear-gradient to right ... rgba(220,212,212,0)) ──
-        # 在 xt_right 多边形的右半部分覆盖渐变色条, BG → TRANS
-        # 范围: 右侧 50% (xr_x + xr_w//2 到 xr_x + xr_w)
-        # 分三个区域: 顶部条(oy ~ bar_y), 底部右(bar_y+PH ~ oy+BH*0.80), 最底部(oy+BH*0.80 ~ oy+BH)
-        bg_r, bg_g, bg_b = 0x9d, 0xb5, 0xd0  # BG = #9db5d0
-        tr_r, tr_g, tr_b = 0x01, 0x02, 0x01  # TRANS = #010201
-        fade_start = xr_x + int(xr_w * 0.40)  # 40% 开始渐变
-        fade_end   = xr_x + xr_w                 # 100% 完全透明
-        n_strips = 48
-        for i in range(n_strips):
-            t = i / max(1, n_strips - 1)
-            # 非线性: 后半快速渐隐
-            t2 = t * t
-            r = int(bg_r + (tr_r - bg_r) * t2)
-            g = int(bg_g + (tr_g - bg_g) * t2)
-            b = int(bg_b + (tr_b - bg_b) * t2)
-            c = f'#{r:02x}{g:02x}{b:02x}'
-            sx = fade_start + int((fade_end - fade_start) * i / n_strips)
-            ex = fade_start + int((fade_end - fade_start) * (i + 1) / n_strips) + 1
-            # 顶部条 (oy 到 oy + BH*0.22)
-            cv.create_rectangle(sx, oy, ex, oy + int(BH * 0.22),
-                                fill=c, outline='', tags='xt_fade')
-            # 底部右 (oy + BH*0.60 到 oy + BH*0.80)
-            cv.create_rectangle(sx, oy + int(BH * 0.60), ex, oy + int(BH * 0.80),
-                                fill=c, outline='', tags='xt_fade')
-
-        # 名字文本 (xt_right > span, padding-left: 10px, 在左侧 column 内居中)
-        display_name = self._username if self._username else 'Player'
-        if len(display_name) > 8:
-            display_name = display_name[:7] + '…'
-        name_cx = (xr_x + xr_x + 75) // 2  # 左列中心 ≈ 68
-        self._float_title_id = cv.create_text(
-            name_cx, oy + BH // 2,
-            text=display_name, fill=FONT_C, font=get_sao_font(11))
-
-        # ═══════════════════════════════════════
-        #  3. HP 条 (xt_border at left:100 top:8, 260×23)
-        #     SVG polygon: 0,0 260,0 255,16 124,16 120,23 0,23
-        # ═══════════════════════════════════════
-        bar_x = ox + 100       # 106
-        bar_y = oy + 8         # 12
-        PW = 260               # 宽度
-        PT = 16                # 台阶高度
-        PH = 23                # 全高
-        PS = 124               # 台阶 x
-
-        # 1) 深色内填充
-        bar_pts = [
-            bar_x,       bar_y,
-            bar_x + PW,  bar_y,
-            bar_x + PW - 5, bar_y + PT,
-            bar_x + PS,  bar_y + PT,
-            bar_x + PS - 4, bar_y + PH,
-            bar_x,       bar_y + PH,
-        ]
-        cv.create_polygon(bar_pts, fill=BAR_BG, outline='', tags='hp_bg')
-
-        # 2) HP 填充矩形 (初始隐藏)
+        # ── HP 布局常量 ──
+        ox, oy = 6, 4
+        bar_x = ox + 100; bar_y = oy + 8
+        PW, PT, PH, PS = 260, 16, 23, 124
         self._hp_bar_x        = bar_x + 2
         self._hp_bar_y        = bar_y + 2
         self._hp_bar_right    = bar_x + PW - 7
@@ -1362,66 +1436,19 @@ class SAOPlayerGUI:
         self._hp_bar_bot_full = bar_y + PH - 2
         self._hp_bar_step_x   = bar_x + PS - 6
 
-        self._float_hp_fill_top = cv.create_rectangle(
-            -1, -1, -1, -1, fill='#9ad334', outline='', tags='hp_fill')
-        self._float_hp_fill_bot = cv.create_rectangle(
-            -1, -1, -1, -1, fill='#9ad334', outline='', tags='hp_fill')
+        # ── 显示名 ──
+        display_name = self._username if self._username else 'Player'
+        if len(display_name) > 8:
+            display_name = display_name[:7] + '…'
+        self._hp_display_name = display_name
 
-        # 3) 边框 (SVG polygon stroke: rgb(218,215,215) width:1)
-        cv.create_polygon(bar_pts, fill='', outline=BORDER,
-                          width=1, tags='hp_border')
-
-        # 4) 内部分隔线 (tb_line)
-        cv.create_line(bar_x + 2, bar_y + 1, bar_x + PW - 2, bar_y + 1,
-                       fill=BORDER, width=1)
-        cv.create_line(bar_x + 2, bar_y + PH - 1, bar_x + PS - 5, bar_y + PH - 1,
-                       fill=BORDER, width=1)
-
-        # ═══════════════════════════════════════
-        #  4. number_xt (top:90% left:60%, 150×20)
-        # ═══════════════════════════════════════
-        _lv, _cur_xp, _need_xp = calc_level(self._xp)
-        num_x = ox + int(BW * 0.60)   # 246
-        num_y = oy + int(BH * 0.90)   # 40
-        xp_w = int(150 * 0.69)        # 103
-        lv_w = int(150 * 0.30)        # 45
-
-        cv.create_rectangle(num_x, num_y, num_x + xp_w, num_y + 18,
-                            fill=BG, outline='', tags='num_bg1')
-        self._float_time_id = cv.create_text(
-            num_x + xp_w - 5, num_y + 9,
-            text=f'{_cur_xp}/{_need_xp}',
-            font=get_sao_font(9), fill=FONT_C, anchor='e')
-
-        lv_x = num_x + xp_w + 3
-        cv.create_rectangle(lv_x, num_y, lv_x + lv_w, num_y + 18,
-                            fill=BG, outline='', tags='num_bg2')
-        self._float_level_id = cv.create_text(
-            lv_x + lv_w - 5, num_y + 9,
-            text=f'lv.{self._level}',
-            font=get_sao_font(9), fill=FONT_C, anchor='e')
-
-        # ── 兼容性 dummy 元素 ──
-        self._float_fname_id    = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_pbar_id     = cv.create_rectangle(-1, -1, -1, -1, tags='_dum')
-        self._float_pb_coords   = (0, 0, 0, 0)
-        self._float_status_dot  = cv.create_oval(-1, -1, -1, -1, tags='_dum')
-        self._float_status_text = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_play_icon   = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_songs_id    = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_mode_id     = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_sustain_id  = cv.create_text(-100, -100, text='', tags='_dum')
-        self._float_hp_fill     = self._float_hp_fill_top
-        self._float_hp_coords   = (0, 0, 0, 0)
-        self._float_btn_tags    = []
-
-        # ── 拖拽 / 点击 交互 ──
+        # ── 拖拽 / 点击 交互 (绑定到 Toplevel) ──
         self._drag = {'x': 0, 'y': 0, 'dragging': False}
-        cv.bind('<Button-1>', self._float_click)
-        cv.bind('<B1-Motion>', self._float_drag)
-        cv.bind('<ButtonRelease-1>', self._float_release)
-        cv.bind('<Enter>', self._float_enter)
-        cv.bind('<Leave>', self._float_leave)
+        self._float.bind('<Button-1>', self._float_click)
+        self._float.bind('<B1-Motion>', self._float_drag)
+        self._float.bind('<ButtonRelease-1>', self._float_release)
+        self._float.bind('<Enter>', self._float_enter)
+        self._float.bind('<Leave>', self._float_leave)
 
         # 右键菜单
         self._float_ctx = tk.Menu(self._float, tearoff=0, bg='#ffffff',
@@ -1449,12 +1476,16 @@ class SAOPlayerGUI:
                 self._float_ctx.tk_popup(e.x_root, e.y_root)
             finally:
                 self._ctx_menu_open = False
-        cv.bind('<Button-3>', _show_ctx_menu)
+        self._float.bind('<Button-3>', _show_ctx_menu)
+
+        # 初始渲染一次 (alpha=0，不可见)
+        try:
+            self._refresh_hp_layered()
+        except Exception:
+            pass
 
         # 初始隐藏 — LinkStart 完成后才显示
         self._float.withdraw()
-        self._create_hp_alpha_strip_windows()
-        self._build_float_hud_items()
 
     # ──────── 浮动呼吸动画 ────────
     def _start_float_breath(self):
@@ -1482,7 +1513,6 @@ class SAOPlayerGUI:
             fy = self._breath_base_y + new_dy
             if self._float and self._float.winfo_exists():
                 self._float.geometry(f'+{fx}+{fy}')
-                self._sync_hp_alpha_strip_windows()
             self.root.after(16, self._breath_step)
         except Exception:
             pass
@@ -1492,7 +1522,6 @@ class SAOPlayerGUI:
         try:
             if self._float and self._float.winfo_exists():
                 self._float.geometry(f'+{self._breath_base_x}+{self._breath_base_y}')
-                self._sync_hp_alpha_strip_windows()
         except Exception:
             pass
 
@@ -1548,7 +1577,6 @@ class SAOPlayerGUI:
             mx = e.x_root - self._fw // 2
             my = e.y_root - self._fh // 2
             self._float.geometry(f'+{mx}+{my}')
-            self._sync_hp_alpha_strip_windows()
 
     def _float_release(self, e):
         if self._skip_canvas_click:
@@ -1571,73 +1599,25 @@ class SAOPlayerGUI:
 
     def _float_enter(self, e):
         """高亮悬浮 HP 组件"""
-        cv = self._float_cv
         try:
-            cv.itemconfig('xt_left', fill='#b5cde0')
-            cv.itemconfig('xt_right_bg', fill='#b5cde0')
-            cv.itemconfig('num_bg1', fill='#b5cde0')
-            cv.itemconfig('num_bg2', fill='#b5cde0')
-            self._float.attributes('-alpha', 0.93)
+            self._hp_hover = True
+            self._float_alpha = 0.93
+            self._refresh_hp_layered()
         except Exception:
             pass
 
     def _float_leave(self, e):
         """恢复默认色"""
-        cv = self._float_cv
         try:
-            cv.itemconfig('xt_left', fill='#9db5d0')
-            cv.itemconfig('xt_right_bg', fill='#9db5d0')
-            cv.itemconfig('num_bg1', fill='#9db5d0')
-            cv.itemconfig('num_bg2', fill='#9db5d0')
-            self._float.attributes('-alpha', 0.82)
+            self._hp_hover = False
+            self._float_alpha = 0.82
+            self._refresh_hp_layered()
         except Exception:
             pass
 
     def _update_float_display(self):
-        """更新悬浮 HP 组件: HP 填充 + 颜色 (基于播放进度)"""
-        cv = self._float_cv
-        if not cv.winfo_exists():
-            return
-        pct = self._float_progress_pct
-
-        # ── HP 填充 (对标 .xt_in width: percent%) ──
-        try:
-            # 上下两段共用同一个推进前沿，避免播放时上下分离
-            top_max_w = self._hp_bar_right - self._hp_bar_x
-            top_fill_w = int(top_max_w * pct)
-            bot_max_w = self._hp_bar_step_x - self._hp_bar_x
-            bot_fill_w = min(top_fill_w, bot_max_w)
-
-            if top_fill_w < 1:
-                cv.coords(self._float_hp_fill_top, -1, -1, -1, -1)
-                cv.coords(self._float_hp_fill_bot, -1, -1, -1, -1)
-            else:
-                cv.coords(self._float_hp_fill_top,
-                          self._hp_bar_x, self._hp_bar_y,
-                          self._hp_bar_x + top_fill_w, self._hp_bar_bot_top)
-                if bot_fill_w > 0:
-                    cv.coords(self._float_hp_fill_bot,
-                              self._hp_bar_x, self._hp_bar_bot_top,
-                              self._hp_bar_x + bot_fill_w, self._hp_bar_bot_full)
-                else:
-                    cv.coords(self._float_hp_fill_bot, -1, -1, -1, -1)
-
-            # HP 颜色 (对标 .xt_in_green/yellow/red 阈值)
-            if pct >= 0.60:
-                c = '#9ad334'  # green: linear-gradient(rgb(211,234,124), rgb(154,211,52))
-            elif pct >= 0.25:
-                c = '#f4fa49'  # yellow
-            else:
-                c = '#ef684e'  # red
-            cv.itemconfig(self._float_hp_fill_top, fill=c)
-            cv.itemconfig(self._float_hp_fill_bot, fill=c)
-
-            if self._hp_alpha_windows:
-                cv.coords(self._float_hp_fill_top, -1, -1, -1, -1)
-                cv.coords(self._float_hp_fill_bot, -1, -1, -1, -1)
-                self._sync_hp_alpha_strip_windows()
-        except Exception:
-            pass
+        """更新悬浮 HP 组件 — 由 _render_hp_dynamic 统一处理，仅触发刷新。"""
+        self._refresh_hp_layered()
 
     def _update_float_status(self):
         self._update_float_display()
@@ -1661,7 +1641,10 @@ class SAOPlayerGUI:
             x = int(x0 + (x1 - x0) * et)
             y = int(y0 + (y1 - y0) * et)
             self._float.geometry(f'+{x}+{y}')
-            self._sync_hp_alpha_strip_windows()
+            try:
+                self._refresh_hp_layered()
+            except Exception:
+                pass
             if t < 1.0:
                 try:
                     self.root.after(16, tick)
@@ -1966,6 +1949,7 @@ class SAOPlayerGUI:
         self._mini_piano = SAOMiniPiano(inner, octaves=5)
         self._mini_piano.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         self._fade_panel_in(self._piano_panel, target=0.90)
+        self._attach_sao_panel_fx(self._piano_panel, hdr, inner)
         self._attach_panel_float(self._piano_panel, phase=0.0)
         self.settings.set('show_piano', True)
         self.settings.save()
@@ -2069,6 +2053,7 @@ class SAOPlayerGUI:
         hdr.bind('<B1-Motion>', sdmove)
 
         self._fade_panel_in(self._status_panel, target=0.92)
+        self._attach_sao_panel_fx(self._status_panel, hdr, inner)
         self._attach_panel_float(self._status_panel, phase=2.0)
         self._update_status_panel()
         self.settings.set('show_status', True)
@@ -2168,6 +2153,7 @@ class SAOPlayerGUI:
         if self._playing:
             self._visualizer.start()
         self._fade_panel_in(self._viz_panel, target=0.90)
+        self._attach_sao_panel_fx(self._viz_panel, hdr, inner)
         self._attach_panel_float(self._viz_panel, phase=1.0)
         self.settings.set('show_viz', True)
         self.settings.save()
@@ -2345,6 +2331,7 @@ class SAOPlayerGUI:
         self._control_panel._gl_lbl = gl_lbl
 
         self._fade_panel_in(self._control_panel, target=0.95)
+        self._attach_sao_panel_fx(self._control_panel, hdr, inner)
         self._attach_panel_float(self._control_panel, phase=3.0)
         self.settings.set('show_control', True)
         self.settings.save()
@@ -3049,9 +3036,28 @@ class SAOPlayerGUI:
         def on_done():
             # 主界面从屏幕中心弹出, 带缩放 + 渐显动画
             self._float.geometry(f'{self._fw}x{self._fh}+{fx_start}+{fy_start}')
-            self._float.attributes('-alpha', 0.0)
+            self._set_float_alpha(0.0)
             self._float.deiconify()
             self._float.lift()
+            # Re-assert WS_EX_LAYERED (withdraw/deiconify 可能重置)
+            try:
+                GWL_EXSTYLE = -20
+                WS_EX_LAYERED = 0x00080000
+                h = self._float_hwnd
+                if h:
+                    ex = _user32.GetWindowLongW(ctypes.c_void_p(h), GWL_EXSTYLE)
+                    if not (ex & WS_EX_LAYERED):
+                        _user32.SetWindowLongW(ctypes.c_void_p(h), GWL_EXSTYLE,
+                                               ex | WS_EX_LAYERED)
+                        print('[SAO-HP] Re-asserted WS_EX_LAYERED after deiconify')
+            except Exception:
+                pass
+            # 立即绘制全透明 ULW 帧, 防止 deiconify 后暴露 Tk 黑底
+            try:
+                _blank = Image.new('RGBA', (self._fw, self._fh), (0, 0, 0, 0))
+                _update_layered_win(self._float_hwnd, _blank, 0)
+            except Exception:
+                pass
             self._play_motion_blur(closing=False)
 
             # 阶段1: 渐显 + 从小到大缩放 (0~400ms)
@@ -3067,7 +3073,7 @@ class SAOPlayerGUI:
                     t = ease_out(dt / 0.4)
                     al = t * 0.82
                     try:
-                        self._float.attributes('-alpha', al)
+                        self._set_float_alpha(al)
                     except Exception:
                         pass
                     try:
@@ -3077,7 +3083,7 @@ class SAOPlayerGUI:
                 elif dt < 0.45:
                     # 确保完全可见, 开始滑动
                     try:
-                        self._float.attributes('-alpha', 0.82)
+                        self._set_float_alpha(0.82)
                     except Exception:
                         pass
                     self._animate_float_to(fx_start, fy_start,
@@ -3086,6 +3092,8 @@ class SAOPlayerGUI:
                     self._breath_base_x = fx_final
                     self._breath_base_y = fy_final
                     self.root.after(750, self._start_float_breath)
+                    # 启动 30fps HUD 渲染循环 (呼吸光点 / 导轨动画)
+                    self.root.after(800, self._animate_float_hud)
                     # 鱼眼叠加层由 _on_sao_menu_open 渐显启动, 不再使用 _run_fisheye_entry
                     if not self._username:
                         self.root.after(1100, self._show_welcome_then_menu)
@@ -3116,12 +3124,13 @@ class SAOPlayerGUI:
         show_welcome_dialog(self._float, on_done=on_profile_done)
 
     def _update_float_title(self):
-        """更新 HP 组件的用户名 (对标 .xt_right > span)"""
+        """更新 HP 组件的用户名"""
         try:
             name = self._username if self._username else 'Player'
             if len(name) > 8:
                 name = name[:7] + '…'
-            self._float_cv.itemconfigure(self._float_title_id, text=name)
+            self._hp_display_name = name
+            self._refresh_hp_layered()
         except Exception:
             pass
 
@@ -3346,7 +3355,7 @@ class SAOPlayerGUI:
             self._player_panel.update_mode(mode_text)
         # 更新悬浮面板上的模式
         try:
-            self._float_cv.itemconfig(self._float_mode_id, text=mode_text)
+            pass  # 模式文字已通过 _render_hp_dynamic 统一渲染
         except Exception:
             pass
         self._refresh_menu_if_open()
@@ -3536,13 +3545,7 @@ class SAOPlayerGUI:
             self._float_progress_pct = 0.0
         try:
             self._update_float_display()
-            # HP 数值 (对标 .number_xt: currentHp/total)
-            cv = self._float_cv
-            if cv.winfo_exists():
-                cv.itemconfig(self._float_time_id,
-                              text=f'{int(current)}/{int(total)}')
-                cv.itemconfig(self._float_level_id,
-                              text=f'lv.{self._level}')
+            # HP 数值已通过 _render_hp_dynamic 统一渲染
         except Exception:
             pass
         # 更新 SAO 菜单左面板
@@ -3577,12 +3580,7 @@ class SAOPlayerGUI:
                 self.root.after(300, lambda: LevelUpEffect.show(self.root, old_lv, new_lv))
             # 更新悬浮面板上的等级和 XP
             try:
-                cv = self._float_cv
-                if cv.winfo_exists():
-                    lv2, cur_xp2, need_xp2 = calc_level(self._xp)
-                    cv.itemconfig(self._float_time_id,
-                                  text=f'{cur_xp2}/{need_xp2}')
-                    cv.itemconfig(self._float_level_id, text=f'lv.{new_lv}')
+                self._refresh_hp_layered()
             except Exception:
                 pass
         except Exception:
@@ -3655,48 +3653,17 @@ class SAOPlayerGUI:
 
     def _switch_to_webview_ui(self):
         """切换到 WebView UI (sao_webview.py) — 热切换"""
-        self.settings.set('ui_mode', 'webview')
-        self.settings.save()
-
         def _do_switch():
-            self._destroyed = True
-            self._breath_active = False
-            self._lift_loop_active = False
-            try:
-                if hasattr(self, '_hotkey_mgr'):
-                    self._hotkey_mgr.cleanup()
-                self._stop_fisheye_overlay()
-                self._sao_menu.unbind_events()
-                if self._sao_menu.visible:
-                    self._sao_menu.close()
-            except Exception:
-                pass
-            self.player.stop()
-            self._destroy_hp_alpha_strip_windows()
-            for panel in [self._piano_panel, self._viz_panel,
-                          self._status_panel, self._control_panel]:
-                try:
-                    if panel and panel.winfo_exists():
-                        panel.destroy()
-                except Exception:
-                    pass
-            try:
-                if self._float and self._float.winfo_exists():
-                    self._float.destroy()
-            except Exception:
-                pass
-            # Flush pending after-callbacks before destroying root
-            try:
-                self.root.update_idletasks()
-            except Exception:
-                pass
-            try:
-                self.root.destroy()
-            except Exception:
-                pass
-            from sao_webview import SAOWebViewGUI
-            app = SAOWebViewGUI()
-            app.run()
+            self.settings.set('ui_mode', 'webview')
+            self.settings.save()
+
+            def _launch_next():
+                from sao_webview import SAOWebViewGUI
+                app = SAOWebViewGUI()
+                app.run()
+
+            self._run_exit_animation(after_shutdown=_launch_next,
+                                     mode='switch', target_label='SAO WEBVIEW UI')
 
         SAODialog.ask(self._float, "切换 UI",
                       "将切换到 SAO WebView UI。\n确定继续吗？",
@@ -3704,55 +3671,17 @@ class SAOPlayerGUI:
 
     def _switch_to_old_ui(self):
         """切换到 Old School UI (gui.py) — 在进程内热切换, 无需重启"""
-        self.settings.set('ui_mode', 'old')
-        self.settings.save()
-        if self._sao_menu.visible:
-            self._sao_menu.close()
-
         def _do_switch():
-            """热切换: 销毁 SAO UI → 构建 Old UI"""
-            self._destroyed = True
-            self._breath_active = False
-            self._lift_loop_active = False
-            # 清理 SAO 资源
-            try:
-                if hasattr(self, '_hotkey_mgr'):
-                    self._hotkey_mgr.cleanup()
-                self._stop_fisheye_overlay()
-                self._sao_menu.unbind_events()
-                if self._sao_menu.visible:
-                    self._sao_menu.close()
-            except Exception:
-                pass
-            self.player.stop()
-            self._destroy_hp_alpha_strip_windows()
-            # 销毁所有浮动面板
-            for panel in [self._piano_panel, self._viz_panel,
-                          self._status_panel, self._control_panel]:
-                try:
-                    if panel and panel.winfo_exists():
-                        panel.destroy()
-                except Exception:
-                    pass
-            try:
-                if self._float and self._float.winfo_exists():
-                    self._float.destroy()
-            except Exception:
-                pass
-            # Flush pending after-callbacks before destroying root
-            try:
-                self.root.update_idletasks()
-            except Exception:
-                pass
-            # 销毁隐藏的 root
-            try:
-                self.root.destroy()
-            except Exception:
-                pass
-            # 创建新的 Old UI
-            from gui import MidiPlayerGUI
-            app = MidiPlayerGUI()
-            app.run()
+            self.settings.set('ui_mode', 'old')
+            self.settings.save()
+
+            def _launch_next():
+                from gui import MidiPlayerGUI
+                app = MidiPlayerGUI()
+                app.run()
+
+            self._run_exit_animation(after_shutdown=_launch_next,
+                                     mode='switch', target_label='CLASSIC UI')
 
         SAODialog.ask(self._float, "切换 UI",
                       "将切换到经典 UI 模式。\n确定继续吗？",
@@ -3763,7 +3692,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.6+3406\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.7+3407\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3822,10 +3751,252 @@ class SAOPlayerGUI:
 
         self.root.after(600, lambda: threading.Thread(target=_do, daemon=True).start())
 
-    def _on_close(self):
+    def _cleanup_exit_overlay(self):
+        ov = getattr(self, '_exit_overlay', None)
+        if not ov:
+            return
+        try:
+            win = ov.get('win')
+            if win and win.winfo_exists():
+                win.destroy()
+        except Exception:
+            pass
+        self._exit_overlay = None
+
+    def _get_exit_banner(self, mode='exit', target_label=None):
+        if mode == 'switch':
+            return {
+                'primary': 'INTERFACE SHIFT',
+                'secondary': (target_label or 'NEXT UI').upper(),
+                'tertiary': 'TRANSFERRING CONTROL TO NEXT LAYER',
+                'accent': '#f3af12',
+                'accent_dim': '#5e4211',
+            }
+        return {
+            'primary': 'SYSTEM LOG OUT',
+            'secondary': 'SAO ENTITY',
+            'tertiary': 'PERSISTING SESSION STATE',
+            'accent': '#86dfff',
+            'accent_dim': '#173746',
+        }
+
+    def _create_exit_overlay(self, mode='exit', target_label=None):
+        self._cleanup_exit_overlay()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        ov = tk.Toplevel(self.root)
+        ov.overrideredirect(True)
+        ov.attributes('-topmost', True)
+        ov.geometry(f'{sw}x{sh}+0+0')
+        ov.configure(bg='#060a10')
+        ov.attributes('-alpha', 0.0)
+        try:
+            _disable_native_window_shadow(ov)
+        except Exception:
+            pass
+        cv = tk.Canvas(ov, width=sw, height=sh, bg='#060a10', highlightthickness=0, bd=0)
+        cv.pack(fill=tk.BOTH, expand=True)
+        try:
+            fx = self._float.winfo_rootx() + self._fw // 2
+            fy = self._float.winfo_rooty() + self._fh // 2
+        except Exception:
+            fx, fy = sw // 2, sh // 2
+        self._exit_overlay = {
+            'win': ov,
+            'cv': cv,
+            'sw': sw,
+            'sh': sh,
+            'fx': fx,
+            'fy': fy,
+            'banner': self._get_exit_banner(mode, target_label),
+            'mode': mode,
+        }
+        return self._exit_overlay
+
+    def _draw_exit_overlay(self, progress):
+        ov = getattr(self, '_exit_overlay', None)
+        if not ov:
+            return
+        try:
+            win = ov['win']
+            cv = ov['cv']
+            if not win.winfo_exists() or not cv.winfo_exists():
+                return
+        except Exception:
+            return
+
+        sw, sh = ov['sw'], ov['sh']
+        cx, cy = ov['fx'], ov['fy']
+        cyan = '#86dfff'
+        gold = ov['banner']['accent']
+        dim_cyan = '#173746'
+        dim_gold = ov['banner']['accent_dim']
+        white = '#edf7ff'
+
+        wash = ease_in_out(min(1.0, progress / 0.42))
+        focus = ease_out(min(1.0, progress / 0.74))
+        ring = ease_out(min(1.0, progress / 0.58))
+        sweep = (progress * 1.35) % 1.0
+
+        try:
+            win.attributes('-alpha', min(0.94, 0.10 + 0.78 * wash))
+        except Exception:
+            pass
+
+        cv.delete('all')
+        scan_pitch = 26
+        scan_shift = int((progress * 280) % scan_pitch)
+        for y in range(-scan_pitch, sh + scan_pitch, scan_pitch):
+            yy = y + scan_shift
+            col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
+            cv.create_line(0, yy, sw, yy, fill=col, width=1)
+
+        span = int(lerp(40, min(sw * 0.34, 420), focus))
+        aperture = int(lerp(16, 108, ring))
+        for off, col in [(-60, cyan), (-28, dim_cyan), (28, dim_gold), (60, gold)]:
+            cv.create_line(cx - span, cy + off, cx - aperture, cy + off, fill=col, width=1)
+            cv.create_line(cx + aperture, cy + off, cx + span, cy + off, fill=col, width=1)
+
+        base_r = int(lerp(22, 176, ring))
+        for extra, col in [(0, cyan), (20, gold)]:
+            r = base_r + extra
+            arm = 18 + extra // 3
+            for sx in (-1, 1):
+                for sy in (-1, 1):
+                    px = cx + sx * r
+                    py = cy + sy * r
+                    cv.create_line(px, py, px - sx * arm, py, fill=col, width=1)
+                    cv.create_line(px, py, px, py - sy * arm, fill=col, width=1)
+
+        diamond = int(lerp(8, 20, focus))
+        cv.create_polygon(cx, cy - diamond, cx + diamond, cy,
+                          cx, cy + diamond, cx - diamond, cy,
+                          outline=white, fill='')
+        cv.create_line(cx - 38, cy, cx + 38, cy, fill=white, width=1)
+        cv.create_line(cx, cy - 18, cx, cy + 18, fill=white, width=1)
+
+        scan_y = int(lerp(cy - 140, cy + 120, sweep))
+        cv.create_line(max(0, cx - span - 140), scan_y,
+                       min(sw, cx + span + 140), scan_y,
+                       fill=cyan, width=1)
+        cv.create_line(max(0, cx - span - 120), scan_y + 3,
+                       min(sw, cx + span + 120), scan_y + 3,
+                       fill=dim_cyan, width=1)
+
+        banner_x1 = max(30, cx - span - 60)
+        banner_x2 = min(sw - 30, cx + span + 60)
+        seq_label = 'SEQ:SHIFT' if ov.get('mode') == 'switch' else 'SEQ:EXIT'
+        status_label = 'STATUS:TRANSFER' if ov.get('mode') == 'switch' else 'STATUS:SAFE'
+        cv.create_text(banner_x1, max(24, cy - 150), text='SYS:ENTITY',
+                       anchor='w', fill=cyan, font=('Consolas', 9))
+        cv.create_text(banner_x2, max(24, cy - 150), text=seq_label,
+                       anchor='e', fill=gold, font=('Consolas', 9))
+        cv.create_text(banner_x1, min(sh - 24, cy + 164), text=status_label,
+                       anchor='w', fill=dim_cyan, font=('Consolas', 9))
+        cv.create_text(banner_x2, min(sh - 24, cy + 164), text=time.strftime('%H:%M:%S'),
+                       anchor='e', fill=dim_gold, font=('Consolas', 9))
+
+        text_y = cy + 86
+        cv.create_text(cx, text_y, text=ov['banner']['primary'],
+                       fill=white, font=get_sao_font(16, True))
+        cv.create_text(cx, text_y + 26, text=ov['banner']['secondary'],
+                       fill=gold, font=('Consolas', 11, 'bold'))
+        cv.create_text(cx, text_y + 48, text=ov['banner']['tertiary'],
+                       fill='#8aaec0', font=('Consolas', 9))
+
+    def _collect_exit_windows(self):
+        wins = []
+        seen = set()
+
+        try:
+            focus_x = self._float.winfo_x() + self._fw // 2
+            focus_y = self._float.winfo_y() + self._fh // 2
+        except Exception:
+            focus_x = self.root.winfo_screenwidth() // 2
+            focus_y = self.root.winfo_screenheight() // 2
+
+        def _profile(x, y, role, order):
+            dx = x - focus_x
+            dy = y - focus_y
+            dist = max(1.0, math.hypot(dx, dy))
+            ux, uy = dx / dist, dy / dist
+            if role == 'float':
+                return {'delay': 0.18, 'duration': 0.34, 'travel': 72,
+                        'ux': 1.0, 'uy': -0.25, 'movable': True}
+            if role == 'panel':
+                return {'delay': 0.06 + order * 0.045, 'duration': 0.28,
+                        'travel': 42 + order * 10, 'ux': ux, 'uy': uy + 0.24, 'movable': True}
+            if role == 'menu':
+                return {'delay': 0.00, 'duration': 0.20, 'travel': 0,
+                        'ux': 0.0, 'uy': 0.0, 'movable': False}
+            if role == 'fisheye':
+                return {'delay': 0.00, 'duration': 0.16, 'travel': 0,
+                        'ux': 0.0, 'uy': 0.0, 'movable': False}
+            return {'delay': 0.0, 'duration': 0.24, 'travel': 18,
+                    'ux': ux, 'uy': uy, 'movable': True}
+
+        def _add(win, role, order=0, ulw=False):
+            if not win:
+                return
+            try:
+                if not win.winfo_exists():
+                    return
+                wid = win.winfo_id()
+                if wid in seen:
+                    return
+                seen.add(wid)
+                try:
+                    alpha = float(win.attributes('-alpha'))
+                except Exception:
+                    alpha = 1.0
+                profile = _profile(win.winfo_x(), win.winfo_y(), role, order)
+                wins.append({
+                    'win': win,
+                    'alpha': max(0.0, min(1.0, alpha)),
+                    'x': win.winfo_x(),
+                    'y': win.winfo_y(),
+                    'role': role,
+                    'ulw': ulw,
+                    **profile,
+                })
+            except Exception:
+                pass
+
+        # HP float 使用 ULW，不能用 attributes('-alpha') 读写
+        _float = getattr(self, '_float', None)
+        if _float:
+            try:
+                if _float.winfo_exists():
+                    wid = _float.winfo_id()
+                    if wid not in seen:
+                        seen.add(wid)
+                        profile = _profile(_float.winfo_x(), _float.winfo_y(), 'float', 0)
+                        wins.append({
+                            'win': _float,
+                            'alpha': getattr(self, '_float_alpha', 1.0),
+                            'x': _float.winfo_x(),
+                            'y': _float.winfo_y(),
+                            'role': 'float',
+                            'ulw': True,
+                            **profile,
+                        })
+            except Exception:
+                pass
+        for idx, panel in enumerate([self._piano_panel, self._viz_panel, self._status_panel, self._control_panel]):
+            _add(panel, 'panel', order=idx)
+        _add(getattr(getattr(self, '_sao_menu', None), '_overlay', None), 'menu')
+        _add(getattr(self, '_fisheye_ov', None), 'fisheye')
+        # _hp_alpha_windows 已废弃 (ULW 内部渲染)
+        return wins
+
+    def _finalize_close(self):
+        if self._close_finalized:
+            return
+        self._close_finalized = True
         self._destroyed = True
         self._breath_active = False
         self._lift_loop_active = False
+        self._cleanup_exit_overlay()
         if hasattr(self, '_hotkey_mgr'):
             self._hotkey_mgr.cleanup()
         self._stop_fisheye_overlay()
@@ -3853,6 +4024,96 @@ class SAOPlayerGUI:
             self.root.destroy()
         except Exception:
             pass
+
+    def _run_exit_animation(self, after_shutdown=None, mode='exit', target_label=None):
+        if self._close_finalized or self._exit_animating:
+            return
+        self._exit_animating = True
+        self._destroyed = True
+        self._breath_active = False
+        self._lift_loop_active = False
+        try:
+            play_sound('menu_close')
+        except Exception:
+            pass
+        try:
+            self._play_motion_blur(closing=True)
+        except Exception:
+            pass
+        try:
+            if self._sao_menu.visible:
+                self._sao_menu.close()
+        except Exception:
+            pass
+
+        wins = self._collect_exit_windows()
+        self._create_exit_overlay(mode=mode, target_label=target_label)
+        if not wins:
+            self._draw_exit_overlay(1.0)
+            self._finalize_close()
+            if after_shutdown:
+                try:
+                    after_shutdown()
+                except Exception:
+                    pass
+            return
+
+        t0 = time.time()
+        duration = 0.78
+
+        def _finish():
+            self._finalize_close()
+            if after_shutdown:
+                try:
+                    after_shutdown()
+                except Exception:
+                    pass
+
+        def _step():
+            if self._close_finalized:
+                return
+            elapsed = time.time() - t0
+            t = min(1.0, elapsed / duration)
+            self._draw_exit_overlay(t)
+            for item in wins:
+                try:
+                    win = item['win']
+                    if not win.winfo_exists():
+                        continue
+                    local = min(1.0, max(0.0, (elapsed - item['delay']) / max(0.001, item['duration'])))
+                    fade = ease_in_out(local)
+                    new_alpha = max(0.0, item['alpha'] * (1.0 - fade))
+                    if item.get('movable'):
+                        dx = int(item['ux'] * item['travel'] * fade)
+                        dy = int(item['uy'] * item['travel'] * fade)
+                        if item.get('role') == 'float':
+                            dy -= int(18 * fade)
+                        try:
+                            win.geometry(f'+{item["x"] + dx}+{item["y"] + dy}')
+                        except Exception:
+                            pass
+                    if item.get('ulw'):
+                        self._set_float_alpha(new_alpha)
+                    else:
+                        win.attributes('-alpha', new_alpha)
+                except Exception:
+                    pass
+            if t < 1.0:
+                try:
+                    self.root.after(16, _step)
+                except Exception:
+                    _finish()
+            else:
+                _finish()
+
+        try:
+            self.root.after(1, _step)
+        except Exception:
+            _finish()
+
+    def _on_close(self):
+        self._run_exit_animation(mode='exit', target_label='Desktop')
+
     def run(self):
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.mainloop()

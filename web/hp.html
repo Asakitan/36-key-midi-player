@@ -57,7 +57,7 @@ html, body {
 }
 
 body {
-    padding: 8px 10px 0 10px;
+    padding: 0 10px 0 10px;
 }
 
 /* ═══════════════════════════════════════
@@ -77,6 +77,12 @@ body {
     50%  { filter: blur(0.08px) drop-shadow(2px 4px 4px rgba(50, 50, 0, 0.46)); }
     75%  { filter: blur(0.22px) drop-shadow(3px 5px 8px rgba(50, 50, 0, 0.36)); }
     100% { filter: blur(0px) drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5)); }
+}
+
+@keyframes hp-exit-blur {
+    0%   { opacity: 1; transform: scale(1); filter: blur(0px) drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5)); }
+    55%  { opacity: 0.88; transform: scale(1.04) translate(10px, -4px); filter: blur(3px) drop-shadow(4px 8px 14px rgba(50, 50, 0, 0.34)); }
+    100% { opacity: 0; transform: scale(0.82) translate(28px, -10px); filter: blur(18px) drop-shadow(0 0 0 rgba(50, 50, 0, 0)); }
 }
 /* ═══ Idle Float (sinusoidal Lissajous, ≤5px) ═══ */
 @keyframes sao-float {
@@ -115,6 +121,10 @@ body {
     animation: hp-slide-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both,
                hp-live-blur 8.5s ease-in-out 0.7s infinite,
                sao-float 9s ease-in-out 0.7s infinite;
+}
+
+.XTBox.hp-exit {
+    animation: hp-exit-blur 0.28s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 .xt_left, .xt_right, .number_xt { height: 100%; }
@@ -532,12 +542,37 @@ function snd(name) {
 
 /* ═══ Context Menu helpers ═══ */
 var ctxMenu = document.getElementById('ctx-menu');
+var _exitPending = false;
 
 function retriggerEntryBlur() {
     var hp = document.getElementById('hp');
     hp.classList.remove('hp-reenter');
+    hp.classList.remove('hp-exit');
     void hp.offsetWidth;
     hp.classList.add('hp-reenter');
+}
+
+function preExit() {
+    var hp = document.getElementById('hp');
+    hp.classList.remove('hp-reenter');
+    hp.classList.remove('hp-exit');
+    void hp.offsetWidth;
+    hp.classList.add('hp-exit');
+}
+
+function exitApplication() {
+    if (_exitPending) return;
+    _exitPending = true;
+    hideCtxMenu();
+    snd('menu_close');
+    preExit();
+    setTimeout(function() {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.exit_app) {
+            window.pywebview.api.exit_app();
+        } else if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.context_action('exit');
+        }
+    }, 260);
 }
 
 function showCtxMenu(x, y) {
@@ -549,9 +584,19 @@ function showCtxMenu(x, y) {
         window.pywebview.api.set_ctx_menu_active(true);
     }
     setTimeout(function() {
-        ctxMenu.style.left = x + 'px';
-        ctxMenu.style.top  = y + 'px';
         ctxMenu.classList.add('show');
+        var pad = 8;
+        var rect = ctxMenu.getBoundingClientRect();
+        var maxX = Math.max(pad, window.innerWidth - rect.width - pad);
+        var maxY = Math.max(pad, window.innerHeight - rect.height - pad);
+        var posX = Math.min(Math.max(pad, x), maxX);
+        var posY = y - rect.height - 18;
+        if (posY < pad) {
+            posY = Math.min(Math.max(pad, y - 24), maxY);
+        }
+        posY = Math.min(Math.max(pad, posY), maxY);
+        ctxMenu.style.left = posX + 'px';
+        ctxMenu.style.top  = posY + 'px';
     }, 50);
 }
 
@@ -613,9 +658,7 @@ document.getElementById('hp').addEventListener('contextmenu', function(e) {
     e.preventDefault();
     e.stopPropagation();
     snd('click');
-    var x = Math.max(0, Math.min(e.clientX, window.innerWidth - 150));
-    var y = Math.min(e.clientY, window.innerHeight - 230);
-    showCtxMenu(x, Math.max(0, y));
+    showCtxMenu(e.clientX + 4, e.clientY - 26);
 });
 
 /* ═══ Click outside → hide menu ═══ */
@@ -632,6 +675,10 @@ ctxMenu.querySelectorAll('.cm-item').forEach(function(item) {
         hideCtxMenu();
         snd('click');
         var action = this.getAttribute('data-action');
+        if (action === 'exit') {
+            exitApplication();
+            return;
+        }
         if (window.pywebview && window.pywebview.api) {
             window.pywebview.api.context_action(action);
         }
@@ -652,6 +699,8 @@ function showLevelUp(oldLv, newLv) {
 
 window.HP = {
     retriggerEntryBlur: retriggerEntryBlur,
+    preExit: preExit,
+    exitApp: exitApplication,
 };
 </script>
 </body>

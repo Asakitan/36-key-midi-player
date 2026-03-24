@@ -200,6 +200,9 @@ class SAOWebAPI:
     def play_sound(self, name: str):
         threading.Thread(target=self._g._play_sound, args=(name,), daemon=True).start()
 
+    def exit_app(self):
+        threading.Thread(target=self._g._exit_with_animation, daemon=True).start()
+
     def window_drag(self, dx, dy):
         """JS→Python drag bridge: move HP window by (dx, dy)"""
         try:
@@ -372,6 +375,7 @@ class SAOWebViewGUI:
         self._panel_float_active = True   # 面板浮动动画开关
         self._panel_origins = {}          # panel_type -> (base_x, base_y)
         self._hp_visible = False
+        self._exit_animating = False
 
         # 回调
         self.player.on_progress = self._on_progress
@@ -901,6 +905,75 @@ class SAOWebViewGUI:
             # 恢复 HP 窗口焦点 & 置顶
             self._ensure_hp_on_top()
         threading.Thread(target=_fade_and_hide, daemon=True).start()
+
+    def _native_fade_window(self, title: str, duration_ms: int = 260, steps: int = 12):
+        try:
+            hwnd = ctypes.windll.user32.FindWindowW(None, title)
+            if not hwnd:
+                return
+            GWL_EXSTYLE = -20
+            WS_EX_LAYERED = 0x80000
+            exstyle = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            if not (exstyle & WS_EX_LAYERED):
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
+            for i in range(steps):
+                alpha = int(255 * (1 - (i + 1) / max(1, steps)))
+                ctypes.windll.user32.SetLayeredWindowAttributes(
+                    hwnd, _COLORREF_KEY, max(0, alpha), _LWA_ALPHA | _LWA_COLORKEY)
+                time.sleep(max(0.01, duration_ms / max(1, steps) / 1000.0))
+        except Exception:
+            pass
+
+    def _transition_with_animation(self, next_ui: Optional[str] = None):
+        if self._exit_animating:
+            return
+        self._exit_animating = True
+        if next_ui:
+            self._pending_switch = next_ui
+        self._folder_loop_active = False
+        self.player.stop()
+        self._playing = False
+        self._paused = False
+
+        try:
+            self._eval_hp('if (window.HP && window.HP.preExit) { window.HP.preExit(); }')
+        except Exception:
+            pass
+
+        if self._menu_visible:
+            try:
+                self._close_menu()
+            except Exception:
+                pass
+        else:
+            try:
+                self._native_fade_window('SAO Menu', duration_ms=220, steps=10)
+            except Exception:
+                pass
+
+        try:
+            self._native_fade_window('♪ SAO HP', duration_ms=240, steps=12)
+        except Exception:
+            pass
+
+        try:
+            self._destroy_all_panels()
+        except Exception:
+            pass
+
+        time.sleep(0.46 if self._menu_visible else 0.28)
+
+        try:
+            self.hp_win.destroy()
+        except Exception:
+            pass
+        try:
+            self.menu_win.destroy()
+        except Exception:
+            pass
+
+    def _exit_with_animation(self):
+        self._transition_with_animation()
 
     def _capture_current_monitor_b64(self, quality=100):
         """截取 HP 窗口所在显示器 → JPEG base64 (低分辨率快速截图,
@@ -1702,33 +1775,13 @@ class SAOWebViewGUI:
         """切换到 SAO Entity UI (sao_gui.py)"""
         self.settings.set('ui_mode', 'sao')
         self.settings.save()
-        self._pending_switch = 'sao'
-        self.player.stop()
-        self._destroy_all_panels()
-        try:
-            self.hp_win.destroy()
-        except Exception:
-            pass
-        try:
-            self.menu_win.destroy()
-        except Exception:
-            pass
+        self._transition_with_animation('sao')
 
     def _switch_to_old_ui(self):
         """切换到 Old School UI (gui.py)"""
         self.settings.set('ui_mode', 'old')
         self.settings.save()
-        self._pending_switch = 'old'
-        self.player.stop()
-        self._destroy_all_panels()
-        try:
-            self.hp_win.destroy()
-        except Exception:
-            pass
-        try:
-            self.menu_win.destroy()
-        except Exception:
-            pass
+        self._transition_with_animation('old')
 
     def _do_hot_switch(self, target: str):
         """webview.start() 结束后执行热切换"""
