@@ -3648,7 +3648,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.16+3416\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.18+3418\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3971,54 +3971,116 @@ float hash21(vec2 p) {
     return fract(p.x * p.y);
 }
 
+float band(float x, float center, float width) {
+    return exp(-pow((x - center) / max(0.0001, width), 2.0));
+}
+
+float gridLine(vec2 q, vec2 dir, float scale, float width) {
+    float v = abs(fract(dot(q, dir) * scale) - 0.5);
+    return 1.0 - smoothstep(width, width + 0.018, v);
+}
+
 void main() {
     vec2 center = u_center / u_resolution;
     vec2 p = uv - center;
     p.x *= u_resolution.x / max(1.0, u_resolution.y);
     float r = length(p);
-    float ang = atan(p.y, p.x);
     float progress = clamp(u_progress, 0.0, 1.0);
 
-    float bluePulse = smoothstep(0.015, 0.11, progress) * (1.0 - smoothstep(0.16, 0.32, progress));
-    float whitePulse = smoothstep(0.18, 0.27, progress) * (1.0 - smoothstep(0.30, 0.48, progress));
-    float dualFlash = bluePulse * 0.85 + whitePulse * 1.25;
+    float bluePulse = smoothstep(0.00, 0.09, progress) * (1.0 - smoothstep(0.12, 0.29, progress));
+    float whitePulse = smoothstep(0.15, 0.23, progress) * (1.0 - smoothstep(0.28, 0.45, progress));
+    float exposure = smoothstep(0.01, 0.08, progress) * (1.0 - smoothstep(0.15, 0.32, progress));
+    float dualFlash = bluePulse * 0.95 + whitePulse * 1.24 + exposure * 0.82;
 
-    float waveRadius1 = mix(0.010, 0.78, progress);
-    float waveRadius2 = mix(0.008, 0.96, max(0.0, (progress - 0.12) / 0.88));
-    float waveWidth1 = mix(0.12, 0.024, progress);
-    float waveWidth2 = mix(0.16, 0.032, progress);
-    float shock1 = exp(-pow((r - waveRadius1) / max(0.008, waveWidth1), 2.0));
-    float shock2 = exp(-pow((r - waveRadius2) / max(0.010, waveWidth2), 2.0));
+    vec2 radialDir = normalize(p + vec2(0.0001, 0.0));
+    float ringRadius = mix(0.012, 0.74, progress);
+    float ringWidth = mix(0.038, 0.014, progress);
+    float refractBand = band(r, ringRadius - mix(0.015, 0.060, progress), ringWidth * 3.4)
+                      * smoothstep(0.06, 0.74, progress);
+    vec2 distort = radialDir * refractBand * (0.020 + whitePulse * 0.018)
+                 + vec2(sin(uv.y * u_resolution.y * 0.090 + progress * 28.0),
+                        cos(uv.x * u_resolution.x * 0.052 - progress * 21.0)) * refractBand * 0.0045;
 
-    float core = exp(-r * mix(48.0, 17.0, progress)) * (1.0 - smoothstep(0.40, 0.96, progress));
-    float halo = exp(-r * 6.0) * smoothstep(0.05, 0.28, progress) * (1.0 - smoothstep(0.64, 1.0, progress));
-    float rays = pow(max(0.0, cos(ang * 8.0 + progress * 11.0)), 18.0);
-    float rays2 = pow(max(0.0, cos(ang * 13.0 - progress * 8.5)), 28.0);
-    float streak = (rays * 0.75 + rays2 * 0.55) * smoothstep(0.03, 0.24, progress) * exp(-r * 2.7);
+    vec2 rp = p + distort;
+    float rr = length(rp);
+    float rang = atan(rp.y, rp.x);
 
+    float fringe = (0.010 + bluePulse * 0.010 + whitePulse * 0.016) * (0.40 + rr * 1.9);
+    float segmentA = smoothstep(0.12, 0.94, 0.5 + 0.5 * sin(rang * 16.0 + progress * 18.0 + rr * 34.0));
+    float segmentB = smoothstep(0.20, 0.97, 0.5 + 0.5 * cos(rang * 11.0 - progress * 15.0 - rr * 26.0));
+    float segmentMask = clamp(segmentA * 0.65 + segmentB * 0.95, 0.0, 1.0);
+
+    float ringR = band(rr, ringRadius + fringe * 1.05, ringWidth * 1.10) * (0.45 + 0.55 * segmentMask);
+    float ringG = band(rr, ringRadius, ringWidth) * (0.28 + 0.72 * segmentMask);
+    float ringB = band(rr, max(0.0, ringRadius - fringe), ringWidth * 0.90) * (0.38 + 0.62 * segmentMask);
+
+    float echoR = band(rr, ringRadius + 0.026, ringWidth * 1.7) * (1.0 - smoothstep(0.24, 0.78, progress));
+    float echoC = band(rr, max(0.0, ringRadius - 0.070), ringWidth * 2.8) * (1.0 - smoothstep(0.16, 0.58, progress));
+    float echoB = band(rr, max(0.0, ringRadius - 0.128), ringWidth * 3.5) * (1.0 - smoothstep(0.10, 0.48, progress));
+
+    vec2 dirA = normalize(vec2(1.0, 0.0));
+    vec2 dirB = normalize(vec2(0.5, 0.8660254));
+    vec2 dirC = normalize(vec2(-0.5, 0.8660254));
+    float hexScale = mix(20.0, 31.0, smoothstep(0.08, 0.80, progress));
+    float lineA = gridLine(rp, dirA, hexScale, 0.035);
+    float lineB = gridLine(rp, dirB, hexScale, 0.033);
+    float lineC = gridLine(rp, dirC, hexScale, 0.033);
+    float hexWire = max(lineA, max(lineB, lineC));
+    float hexNode = max(lineA * lineB, max(lineB * lineC, lineC * lineA));
+    float hexMask = band(rr, ringRadius + 0.020, ringWidth * 4.8)
+                  + band(rr, ringRadius - 0.090, ringWidth * 6.2) * 0.6;
+    float circuitry = clamp((hexWire * 0.60 + hexNode * 1.10) * hexMask, 0.0, 1.0);
+
+    float core = exp(-rr * mix(60.0, 24.0, progress)) * (0.72 + 0.28 * whitePulse);
+    float bloom = exp(-rr * 7.2) * (bluePulse * 0.95 + whitePulse * 1.10 + exposure * 0.55);
+    float halo = exp(-rr * 3.1) * smoothstep(0.04, 0.24, progress) * (1.0 - smoothstep(0.60, 1.0, progress));
+
+    float edgeWave = band(rr, mix(0.18, 1.04, progress), mix(0.10, 0.022, progress));
     vec2 edgeUv = abs(uv - 0.5) * 2.0;
-    float edgeMask = pow(max(edgeUv.x, edgeUv.y), 4.0);
-    float edgeSweep = edgeMask * (shock1 * 0.55 + shock2 * 0.95) * smoothstep(0.16, 0.95, progress);
+    float edgeMask = pow(max(edgeUv.x, edgeUv.y), 3.6);
+    float edgeSweep = edgeWave * edgeMask * smoothstep(0.10, 0.92, progress);
 
-    float ca = (bluePulse * 0.012 + whitePulse * 0.018) * (0.35 + r * 1.8);
-    float redShock = exp(-pow((r - (waveRadius1 + ca)) / max(0.008, waveWidth1 * 1.05), 2.0));
-    float blueShock = exp(-pow((r - max(0.0, waveRadius1 - ca)) / max(0.008, waveWidth1 * 0.95), 2.0));
-    float grain = hash21(gl_FragCoord.xy * 0.04 + progress * 17.0) * 0.07;
+    float scanlines = 0.90 + 0.10 * sin((uv.y * u_resolution.y + progress * 2900.0) * 1.14);
+    float scanMicro = 0.95 + 0.05 * sin((uv.y * u_resolution.y) * 4.2 + progress * 970.0);
+    float lensSweep = band(uv.y, 0.28 + progress * 0.50, 0.040) + band(uv.y, 0.60 + progress * 0.24, 0.055) * 0.6;
 
-    vec3 cyan = vec3(0.70, 0.95, 1.0);
+    float tearCenter1 = 0.33 + 0.09 * sin(progress * 12.0);
+    float tearCenter2 = 0.61 + 0.06 * cos(progress * 10.0 + 0.7);
+    float tearBand1 = band(uv.y, tearCenter1, 0.010 + whitePulse * 0.008);
+    float tearBand2 = band(uv.y, tearCenter2, 0.014 + bluePulse * 0.010);
+    float tearPattern1 = step(0.38, hash21(vec2(floor((uv.x + distort.x * 9.0) * 220.0), floor(progress * 90.0) + 13.0)));
+    float tearPattern2 = step(0.32, hash21(vec2(floor((uv.x - distort.x * 7.0) * 180.0) + 7.0, floor(progress * 126.0) + 27.0)));
+    float tear = tearBand1 * tearPattern1 + tearBand2 * tearPattern2;
+
+    float chromaGlint = smoothstep(0.76, 1.0, sin(rang * 24.0 + rr * 80.0 - progress * 18.0) * 0.5 + 0.5)
+                      * band(rr, ringRadius, ringWidth * 2.2);
+    float grain = hash21(gl_FragCoord.xy * 0.05 + progress * 31.0) * 0.045;
+
+    vec3 cyan = vec3(0.60, 0.95, 1.0);
+    vec3 blue = vec3(0.06, 0.48, 1.0);
     vec3 white = vec3(1.0, 1.0, 1.0);
-    vec3 warm = vec3(1.0, 0.98, 0.94);
+    vec3 ghost = vec3(0.34, 0.88, 1.0);
     vec3 color = vec3(0.0);
-    color += vec3(0.10, 0.42, 0.95) * bluePulse * 0.95;
-    color += warm * whitePulse * 1.18;
-    color += cyan * core * 1.30;
-    color.r += redShock * 0.82 + whitePulse * 0.26;
-    color.g += shock1 * 1.12 + shock2 * 0.46;
-    color.b += blueShock * 1.78 + shock2 * 0.84 + edgeSweep * 0.65;
-    color += cyan * halo * 0.78;
-    color += white * streak * 0.62;
-    color += vec3(0.38, 0.78, 1.0) * edgeSweep;
-    color += vec3(grain) * (dualFlash * 0.22 + shock1 * 0.12 + edgeSweep * 0.12);
+
+    color += mix(blue, cyan, 0.42) * exposure * (0.50 + 0.50 * exp(-rr * 2.0));
+    color += vec3(0.82, 0.96, 1.0) * lensSweep * (0.10 + exposure * 0.24);
+    color += white * whitePulse * (0.26 + 0.74 * exp(-rr * 3.2));
+    color.r += ringR * 0.92 + echoR * 0.44 + whitePulse * 0.18;
+    color.g += ringG * 1.04 + echoC * 0.38 + circuitry * 0.24;
+    color.b += ringB * 1.82 + echoC * 0.62 + echoB * 0.54 + edgeSweep * 0.90 + circuitry * 0.36;
+    color += cyan * bloom * 0.98;
+    color += ghost * (echoC * 0.62 + echoB * 0.44 + halo * 0.58);
+    color += vec3(0.44, 0.92, 1.0) * edgeSweep;
+    color += vec3(0.52, 0.94, 1.0) * circuitry * (0.50 + bluePulse * 0.55);
+    color += vec3(0.86, 1.0, 1.0) * hexNode * hexMask * 0.34;
+    color += vec3(0.78, 0.98, 1.0) * tear * (0.50 + dualFlash * 0.46);
+    color += vec3(0.94, 0.40, 0.50) * chromaGlint * 0.20;
+    color += vec3(0.18, 0.84, 1.0) * chromaGlint * 0.48;
+    color += white * core * (0.22 + whitePulse * 0.42);
+    color += vec3(grain) * (dualFlash * 0.20 + tear * 0.24 + circuitry * 0.08);
+
+    color *= scanlines * scanMicro;
+    color += vec3(0.07, 0.18, 0.36) * tear * 0.28;
     color = clamp(color, 0.0, 1.0);
     fragColor = vec4(color, 1.0);
 }
@@ -4131,16 +4193,18 @@ void main() {
             pass
 
         cv.delete('all')
-        scan_pitch = 26
-        scan_shift = int((progress * 280) % scan_pitch)
-        for y in range(-scan_pitch, sh + scan_pitch, scan_pitch):
-            yy = y + scan_shift
-            col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
-            cv.create_line(0, yy, sw, yy, fill=col, width=1)
+        if purge_t < 0.02 or not ov.get('gl'):
+            scan_pitch = 26
+            scan_shift = int((progress * 280) % scan_pitch)
+            for y in range(-scan_pitch, sh + scan_pitch, scan_pitch):
+                yy = y + scan_shift
+                col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
+                cv.create_line(0, yy, sw, yy, fill=col, width=1)
 
-        # 二阶段白蓝脉冲爆闪: fullscreen wash + center bloom
+        pulse_gl_drawn = False
         if purge_t > 0.0:
-            if not self._draw_exit_pulse_gl(cv, ov, cx, cy, purge_t):
+            pulse_gl_drawn = self._draw_exit_pulse_gl(cv, ov, cx, cy, purge_t)
+            if not pulse_gl_drawn:
                 pulse = max(0.0, 1.0 - abs(purge_t - 0.18) / 0.18)
                 if pulse > 0.01:
                     if pulse > 0.72:
@@ -4187,7 +4251,7 @@ void main() {
         cv.create_line(cx - 38, cy, cx + 38, cy, fill=white, width=1)
         cv.create_line(cx, cy - 18, cx, cy + 18, fill=white, width=1)
 
-        if purge_t > 0.0:
+        if purge_t > 0.0 and not pulse_gl_drawn:
             burst = int(lerp(18, 220, purge_e))
             flash = '#d7f7ff' if purge_t < 0.7 else gold
             cv.create_line(cx - burst, cy, cx + burst, cy, fill=flash, width=2)
