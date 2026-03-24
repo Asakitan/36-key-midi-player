@@ -1047,6 +1047,7 @@ class SAOPlayerGUI:
         self._destroyed = False  # hot-switch 守卫: 阻止 after() 回调在 root 销毁后执行
         self._exit_animating = False
         self._close_finalized = False
+        self._entry_overlay = None
         self._exit_overlay = None
         # 浮动呼吸动画
         self._breath_active = False
@@ -3034,7 +3035,6 @@ class SAOPlayerGUI:
         fy_start = sh // 2 + 80   # 略低于中心 (文字下方)
 
         def on_done():
-            # 主界面从屏幕中心弹出, 带缩放 + 渐显动画
             self._float.geometry(f'{self._fw}x{self._fh}+{fx_start}+{fy_start}')
             self._set_float_alpha(0.0)
             self._float.deiconify()
@@ -3059,51 +3059,7 @@ class SAOPlayerGUI:
             except Exception:
                 pass
             self._play_motion_blur(closing=False)
-
-            # 阶段1: 渐显 + 从小到大缩放 (0~400ms)
-            # 阶段2: 滑动到目标位置 (400~1100ms)
-            anim_start = time.time()
-
-            def entrance_tick():
-                if self._destroyed or not self._float.winfo_exists():
-                    return
-                dt = time.time() - anim_start
-                if dt < 0.4:
-                    # 渐显
-                    t = ease_out(dt / 0.4)
-                    al = t * 0.82
-                    try:
-                        self._set_float_alpha(al)
-                    except Exception:
-                        pass
-                    try:
-                        self.root.after(16, entrance_tick)
-                    except Exception:
-                        pass
-                elif dt < 0.45:
-                    # 确保完全可见, 开始滑动
-                    try:
-                        self._set_float_alpha(0.82)
-                    except Exception:
-                        pass
-                    self._animate_float_to(fx_start, fy_start,
-                                           fx_final, fy_final, ms=700)
-                    # 后续动画
-                    self._breath_base_x = fx_final
-                    self._breath_base_y = fy_final
-                    self.root.after(750, self._start_float_breath)
-                    # 启动 30fps HUD 渲染循环 (呼吸光点 / 导轨动画)
-                    self.root.after(800, self._animate_float_hud)
-                    # 鱼眼叠加层由 _on_sao_menu_open 渐显启动, 不再使用 _run_fisheye_entry
-                    if not self._username:
-                        self.root.after(1100, self._show_welcome_then_menu)
-                    else:
-                        self.root.after(1100, self._toggle_sao_menu)
-                    self.root.after(1600, self._restore_panels)
-                    return
-                else:
-                    return
-            entrance_tick()
+            self._run_entry_animation(fx_start, fy_start, fx_final, fy_final)
 
         # Canvas 渲染 (SAO-UI 隧道模型)
         ls = SAOLinkStart(self.root, on_done=on_done)
@@ -3692,7 +3648,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.7+3407\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.16+3416\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3756,12 +3712,215 @@ class SAOPlayerGUI:
         if not ov:
             return
         try:
+            gl = ov.get('gl')
+            if gl:
+                for key in ('pulse_tex', 'pulse_fbo', 'pulse_prog', 'pulse_vao', 'ctx'):
+                    try:
+                        obj = gl.get(key)
+                        if obj is not None:
+                            obj.release()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        try:
             win = ov.get('win')
             if win and win.winfo_exists():
                 win.destroy()
         except Exception:
             pass
         self._exit_overlay = None
+
+    def _cleanup_entry_overlay(self):
+        ov = getattr(self, '_entry_overlay', None)
+        if not ov:
+            return
+        try:
+            win = ov.get('win')
+            if win and win.winfo_exists():
+                win.destroy()
+        except Exception:
+            pass
+        self._entry_overlay = None
+
+    def _create_entry_overlay(self, start_x, start_y, end_x, end_y):
+        self._cleanup_entry_overlay()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        ov = tk.Toplevel(self.root)
+        ov.overrideredirect(True)
+        ov.attributes('-topmost', True)
+        ov.geometry(f'{sw}x{sh}+0+0')
+        ov.configure(bg='#060a10')
+        ov.attributes('-alpha', 0.0)
+        try:
+            _disable_native_window_shadow(ov)
+        except Exception:
+            pass
+        cv = tk.Canvas(ov, width=sw, height=sh, bg='#060a10', highlightthickness=0, bd=0)
+        cv.pack(fill=tk.BOTH, expand=True)
+        self._entry_overlay = {
+            'win': ov,
+            'cv': cv,
+            'sw': sw,
+            'sh': sh,
+            'start_x': start_x + self._fw // 2,
+            'start_y': start_y + self._fh // 2,
+            'end_x': end_x + self._fw // 2,
+            'end_y': end_y + self._fh // 2,
+        }
+        return self._entry_overlay
+
+    def _draw_entry_overlay(self, progress):
+        ov = getattr(self, '_entry_overlay', None)
+        if not ov:
+            return
+        try:
+            win = ov['win']
+            cv = ov['cv']
+            if not win.winfo_exists() or not cv.winfo_exists():
+                return
+        except Exception:
+            return
+
+        sw, sh = ov['sw'], ov['sh']
+        stage1 = min(1.0, progress / 0.34)
+        stage2 = max(0.0, min(1.0, (progress - 0.24) / 0.76))
+        bloom = ease_out(stage1)
+        deploy = ease_in_out(stage2)
+        cx = int(lerp(ov['start_x'], ov['end_x'], deploy))
+        cy = int(lerp(ov['start_y'], ov['end_y'], deploy))
+        cyan = '#86dfff'
+        gold = '#f3af12'
+        white = '#edf7ff'
+        dim_cyan = '#173746'
+        dim_gold = '#5e4211'
+
+        try:
+            win.attributes('-alpha', max(0.0, min(0.92, (1.0 - progress) ** 0.42 * 0.88)))
+        except Exception:
+            pass
+
+        cv.delete('all')
+        scan_pitch = 24
+        scan_shift = int((progress * 240) % scan_pitch)
+        for y in range(-scan_pitch, sh + scan_pitch, scan_pitch):
+            yy = y + scan_shift
+            col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
+            cv.create_line(0, yy, sw, yy, fill=col, width=1)
+
+        span = int(lerp(min(sw * 0.42, 520), min(sw * 0.22, 260), deploy))
+        aperture = int(lerp(172, 28, deploy))
+        for off, col in [(-54, cyan), (-24, dim_cyan), (24, dim_gold), (54, gold)]:
+            cv.create_line(cx - span, cy + off, cx - aperture, cy + off, fill=col, width=1)
+            cv.create_line(cx + aperture, cy + off, cx + span, cy + off, fill=col, width=1)
+
+        ring_r = int(lerp(220, 64, deploy))
+        for extra, col in [(0, cyan), (24, gold)]:
+            r = ring_r + extra
+            arm = 22 + extra // 4
+            for sx in (-1, 1):
+                for sy in (-1, 1):
+                    px = cx + sx * r
+                    py = cy + sy * r
+                    cv.create_line(px, py, px - sx * arm, py, fill=col, width=1)
+                    cv.create_line(px, py, px, py - sy * arm, fill=col, width=1)
+
+        diamond = int(lerp(28, 10, deploy))
+        cv.create_polygon(cx, cy - diamond, cx + diamond, cy,
+                          cx, cy + diamond, cx - diamond, cy,
+                          outline=white, fill='')
+        cv.create_line(cx - 46, cy, cx + 46, cy, fill=white, width=1)
+        cv.create_line(cx, cy - 22, cx, cy + 22, fill=white, width=1)
+
+        pulse_y = int(lerp(cy - 160, cy + 88, bloom))
+        cv.create_line(max(0, cx - span - 150), pulse_y,
+                       min(sw, cx + span + 150), pulse_y,
+                       fill=cyan, width=1)
+        cv.create_line(max(0, cx - span - 110), pulse_y + 3,
+                       min(sw, cx + span + 110), pulse_y + 3,
+                       fill=dim_cyan, width=1)
+
+        label_x1 = max(30, cx - span - 70)
+        label_x2 = min(sw - 30, cx + span + 70)
+        cv.create_text(label_x1, max(24, cy - 164), text='SYS:ENTITY',
+                       anchor='w', fill=cyan, font=('Consolas', 9))
+        cv.create_text(label_x2, max(24, cy - 164), text='SEQ:ENTRY',
+                       anchor='e', fill=gold, font=('Consolas', 9))
+        cv.create_text(label_x1, min(sh - 24, cy + 174), text='STATUS:DEPLOY',
+                       anchor='w', fill=dim_cyan, font=('Consolas', 9))
+        cv.create_text(label_x2, min(sh - 24, cy + 174), text=time.strftime('%H:%M:%S'),
+                       anchor='e', fill=dim_gold, font=('Consolas', 9))
+
+        text_y = cy + 92
+        cv.create_text(cx, text_y, text='LINK START', fill=white,
+                       font=get_sao_font(16, True))
+        cv.create_text(cx, text_y + 26, text='ENTITY DEPLOYMENT', fill=gold,
+                       font=('Consolas', 11, 'bold'))
+        cv.create_text(cx, text_y + 48, text='INITIALIZING VISUAL SHELL',
+                       fill='#8aaec0', font=('Consolas', 9))
+
+    def _run_entry_animation(self, fx_start, fy_start, fx_final, fy_final):
+        self._create_entry_overlay(fx_start, fy_start, fx_final, fy_final)
+        anim_start = time.time()
+        total = 1.18
+        phase1 = 0.36
+
+        def _done():
+            self._cleanup_entry_overlay()
+            self._breath_base_x = fx_final
+            self._breath_base_y = fy_final
+            self.root.after(120, self._start_float_breath)
+            self.root.after(160, self._animate_float_hud)
+            if not self._username:
+                self.root.after(420, self._show_welcome_then_menu)
+            else:
+                self.root.after(420, self._toggle_sao_menu)
+            self.root.after(900, self._restore_panels)
+
+        def _tick():
+            if self._destroyed:
+                self._cleanup_entry_overlay()
+                return
+            try:
+                if not self._float.winfo_exists():
+                    self._cleanup_entry_overlay()
+                    return
+            except Exception:
+                self._cleanup_entry_overlay()
+                return
+
+            elapsed = time.time() - anim_start
+            t = min(1.0, elapsed / total)
+            self._draw_entry_overlay(t)
+
+            if elapsed < phase1:
+                hold = ease_out(elapsed / phase1)
+                self._set_float_alpha(0.12 * hold)
+                try:
+                    self.root.after(16, _tick)
+                except Exception:
+                    self._cleanup_entry_overlay()
+                return
+
+            deploy = min(1.0, (elapsed - phase1) / max(0.001, total - phase1))
+            deploy_e = ease_out(deploy)
+            fx = int(lerp(fx_start, fx_final, deploy_e))
+            fy = int(lerp(fy_start, fy_final, deploy_e))
+            self._float.geometry(f'+{fx}+{fy}')
+            self._set_float_alpha(0.82 * ease_in_out(deploy))
+
+            if elapsed < total:
+                try:
+                    self.root.after(16, _tick)
+                except Exception:
+                    self._cleanup_entry_overlay()
+            else:
+                self._float.geometry(f'+{fx_final}+{fy_final}')
+                self._set_float_alpha(0.82)
+                _done()
+
+        _tick()
 
     def _get_exit_banner(self, mode='exit', target_label=None):
         if mode == 'switch':
@@ -3779,6 +3938,130 @@ class SAOPlayerGUI:
             'accent': '#86dfff',
             'accent_dim': '#173746',
         }
+
+    def _init_exit_pulse_gl(self, width, height):
+        try:
+            import moderngl
+        except Exception:
+            return None
+        try:
+            ctx = moderngl.create_standalone_context()
+            prog = ctx.program(
+                vertex_shader='''
+#version 330
+out vec2 uv;
+vec2 pos[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+void main() {
+    vec2 p = pos[gl_VertexID];
+    uv = p * 0.5 + 0.5;
+    gl_Position = vec4(p, 0.0, 1.0);
+}
+''',
+                fragment_shader='''
+#version 330
+in vec2 uv;
+uniform vec2 u_resolution;
+uniform vec2 u_center;
+uniform float u_progress;
+out vec4 fragColor;
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+void main() {
+    vec2 center = u_center / u_resolution;
+    vec2 p = uv - center;
+    p.x *= u_resolution.x / max(1.0, u_resolution.y);
+    float r = length(p);
+    float ang = atan(p.y, p.x);
+    float progress = clamp(u_progress, 0.0, 1.0);
+
+    float bluePulse = smoothstep(0.015, 0.11, progress) * (1.0 - smoothstep(0.16, 0.32, progress));
+    float whitePulse = smoothstep(0.18, 0.27, progress) * (1.0 - smoothstep(0.30, 0.48, progress));
+    float dualFlash = bluePulse * 0.85 + whitePulse * 1.25;
+
+    float waveRadius1 = mix(0.010, 0.78, progress);
+    float waveRadius2 = mix(0.008, 0.96, max(0.0, (progress - 0.12) / 0.88));
+    float waveWidth1 = mix(0.12, 0.024, progress);
+    float waveWidth2 = mix(0.16, 0.032, progress);
+    float shock1 = exp(-pow((r - waveRadius1) / max(0.008, waveWidth1), 2.0));
+    float shock2 = exp(-pow((r - waveRadius2) / max(0.010, waveWidth2), 2.0));
+
+    float core = exp(-r * mix(48.0, 17.0, progress)) * (1.0 - smoothstep(0.40, 0.96, progress));
+    float halo = exp(-r * 6.0) * smoothstep(0.05, 0.28, progress) * (1.0 - smoothstep(0.64, 1.0, progress));
+    float rays = pow(max(0.0, cos(ang * 8.0 + progress * 11.0)), 18.0);
+    float rays2 = pow(max(0.0, cos(ang * 13.0 - progress * 8.5)), 28.0);
+    float streak = (rays * 0.75 + rays2 * 0.55) * smoothstep(0.03, 0.24, progress) * exp(-r * 2.7);
+
+    vec2 edgeUv = abs(uv - 0.5) * 2.0;
+    float edgeMask = pow(max(edgeUv.x, edgeUv.y), 4.0);
+    float edgeSweep = edgeMask * (shock1 * 0.55 + shock2 * 0.95) * smoothstep(0.16, 0.95, progress);
+
+    float ca = (bluePulse * 0.012 + whitePulse * 0.018) * (0.35 + r * 1.8);
+    float redShock = exp(-pow((r - (waveRadius1 + ca)) / max(0.008, waveWidth1 * 1.05), 2.0));
+    float blueShock = exp(-pow((r - max(0.0, waveRadius1 - ca)) / max(0.008, waveWidth1 * 0.95), 2.0));
+    float grain = hash21(gl_FragCoord.xy * 0.04 + progress * 17.0) * 0.07;
+
+    vec3 cyan = vec3(0.70, 0.95, 1.0);
+    vec3 white = vec3(1.0, 1.0, 1.0);
+    vec3 warm = vec3(1.0, 0.98, 0.94);
+    vec3 color = vec3(0.0);
+    color += vec3(0.10, 0.42, 0.95) * bluePulse * 0.95;
+    color += warm * whitePulse * 1.18;
+    color += cyan * core * 1.30;
+    color.r += redShock * 0.82 + whitePulse * 0.26;
+    color.g += shock1 * 1.12 + shock2 * 0.46;
+    color.b += blueShock * 1.78 + shock2 * 0.84 + edgeSweep * 0.65;
+    color += cyan * halo * 0.78;
+    color += white * streak * 0.62;
+    color += vec3(0.38, 0.78, 1.0) * edgeSweep;
+    color += vec3(grain) * (dualFlash * 0.22 + shock1 * 0.12 + edgeSweep * 0.12);
+    color = clamp(color, 0.0, 1.0);
+    fragColor = vec4(color, 1.0);
+}
+''')
+            vao = ctx.vertex_array(prog, [])
+            tex = ctx.texture((width, height), 3)
+            fbo = ctx.framebuffer(color_attachments=[tex])
+            prog['u_resolution'].value = (float(width), float(height))
+            return {
+                'ctx': ctx,
+                'pulse_prog': prog,
+                'pulse_vao': vao,
+                'pulse_tex': tex,
+                'pulse_fbo': fbo,
+            }
+        except Exception:
+            try:
+                ctx.release()
+            except Exception:
+                pass
+            return None
+
+    def _draw_exit_pulse_gl(self, cv, ov, cx, cy, purge_t):
+        gl = ov.get('gl')
+        if not gl:
+            return False
+        try:
+            prog = gl['pulse_prog']
+            fbo = gl['pulse_fbo']
+            vao = gl['pulse_vao']
+            fbo.use()
+            gl['ctx'].clear(0.0, 0.0, 0.0, 1.0)
+            prog['u_center'].value = (float(cx), float(cy))
+            prog['u_progress'].value = float(max(0.0, min(1.0, purge_t)))
+            vao.render()
+            raw = fbo.read(components=3)
+            arr = np.frombuffer(raw, dtype=np.uint8).reshape(ov['sh'], ov['sw'], 3)
+            photo = ImageTk.PhotoImage(Image.fromarray(arr[::-1], 'RGB'))
+            ov['gl_photo'] = photo
+            cv.create_image(0, 0, image=photo, anchor='nw')
+            return True
+        except Exception:
+            return False
 
     def _create_exit_overlay(self, mode='exit', target_label=None):
         self._cleanup_exit_overlay()
@@ -3810,6 +4093,8 @@ class SAOPlayerGUI:
             'fy': fy,
             'banner': self._get_exit_banner(mode, target_label),
             'mode': mode,
+            'gl': self._init_exit_pulse_gl(sw, sh),
+            'gl_photo': None,
         }
         return self._exit_overlay
 
@@ -3827,19 +4112,21 @@ class SAOPlayerGUI:
 
         sw, sh = ov['sw'], ov['sh']
         cx, cy = ov['fx'], ov['fy']
+        lock_t = min(1.0, progress / 0.34)
+        purge_t = max(0.0, min(1.0, (progress - 0.34) / 0.66))
+        lock_e = ease_out(lock_t)
+        purge_e = ease_in_out(purge_t)
         cyan = '#86dfff'
         gold = ov['banner']['accent']
         dim_cyan = '#173746'
         dim_gold = ov['banner']['accent_dim']
         white = '#edf7ff'
 
-        wash = ease_in_out(min(1.0, progress / 0.42))
-        focus = ease_out(min(1.0, progress / 0.74))
-        ring = ease_out(min(1.0, progress / 0.58))
-        sweep = (progress * 1.35) % 1.0
+        wash = 0.22 + 0.78 * lock_e
+        sweep = ((lock_t * 0.45) + purge_t * 1.2) % 1.0
 
         try:
-            win.attributes('-alpha', min(0.94, 0.10 + 0.78 * wash))
+            win.attributes('-alpha', min(0.95, 0.10 + 0.56 * lock_e + 0.24 * purge_e))
         except Exception:
             pass
 
@@ -3851,15 +4138,40 @@ class SAOPlayerGUI:
             col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
             cv.create_line(0, yy, sw, yy, fill=col, width=1)
 
-        span = int(lerp(40, min(sw * 0.34, 420), focus))
-        aperture = int(lerp(16, 108, ring))
+        # 二阶段白蓝脉冲爆闪: fullscreen wash + center bloom
+        if purge_t > 0.0:
+            if not self._draw_exit_pulse_gl(cv, ov, cx, cy, purge_t):
+                pulse = max(0.0, 1.0 - abs(purge_t - 0.18) / 0.18)
+                if pulse > 0.01:
+                    if pulse > 0.72:
+                        flash_fill = '#eefbff'
+                        flash_stipple = 'gray25'
+                    elif pulse > 0.38:
+                        flash_fill = '#c8efff'
+                        flash_stipple = 'gray25'
+                    else:
+                        flash_fill = '#8edfff'
+                        flash_stipple = 'gray50'
+                    cv.create_rectangle(0, 0, sw, sh, fill=flash_fill, outline='', stipple=flash_stipple)
+                    bloom_r = int(lerp(40, min(sw, sh) * 0.32, pulse))
+                    core_r = max(10, int(bloom_r * 0.26))
+                    cv.create_oval(cx - bloom_r, cy - bloom_r,
+                                   cx + bloom_r, cy + bloom_r,
+                                   outline='#dff8ff', width=max(1, int(2 + pulse * 3)),
+                                   stipple='gray25')
+                    cv.create_oval(cx - core_r, cy - core_r,
+                                   cx + core_r, cy + core_r,
+                                   fill='#f8feff', outline='', stipple='gray25')
+
+        span = int(lerp(min(sw * 0.30, 360), min(sw * 0.38, 460), lock_e))
+        aperture = int(lerp(146, 22, purge_e))
         for off, col in [(-60, cyan), (-28, dim_cyan), (28, dim_gold), (60, gold)]:
             cv.create_line(cx - span, cy + off, cx - aperture, cy + off, fill=col, width=1)
             cv.create_line(cx + aperture, cy + off, cx + span, cy + off, fill=col, width=1)
 
-        base_r = int(lerp(22, 176, ring))
+        base_r = int(lerp(34, 194, lock_e * (1.0 - purge_e * 0.20)))
         for extra, col in [(0, cyan), (20, gold)]:
-            r = base_r + extra
+            r = max(22, int((base_r + extra) * (1.0 - 0.58 * purge_e)))
             arm = 18 + extra // 3
             for sx in (-1, 1):
                 for sy in (-1, 1):
@@ -3868,12 +4180,18 @@ class SAOPlayerGUI:
                     cv.create_line(px, py, px - sx * arm, py, fill=col, width=1)
                     cv.create_line(px, py, px, py - sy * arm, fill=col, width=1)
 
-        diamond = int(lerp(8, 20, focus))
+        diamond = int(lerp(24, 9, purge_e))
         cv.create_polygon(cx, cy - diamond, cx + diamond, cy,
                           cx, cy + diamond, cx - diamond, cy,
                           outline=white, fill='')
         cv.create_line(cx - 38, cy, cx + 38, cy, fill=white, width=1)
         cv.create_line(cx, cy - 18, cx, cy + 18, fill=white, width=1)
+
+        if purge_t > 0.0:
+            burst = int(lerp(18, 220, purge_e))
+            flash = '#d7f7ff' if purge_t < 0.7 else gold
+            cv.create_line(cx - burst, cy, cx + burst, cy, fill=flash, width=2)
+            cv.create_line(cx, cy - int(burst * 0.42), cx, cy + int(burst * 0.42), fill=flash, width=1)
 
         scan_y = int(lerp(cy - 140, cy + 120, sweep))
         cv.create_line(max(0, cx - span - 140), scan_y,
@@ -3886,7 +4204,7 @@ class SAOPlayerGUI:
         banner_x1 = max(30, cx - span - 60)
         banner_x2 = min(sw - 30, cx + span + 60)
         seq_label = 'SEQ:SHIFT' if ov.get('mode') == 'switch' else 'SEQ:EXIT'
-        status_label = 'STATUS:TRANSFER' if ov.get('mode') == 'switch' else 'STATUS:SAFE'
+        status_label = 'STATUS:LOCK' if purge_t < 0.08 else ('STATUS:TRANSFER' if ov.get('mode') == 'switch' else 'STATUS:PURGE')
         cv.create_text(banner_x1, max(24, cy - 150), text='SYS:ENTITY',
                        anchor='w', fill=cyan, font=('Consolas', 9))
         cv.create_text(banner_x2, max(24, cy - 150), text=seq_label,
@@ -3897,11 +4215,13 @@ class SAOPlayerGUI:
                        anchor='e', fill=dim_gold, font=('Consolas', 9))
 
         text_y = cy + 86
-        cv.create_text(cx, text_y, text=ov['banner']['primary'],
+        primary = 'ENTITY LOCK' if purge_t < 0.12 else ov['banner']['primary']
+        tertiary = 'FREEZING UI STATE' if purge_t < 0.12 else ov['banner']['tertiary']
+        cv.create_text(cx, text_y, text=primary,
                        fill=white, font=get_sao_font(16, True))
         cv.create_text(cx, text_y + 26, text=ov['banner']['secondary'],
                        fill=gold, font=('Consolas', 11, 'bold'))
-        cv.create_text(cx, text_y + 48, text=ov['banner']['tertiary'],
+        cv.create_text(cx, text_y + 48, text=tertiary,
                        fill='#8aaec0', font=('Consolas', 9))
 
     def _collect_exit_windows(self):
@@ -3921,18 +4241,18 @@ class SAOPlayerGUI:
             dist = max(1.0, math.hypot(dx, dy))
             ux, uy = dx / dist, dy / dist
             if role == 'float':
-                return {'delay': 0.18, 'duration': 0.34, 'travel': 72,
+                return {'delay': 0.28, 'duration': 0.52, 'travel': 86,
                         'ux': 1.0, 'uy': -0.25, 'movable': True}
             if role == 'panel':
-                return {'delay': 0.06 + order * 0.045, 'duration': 0.28,
-                        'travel': 42 + order * 10, 'ux': ux, 'uy': uy + 0.24, 'movable': True}
+                return {'delay': 0.12 + order * 0.085, 'duration': 0.40,
+                        'travel': 48 + order * 12, 'ux': ux, 'uy': uy + 0.24, 'movable': True}
             if role == 'menu':
-                return {'delay': 0.00, 'duration': 0.20, 'travel': 0,
+                return {'delay': 0.00, 'duration': 0.32, 'travel': 0,
                         'ux': 0.0, 'uy': 0.0, 'movable': False}
             if role == 'fisheye':
-                return {'delay': 0.00, 'duration': 0.16, 'travel': 0,
+                return {'delay': 0.00, 'duration': 0.24, 'travel': 0,
                         'ux': 0.0, 'uy': 0.0, 'movable': False}
-            return {'delay': 0.0, 'duration': 0.24, 'travel': 18,
+            return {'delay': 0.06, 'duration': 0.32, 'travel': 22,
                     'ux': ux, 'uy': uy, 'movable': True}
 
         def _add(win, role, order=0, ulw=False):
@@ -3996,6 +4316,7 @@ class SAOPlayerGUI:
         self._destroyed = True
         self._breath_active = False
         self._lift_loop_active = False
+        self._cleanup_entry_overlay()
         self._cleanup_exit_overlay()
         if hasattr(self, '_hotkey_mgr'):
             self._hotkey_mgr.cleanup()
@@ -4059,7 +4380,9 @@ class SAOPlayerGUI:
             return
 
         t0 = time.time()
-        duration = 0.78
+        stage1 = 0.42
+        stage2 = 0.96
+        duration = stage1 + stage2
 
         def _finish():
             self._finalize_close()
@@ -4080,25 +4403,39 @@ class SAOPlayerGUI:
                     win = item['win']
                     if not win.winfo_exists():
                         continue
-                    local = min(1.0, max(0.0, (elapsed - item['delay']) / max(0.001, item['duration'])))
-                    fade = ease_in_out(local)
-                    new_alpha = max(0.0, item['alpha'] * (1.0 - fade))
-                    if item.get('movable'):
-                        dx = int(item['ux'] * item['travel'] * fade)
-                        dy = int(item['uy'] * item['travel'] * fade)
-                        if item.get('role') == 'float':
-                            dy -= int(18 * fade)
-                        try:
-                            win.geometry(f'+{item["x"] + dx}+{item["y"] + dy}')
-                        except Exception:
-                            pass
+                    if elapsed < stage1:
+                        hold = ease_out(min(1.0, elapsed / stage1))
+                        new_alpha = item['alpha'] * (1.0 - 0.16 * hold)
+                        if item.get('movable'):
+                            dx = int(item['ux'] * item['travel'] * 0.10 * hold)
+                            dy = int(item['uy'] * item['travel'] * 0.10 * hold)
+                            if item.get('role') == 'float':
+                                dy -= int(8 * hold)
+                            try:
+                                win.geometry(f'+{item["x"] + dx}+{item["y"] + dy}')
+                            except Exception:
+                                pass
+                    else:
+                        local = min(1.0, max(0.0, (elapsed - stage1 - item['delay']) / max(0.001, item['duration'])))
+                        fade = ease_in_out(local)
+                        base_alpha = item['alpha'] * 0.84
+                        new_alpha = max(0.0, base_alpha * (1.0 - fade))
+                        if item.get('movable'):
+                            dx = int(item['ux'] * item['travel'] * (0.10 + 0.90 * fade))
+                            dy = int(item['uy'] * item['travel'] * (0.10 + 0.90 * fade))
+                            if item.get('role') == 'float':
+                                dy -= int(18 + 18 * fade)
+                            try:
+                                win.geometry(f'+{item["x"] + dx}+{item["y"] + dy}')
+                            except Exception:
+                                pass
                     if item.get('ulw'):
                         self._set_float_alpha(new_alpha)
                     else:
                         win.attributes('-alpha', new_alpha)
                 except Exception:
                     pass
-            if t < 1.0:
+            if elapsed < duration:
                 try:
                     self.root.after(16, _step)
                 except Exception:
