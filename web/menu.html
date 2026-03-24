@@ -62,6 +62,9 @@ html, body {
     animation: breath 8s linear infinite;
     animation-delay: .2s;
     transition: filter 0.42s ease, opacity 0.32s ease;
+    transform-origin: 78% 42%;
+    isolation: isolate;
+    will-change: transform, filter, opacity;
 }
 .info.entering .position {
     filter: blur(18px);
@@ -71,12 +74,126 @@ html, body {
     filter: blur(14px);
     opacity: 0;
 }
+.position::before,
+.position::after {
+    content: '';
+    position: absolute;
+    pointer-events: none;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.35s ease, filter 0.35s ease, transform 0.35s ease;
+}
+.position::before {
+    inset: -120px -180px -120px -260px;
+    background:
+        radial-gradient(circle at 76% 38%, rgba(243,175,18,0.32), rgba(243,175,18,0.10) 22%, rgba(77,232,244,0.08) 48%, rgba(255,255,255,0.0) 72%),
+        radial-gradient(circle at 22% 58%, rgba(255,255,255,0.18), rgba(255,255,255,0.0) 55%);
+    filter: blur(24px);
+    transform: scale(0.84);
+    z-index: -2;
+}
+.position::after {
+    inset: -36px -72px -30px -110px;
+    background: linear-gradient(90deg,
+        rgba(255,255,255,0.0) 0%,
+        rgba(255,255,255,0.16) 18%,
+        rgba(243,175,18,0.24) 35%,
+        rgba(77,232,244,0.14) 62%,
+        rgba(255,255,255,0.0) 100%);
+    filter: blur(15px);
+    transform: scaleX(0.62);
+    z-index: -1;
+}
+.info.visible .position::before,
+.info.visible .position::after {
+    opacity: 1;
+}
+.position.menu-focus-in {
+    animation: sao-focus-in 0.58s cubic-bezier(0.16, 1, 0.3, 1) both,
+               breath 8s linear 0.58s infinite;
+}
+.position.menu-focus-out {
+    animation: sao-focus-out 0.34s cubic-bezier(0.4, 0, 1, 1) both;
+}
+.position.menu-focus-in::before {
+    animation: sao-bloom-in 0.62s cubic-bezier(0.16, 1, 0.3, 1) both,
+               sao-bloom-idle 5.8s ease-in-out 0.62s infinite;
+}
+.position.menu-focus-in::after {
+    animation: sao-streak-in 0.48s cubic-bezier(0.16, 1, 0.3, 1) both,
+               sao-streak-idle 4.2s ease-in-out 0.56s infinite;
+}
+.position.menu-focus-out::before {
+    animation: sao-bloom-out 0.28s ease-in forwards;
+}
+.position.menu-focus-out::after {
+    animation: sao-streak-out 0.22s ease-in forwards;
+}
 @keyframes breath {
     0%   { transform: translate(0); }
     25%  { transform: translate(0, 8px); }
     50%  { transform: translate(-8px, 0); }
     75%  { transform: translate(-8px, 8px); }
     100% { transform: translate(0); }
+}
+@keyframes sao-focus-in {
+    0% {
+        opacity: 0;
+        filter: blur(26px);
+        transform: translate(34px, -6px) scale(0.82) skewX(-7deg);
+    }
+    42% {
+        opacity: 1;
+        filter: blur(7px);
+        transform: translate(-8px, 2px) scale(1.05) skewX(-1.5deg);
+    }
+    72% {
+        filter: blur(1.2px);
+        transform: translate(3px, -1px) scale(0.992);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0px);
+        transform: translate(0px, 0px) scale(1);
+    }
+}
+@keyframes sao-focus-out {
+    0% {
+        opacity: 1;
+        filter: blur(0px);
+        transform: translate(0,0) scale(1);
+    }
+    100% {
+        opacity: 0;
+        filter: blur(18px);
+        transform: translate(24px, -2px) scale(0.88) skewX(-6deg);
+    }
+}
+@keyframes sao-bloom-in {
+    0% { opacity: 0; filter: blur(40px); transform: scale(0.72); }
+    55% { opacity: 1; filter: blur(18px); transform: scale(1.06); }
+    100% { opacity: 0.92; filter: blur(24px); transform: scale(1); }
+}
+@keyframes sao-bloom-out {
+    from { opacity: 0.92; filter: blur(24px); transform: scale(1); }
+    to { opacity: 0; filter: blur(40px); transform: scale(0.78); }
+}
+@keyframes sao-bloom-idle {
+    0%,100% { opacity: 0.78; filter: blur(24px); transform: scale(1); }
+    50% { opacity: 0.98; filter: blur(28px); transform: scale(1.03); }
+}
+@keyframes sao-streak-in {
+    0% { opacity: 0; filter: blur(22px); transform: translateX(-50px) scaleX(0.34); }
+    60% { opacity: 0.9; filter: blur(10px); transform: translateX(8px) scaleX(1.06); }
+    100% { opacity: 0.52; filter: blur(15px); transform: translateX(0) scaleX(1); }
+}
+@keyframes sao-streak-out {
+    from { opacity: 0.52; filter: blur(15px); transform: translateX(0) scaleX(1); }
+    to { opacity: 0; filter: blur(24px); transform: translateX(36px) scaleX(0.42); }
+}
+@keyframes sao-streak-idle {
+    0%,100% { opacity: 0.42; transform: translateX(0) scaleX(1); }
+    50% { opacity: 0.58; transform: translateX(4px) scaleX(1.03); }
 }
 
 /* ═══════════════════════════════════════
@@ -1029,15 +1146,28 @@ function _initFisheyeGL() {
         'varying vec2 uv;uniform sampler2D tex;uniform float str;uniform float t;' +
         'void main(){' +
         '  vec2 c=uv-0.5;float r2=dot(c,c);' +
-        '  float s=str*(1.0+0.25*sin(t*0.8));' +           /* stronger breathing */
-        '  vec2 d=uv+c*s*r2;' +
-        '  float ox=0.008*sin(t*0.5);float oy=0.006*cos(t*0.45);' +  /* stronger drift */
-        '  vec4 col=texture2D(tex,d+vec2(ox,oy));' +
-        '  float vig=0.88-r2*0.35+0.08*sin(t*0.35);' +    /* dynamic vignette */
-        '  col.rgb*=vig;' +
-        '  col.r*=1.0+0.04*sin(t*0.7);' +                  /* subtle red pulse */
-        '  col.b*=1.0+0.03*cos(t*0.6);' +                  /* subtle blue pulse */
-        '  gl_FragColor=col;' +
+        '  float s=str*(1.0+0.28*sin(t*0.82));' +
+        '  vec2 drift=vec2(0.008*sin(t*0.5),0.006*cos(t*0.45));' +
+        '  vec2 d=uv+c*s*r2+drift;' +
+        '  vec2 dir=normalize(c+vec2(0.0001))* (0.012 + r2*0.038);' +
+        '  vec3 b0=texture2D(tex, d-dir*2.4).rgb;' +
+        '  vec3 b1=texture2D(tex, d-dir*1.2).rgb;' +
+        '  vec3 b2=texture2D(tex, d).rgb;' +
+        '  vec3 b3=texture2D(tex, d+dir*1.2).rgb;' +
+        '  vec3 b4=texture2D(tex, d+dir*2.4).rgb;' +
+        '  vec3 blur=(b0*0.10+b1*0.18+b2*0.34+b3*0.24+b4*0.14);' +
+        '  float ca=0.0035 + r2*0.008;' +
+        '  float rr=texture2D(tex, d + dir*ca).r;' +
+        '  float gg=texture2D(tex, d).g;' +
+        '  float bb=texture2D(tex, d - dir*ca).b;' +
+        '  vec3 col=mix(blur, vec3(rr,gg,bb), 0.58);' +
+        '  float line=0.985 + 0.015*sin((uv.y+t*0.08)*900.0);' +
+        '  float vig=0.90-r2*0.42+0.07*sin(t*0.35);' +
+        '  col*=vig*line;' +
+        '  col.r*=1.0+0.06*sin(t*0.7);' +
+        '  col.b*=1.0+0.05*cos(t*0.63);' +
+        '  col += vec3(0.025,0.018,0.012)*(1.0-r2)*abs(sin(t*0.8));' +
+        '  gl_FragColor=vec4(col,1.0);' +
         '}');
     gl.compileShader(fs);
     _feProg = gl.createProgram();
@@ -1133,6 +1263,10 @@ function openMenu(x, y) {
     var pos = document.getElementById('menu-position');
     pos.style.left = Math.max(300, Math.min(x || 500, window.innerWidth - 150)) + 'px';
     pos.style.top  = Math.max(100, Math.min(y || 300, window.innerHeight - 400)) + 'px';
+    pos.classList.remove('menu-focus-out');
+    pos.classList.remove('menu-focus-in');
+    void pos.offsetWidth;
+    pos.classList.add('menu-focus-in');
 
     overlay.classList.remove('closing');
     overlay.classList.add('entering');
@@ -1155,6 +1289,11 @@ function closeMenu() {
     menuOpen = false;
     playSound('snd-dismiss');
     stopFisheyeBg();
+    var pos = document.getElementById('menu-position');
+    pos.classList.remove('menu-focus-in');
+    pos.classList.remove('menu-focus-out');
+    void pos.offsetWidth;
+    pos.classList.add('menu-focus-out');
 
     /* TV 关电视动画 */
     var tvoff = document.getElementById('tv-off-overlay');

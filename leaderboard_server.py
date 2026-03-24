@@ -45,7 +45,9 @@ except ImportError:
 # ═══════════════════════════════════════════════
 
 PORT = 9820
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lb_data')
+_BASE_DIR = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+             else os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(_BASE_DIR, 'lb_data')
 DATA_FILE = os.path.join(DATA_DIR, 'players.json')
 LOG_FILE = os.path.join(DATA_DIR, 'server.log')
 
