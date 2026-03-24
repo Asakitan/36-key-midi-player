@@ -3930,19 +3930,11 @@ void main() {
         white = '#edf7ff'
         dim_cyan = '#173746'
         dim_gold = '#5e4211'
-        # TV-on: 0→1 during 0–0.62, settled: 1.0 during 0.62–0.80, TV-close: 1→0 during 0.80–1.0
-        if progress <= 0.62:
-            boot_t = progress / 0.62
-        elif progress <= 0.80:
-            boot_t = 1.0
-        else:
-            boot_t = max(0.0, 1.0 - (progress - 0.80) / 0.20)
-        tv_close_f = max(0.0, (progress - 0.80) / 0.20)  # 0→1 during close phase
+        # TV-on: slit → full screen during first 62% of animation, then holds
+        boot_t = min(1.0, progress / 0.62)
 
         try:
-            base_alpha = max(0.0, min(0.95, (1.0 - progress) ** 0.28 * 0.92))
-            # fade window to near-zero as TV screen collapses
-            win.attributes('-alpha', max(0.0, base_alpha * (1.0 - tv_close_f * 0.95)))
+            win.attributes('-alpha', max(0.0, min(0.95, (1.0 - progress) ** 0.28 * 0.92)))
         except Exception:
             pass
 
@@ -3955,10 +3947,6 @@ void main() {
                 yy = y + scan_shift
                 col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
                 cv.create_line(0, yy, sw, yy, fill=col, width=1)
-
-        # suppress all Canvas HUD elements once TV-close is under way
-        if tv_close_f > 0.08:
-            return
 
         span = int(lerp(min(sw * 0.42, 520), min(sw * 0.22, 260), deploy))
         aperture = int(lerp(172, 28, deploy))
@@ -4366,9 +4354,14 @@ void main() {
         tv_fade = ease_in_out(tv_fade)
 
         try:
-            # fade window all the way to transparent as TV-close completes
+            # Window must stay opaque while GL's tvMask draws the TV-close effect;
+            # only snap to transparent after the mask has fully collapsed
             peak_alpha = min(0.97, 0.12 + 0.58 * lock_e + 0.20 * purge_e)
-            win.attributes('-alpha', max(0.0, peak_alpha * (1.0 - tv_fade * 0.97)))
+            if tv_fade < 0.92:
+                win.attributes('-alpha', peak_alpha)
+            else:
+                snap = min(1.0, (tv_fade - 0.92) / 0.08)
+                win.attributes('-alpha', max(0.0, peak_alpha * (1.0 - snap)))
         except Exception:
             pass
 
