@@ -2600,6 +2600,7 @@ class SAOPlayerGUI:
             self._float.attributes('-alpha', 0.0)
             self._float.deiconify()
             self._float.lift()
+            self._play_motion_blur(closing=False)
 
             # 阶段1: 渐显 + 从小到大缩放 (0~400ms)
             # 阶段2: 滑动到目标位置 (400~1100ms)
@@ -3294,7 +3295,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.1+3401\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.2+3402\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

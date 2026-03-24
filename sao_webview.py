@@ -63,7 +63,8 @@ def _setup_dotnet_transparency(form):
     """
     try:
         import clr  # pythonnet — pywebview EdgeChromium 已加载
-        from System.Drawing import Color
+        clr.AddReference('System.Drawing')
+        Color = __import__('System.Drawing', fromlist=['Color']).Color
 
         key = Color.FromArgb(255, 1, 0, 1)
         form.BackColor = key
@@ -365,6 +366,7 @@ class SAOWebViewGUI:
         self._ctx_menu_active = False
         self._fisheye_active = False
         self._fisheye_gen = 0  # 鱼眼循环代数 (防止多线程重复)
+        self._fisheye_prev_frame = None
         self._panel_wins = {}  # panel_type -> webview window
         self._panel_float_active = True   # 面板浮动动画开关
         self._panel_origins = {}          # panel_type -> (base_x, base_y)
@@ -633,6 +635,8 @@ class SAOWebViewGUI:
             # 任务栏图标
             self._set_window_icon('♪ SAO HP')
             self._set_window_icon('SAO Menu')
+            # 重新触发 HP 入场动态模糊 (避免页面预加载时动画已经跑完)
+            self._eval_hp('if (window.HP && HP.retriggerEntryBlur) HP.retriggerEntryBlur()')
             # HP 窗口入场动画: 从中央滑到记忆位置
             self._animate_hp_entry()
         threading.Timer(0.5, _init).start()
@@ -754,6 +758,7 @@ class SAOWebViewGUI:
 
     def _open_menu(self):
         self._menu_visible = True
+        self._fisheye_prev_frame = None
         self._sync_menu_info()
         self._play_sound('menu_open')
 
@@ -808,6 +813,7 @@ class SAOWebViewGUI:
     def _close_menu(self):
         self._menu_visible = False
         self._fisheye_active = False  # 停止鱼眼刷新
+        self._fisheye_prev_frame = None
         self._play_sound('menu_close')
         self._eval_menu('SAO.closeMenu()')
 
@@ -855,7 +861,7 @@ class SAOWebViewGUI:
         distortion 由浏览器端 WebGL shader 实时 60fps 渲染)."""
         try:
             import base64 as b64mod, io
-            from PIL import Image
+            from PIL import Image, ImageFilter
 
             hx, hy = 0, 0
             try:
@@ -896,6 +902,18 @@ class SAOWebViewGUI:
             scale = min(960 / w, 540 / h, 1.0)
             if scale < 1.0:
                 img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+            # 动态模糊: 轻微高斯 + 前一帧时间混合, 让鱼眼背景更有流动感
+            try:
+                prev = self._fisheye_prev_frame
+                if prev is not None:
+                    if prev.size != img.size:
+                        prev = prev.resize(img.size, Image.BILINEAR)
+                    img = Image.blend(img, prev, 0.24)
+                img = img.filter(ImageFilter.GaussianBlur(radius=0.7))
+                self._fisheye_prev_frame = img.copy()
+            except Exception:
+                self._fisheye_prev_frame = None
 
             buf = io.BytesIO()
             img.save(buf, format='JPEG', quality=quality)
@@ -1044,7 +1062,7 @@ class SAOWebViewGUI:
                 except Exception:
                     pass
                 try:
-                    win.evaluate_js('document.documentElement.style.opacity="0"')
+                    win.evaluate_js('if (window.Panel && Panel.preClose) { Panel.preClose(); } else { document.documentElement.style.opacity="0"; }')
                 except Exception:
                     pass
                 time.sleep(0.15)
@@ -1164,7 +1182,7 @@ class SAOWebViewGUI:
     def _destroy_all_panels(self):
         for win in list(self._panel_wins.values()):
             try:
-                win.evaluate_js('document.documentElement.style.opacity="0"')
+                win.evaluate_js('if (window.Panel && Panel.preClose) { Panel.preClose(); } else { document.documentElement.style.opacity="0"; }')
             except Exception:
                 pass
         time.sleep(0.15)

@@ -2528,14 +2528,17 @@ class SAOFilePicker(tk.Toplevel):
         super().__init__(parent)
         self.result = None
         self.callback = callback
+        self._dialog_title = title
         self._current_dir = os.path.abspath(initial_dir)
         self._filetypes = filetypes or [('All Files', '*.*')]
         self._entries = []
         self._mode = mode  # 'file' or 'dir'
 
+        self.withdraw()
         self.overrideredirect(True)
         self.attributes('-topmost', True)
-        self.configure(bg=self._BG)
+        self.attributes('-alpha', 0.0)
+        self.configure(bg='#e0e0e0')
 
         self._final_w, self._final_h = 520, 480
         self._initial_w = 135
@@ -2557,9 +2560,11 @@ class SAOFilePicker(tk.Toplevel):
 
         self._build_ui(self._final_w, self._final_h, title)
         self._load_dir(self._current_dir)
+        self.update_idletasks()
 
         self._drag = {'x': 0, 'y': 0}
         self.transient(parent)
+        self.deiconify()
         # 展开动画 → 完成后 grab
         self.after(50, self._animate_expand)
 
@@ -2593,76 +2598,83 @@ class SAOFilePicker(tk.Toplevel):
             w = int(iw + (fw - iw) * et)
             x = px + (fw - w) // 2
             self.geometry(f'{w}x{fh}+{x}+{py}')
+            try:
+                self.attributes('-alpha', min(1.0, 0.15 + t * 0.85))
+            except Exception:
+                pass
             if t < 1.0:
                 self.after(16, _step)
             else:
+                try:
+                    self.attributes('-alpha', 1.0)
+                except Exception:
+                    pass
+                if hasattr(self, '_title_lbl'):
+                    _clip_reveal(self._title_lbl, self._dialog_title, self, 380, delay=40)
                 # 展开完成, grab 焦点
                 self.after(50, self._delayed_grab)
         _step()
 
     def _build_ui(self, w, h, title):
-        # ── 外边框 1px ──
-        outer = tk.Frame(self, bg=self._BORDER, padx=1, pady=1)
-        outer.pack(fill=tk.BOTH, expand=True)
-        inner = tk.Frame(outer, bg=self._BG)
-        inner.pack(fill=tk.BOTH, expand=True)
+        # ── SAODialog 式三段壳 ──
+        main_box = tk.Frame(self, bg='#ffffff')
+        main_box.pack(fill=tk.BOTH, expand=True)
 
-        # ── 左侧青色竖条 ──
-        accent_bar = tk.Frame(inner, bg=self._ACCENT, width=2)
-        accent_bar.pack(side=tk.LEFT, fill=tk.Y)
-
-        main = tk.Frame(inner, bg=self._BG)
-        main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # ── 标题栏 (44px) ──
-        header = tk.Frame(main, bg=self._BG2, height=44)
+        # 标题区 (68px)
+        header = tk.Frame(main_box, bg='#ffffff', height=68)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
 
         # 菱形图标
         hcv = tk.Canvas(header, width=24, height=24,
-                        bg=self._BG2, highlightthickness=0)
-        hcv.pack(side=tk.LEFT, padx=(10, 0), pady=10)
+                        bg='#ffffff', highlightthickness=0)
+        hcv.pack(side=tk.LEFT, padx=(16, 0), pady=22)
         hcv.create_polygon(12, 2, 22, 12, 12, 22, 2, 12,
                            fill=self._ACCENT, outline='')
 
-        title_lbl = tk.Label(header, text=title, bg=self._BG2,
-                             fg='#646364',
-                             font=_sao_font(11, True))
-        title_lbl.pack(side=tk.LEFT, padx=8)
+        self._title_lbl = tk.Label(header, text='', bg='#ffffff',
+                                   fg=SAOColors.ALERT_TITLE_FG,
+                                   font=_sao_font(13, True))
+        self._title_lbl.place(relx=0.5, rely=0.5, anchor='center')
 
         # 关闭 ×
-        close_cv = tk.Canvas(header, width=28, height=28,
-                             bg=self._BG2, highlightthickness=0, cursor='hand2')
-        close_cv.pack(side=tk.RIGHT, padx=8, pady=8)
-        close_cv.create_oval(2, 2, 26, 26,
-                             outline=SAOColors.CLOSE_RED, width=2, fill='')
-        close_cv.create_line(9, 9, 19, 19, fill=SAOColors.CLOSE_RED, width=2)
-        close_cv.create_line(9, 19, 19, 9,  fill=SAOColors.CLOSE_RED, width=2)
+        close_cv = tk.Canvas(header, width=40, height=40,
+                             bg='#ffffff', highlightthickness=0, cursor='hand2')
+        close_cv.pack(side=tk.RIGHT, padx=16, pady=14)
+        close_cv.create_oval(2, 2, 38, 38,
+                             outline=SAOColors.CLOSE_RED, width=3, fill='')
+        close_cv.create_oval(9, 9, 31, 31,
+                             fill=SAOColors.CLOSE_RED, outline='')
+        close_cv.create_line(14, 14, 26, 26, fill='#ffffff', width=3)
+        close_cv.create_line(14, 26, 26, 14, fill='#ffffff', width=3)
         close_cv.bind('<Button-1>', lambda e: self._cancel())
 
-        for w_item in [header, title_lbl]:
+        tk.Frame(main_box, bg='#e0e0e0', height=1).pack(fill=tk.X)
+
+        # 内容区 (浅灰)
+        content = tk.Frame(main_box, bg='#eae9e9')
+        content.pack(fill=tk.BOTH, expand=True)
+
+        for w_item in [header, self._title_lbl]:
             w_item.bind('<Button-1>', self._start_drag)
             w_item.bind('<B1-Motion>', self._do_drag)
 
-        # 顶部发光线
-        tk.Frame(main, bg=self._ACCENT, height=1).pack(fill=tk.X)
-
         # ── 路径行 ──
-        path_row = tk.Frame(main, bg=self._BG, height=26)
-        path_row.pack(fill=tk.X)
+        path_row = tk.Frame(content, bg='#eae9e9', height=30)
+        path_row.pack(fill=tk.X, padx=10, pady=(10, 0))
         path_row.pack_propagate(False)
 
-        tk.Label(path_row, text='▸', bg=self._BG, fg=self._ACCENT2,
-                 font=_sao_font(8)).pack(side=tk.LEFT, padx=(8, 2), pady=4)
+        tk.Label(path_row, text='▸', bg='#eae9e9', fg=self._ACCENT2,
+                 font=_sao_font(8)).pack(side=tk.LEFT, padx=(6, 4), pady=6)
         self._path_lbl = tk.Label(path_row, text='', bg=self._BG,
                                   fg=self._TEXT_DIM,
                                   font=_sao_font(8), anchor='w')
-        self._path_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=4)
+        self._path_lbl.configure(bg='#eae9e9')
+        self._path_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=6)
 
         # ── 列表区 ──
-        list_outer = tk.Frame(main, bg=self._BORDER, padx=0, pady=0)
-        list_outer.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
+        list_outer = tk.Frame(content, bg=self._BORDER, padx=0, pady=0)
+        list_outer.pack(fill=tk.BOTH, expand=True, padx=14, pady=(8, 8))
 
         list_frame = tk.Frame(list_outer, bg=self._BG2)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
@@ -2693,62 +2705,62 @@ class SAOFilePicker(tk.Toplevel):
         self._listbox.bind('<Return>', lambda e: self._confirm())
 
         # ── 底部分隔线 ──
-        tk.Frame(main, bg=self._BORDER, height=1).pack(fill=tk.X, padx=6)
+        tk.Frame(content, bg=self._BORDER, height=1).pack(fill=tk.X, padx=14)
 
         # ── 文件名预览行 ──
-        fname_row = tk.Frame(main, bg=self._BG, height=28)
-        fname_row.pack(fill=tk.X, padx=6)
+        fname_row = tk.Frame(content, bg='#eae9e9', height=30)
+        fname_row.pack(fill=tk.X, padx=14, pady=(4, 10))
         fname_row.pack_propagate(False)
-        self._fname_lbl = tk.Label(fname_row, text='', bg=self._BG,
+        self._fname_lbl = tk.Label(fname_row, text='未选择文件', bg='#eae9e9',
                                    fg=self._ACCENT, font=_cjk_font(9),
                                    anchor='w')
         self._fname_lbl.pack(fill=tk.X, padx=4, pady=4)
         self._listbox.bind('<<ListboxSelect>>', self._on_select)
 
-        # ── 按钮区 (52px) ──
-        tk.Frame(main, bg=self._BORDER, height=1).pack(fill=tk.X)
-        footer = tk.Frame(main, bg=self._BG2, height=52)
+        # 按钮区 (83px)
+        tk.Frame(main_box, bg='#e0e0e0', height=1).pack(fill=tk.X)
+        footer = tk.Frame(main_box, bg='#ffffff', height=83)
         footer.pack(fill=tk.X)
         footer.pack_propagate(False)
 
-        btn_frame = tk.Frame(footer, bg=self._BG2)
+        btn_frame = tk.Frame(footer, bg='#ffffff')
         btn_frame.place(relx=0.5, rely=0.5, anchor='center')
 
         # 目录模式: 添加 "选择此文件夹" 按钮
         if self._mode == 'dir':
-            sel_dir_cv = tk.Canvas(btn_frame, width=36, height=36,
-                                   bg=self._BG2, highlightthickness=0, cursor='hand2')
-            sel_dir_cv.pack(side=tk.LEFT, padx=(0, 4))
-            sel_dir_cv.create_oval(2, 2, 34, 34, outline='#4caf50', width=2, fill='')
-            sel_dir_cv.create_oval(8, 8, 28, 28, fill=self._BG2, outline='')
-            sel_dir_cv.create_oval(11, 11, 25, 25, fill='#4caf50', outline='')
+            sel_dir_cv = tk.Canvas(btn_frame, width=40, height=40,
+                                   bg='#ffffff', highlightthickness=0, cursor='hand2')
+            sel_dir_cv.pack(side=tk.LEFT, padx=(0, 10))
+            sel_dir_cv.create_oval(2, 2, 38, 38, outline='#4caf50', width=3, fill='')
+            sel_dir_cv.create_oval(9, 9, 31, 31, fill='#ffffff', outline='')
+            sel_dir_cv.create_oval(12, 12, 28, 28, fill='#4caf50', outline='')
             sel_dir_cv.bind('<Button-1>', lambda e: self._confirm_dir())
-            tk.Label(btn_frame, text='选择此文件夹', bg=self._BG2, fg='#999999',
-                     font=_sao_font(8)).pack(side=tk.LEFT, padx=(0, 16))
+            tk.Label(btn_frame, text='选择此文件夹', bg='#ffffff', fg='#999999',
+                     font=_sao_font(8)).pack(side=tk.LEFT, padx=(0, 18))
 
         # 确认 (蓝圆)
-        ok_cv = tk.Canvas(btn_frame, width=36, height=36,
-                          bg=self._BG2, highlightthickness=0, cursor='hand2')
-        ok_cv.pack(side=tk.LEFT, padx=16)
-        ok_cv.create_oval(2, 2, 34, 34, outline=SAOColors.OK_BLUE, width=2, fill='')
-        ok_cv.create_oval(8, 8, 28, 28, fill=self._BG2, outline='')
-        ok_cv.create_oval(11, 11, 25, 25, fill=SAOColors.OK_BLUE, outline='')
+        ok_cv = tk.Canvas(btn_frame, width=40, height=40,
+                          bg='#ffffff', highlightthickness=0, cursor='hand2')
+        ok_cv.pack(side=tk.LEFT, padx=20)
+        ok_cv.create_oval(2, 2, 38, 38, outline=SAOColors.OK_BLUE, width=3, fill='')
+        ok_cv.create_oval(9, 9, 31, 31, fill='#ffffff', outline='')
+        ok_cv.create_oval(12, 12, 28, 28, fill=SAOColors.OK_BLUE, outline='')
         ok_cv.bind('<Button-1>', lambda e: self._confirm())
 
-        tk.Label(btn_frame, text='确认', bg=self._BG2, fg='#999999',
+        tk.Label(btn_frame, text='确认', bg='#ffffff', fg='#999999',
                  font=_sao_font(8)).pack(side=tk.LEFT, padx=(0, 20))
 
         # 取消 (红圆)
-        cancel_cv = tk.Canvas(btn_frame, width=36, height=36,
-                              bg=self._BG2, highlightthickness=0, cursor='hand2')
+        cancel_cv = tk.Canvas(btn_frame, width=40, height=40,
+                              bg='#ffffff', highlightthickness=0, cursor='hand2')
         cancel_cv.pack(side=tk.LEFT, padx=(0, 4))
-        cancel_cv.create_oval(2, 2, 34, 34, outline=SAOColors.CLOSE_RED, width=2, fill='')
-        cancel_cv.create_oval(8, 8, 28, 28, fill=SAOColors.CLOSE_RED, outline='')
-        cancel_cv.create_line(13, 13, 23, 23, fill='#ffffff', width=2)
-        cancel_cv.create_line(13, 23, 23, 13, fill='#ffffff', width=2)
+        cancel_cv.create_oval(2, 2, 38, 38, outline=SAOColors.CLOSE_RED, width=3, fill='')
+        cancel_cv.create_oval(9, 9, 31, 31, fill=SAOColors.CLOSE_RED, outline='')
+        cancel_cv.create_line(14, 14, 26, 26, fill='#ffffff', width=3)
+        cancel_cv.create_line(14, 26, 26, 14, fill='#ffffff', width=3)
         cancel_cv.bind('<Button-1>', lambda e: self._cancel())
 
-        tk.Label(btn_frame, text='取消', bg=self._BG2, fg='#999999',
+        tk.Label(btn_frame, text='取消', bg='#ffffff', fg='#999999',
                  font=_sao_font(8)).pack(side=tk.LEFT)
 
     def _start_drag(self, e):
@@ -2887,6 +2899,10 @@ class SAOFilePicker(tk.Toplevel):
             w = int(fw - (fw - iw) * et)
             x = cx - w // 2
             self.geometry(f'{w}x{self._final_h}+{x}+{cy}')
+            try:
+                self.attributes('-alpha', max(0.0, 1.0 - t))
+            except Exception:
+                pass
             if t < 1.0:
                 self.after(16, _step)
             else:
@@ -3076,7 +3092,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.4.1+3401", on_close=None, **kw):
+                 version="v3.4.2+3402", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close

@@ -33,9 +33,17 @@ body {
    ═══════════════════════════════════════ */
 /* ═══ Entry Animation ═══ */
 @keyframes hp-slide-in {
-    0%   { opacity: 0; transform: scale(0.7); }
-    60%  { opacity: 1; transform: scale(1.03); }
-    100% { opacity: 1; transform: scale(1); }
+    0%   { opacity: 0; transform: scale(0.72); filter: blur(16px) drop-shadow(0 0 0 rgba(50, 50, 0, 0)); }
+    60%  { opacity: 1; transform: scale(1.03); filter: blur(1.2px) drop-shadow(3px 6px 12px rgba(50, 50, 0, 0.32)); }
+    100% { opacity: 1; transform: scale(1); filter: blur(0px) drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5)); }
+}
+
+@keyframes hp-live-blur {
+    0%   { filter: blur(0px) drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5)); }
+    25%  { filter: blur(0.2px) drop-shadow(1px 6px 8px rgba(50, 50, 0, 0.38)); }
+    50%  { filter: blur(0.08px) drop-shadow(2px 4px 4px rgba(50, 50, 0, 0.46)); }
+    75%  { filter: blur(0.22px) drop-shadow(3px 5px 8px rgba(50, 50, 0, 0.36)); }
+    100% { filter: blur(0px) drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5)); }
 }
 /* ═══ Idle Float (sinusoidal Lissajous, ≤5px) ═══ */
 @keyframes sao-float {
@@ -58,13 +66,20 @@ body {
     width: 400px;
     height: 40px;
     display: flex;
-    filter: drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5));
+    filter: blur(0px) drop-shadow(2px 4px 3px rgba(50, 50, 0, 0.5));
     font-family: 'sao', 'yuanJWD', sans-serif;
     letter-spacing: 1px;
     color: #e1dede;
     font-size: 12px;
     cursor: grab;
     animation: hp-slide-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both,
+               hp-live-blur 8.5s ease-in-out 0.7s infinite,
+               sao-float 9s ease-in-out 0.7s infinite;
+}
+
+.XTBox.hp-reenter {
+    animation: hp-slide-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both,
+               hp-live-blur 8.5s ease-in-out 0.7s infinite,
                sao-float 9s ease-in-out 0.7s infinite;
 }
 
@@ -384,6 +399,13 @@ function snd(name) {
 /* ═══ Context Menu helpers ═══ */
 var ctxMenu = document.getElementById('ctx-menu');
 
+function retriggerEntryBlur() {
+    var hp = document.getElementById('hp');
+    hp.classList.remove('hp-reenter');
+    void hp.offsetWidth;
+    hp.classList.add('hp-reenter');
+}
+
 function showCtxMenu(x, y) {
     if (ctxMenu.classList.contains('show')) {
         hideCtxMenu();
@@ -493,6 +515,10 @@ function showLevelUp(oldLv, newLv) {
     if (_lvTimer) clearTimeout(_lvTimer);
     _lvTimer = setTimeout(function() { ov.classList.remove('show'); }, 2700);
 }
+
+window.HP = {
+    retriggerEntryBlur: retriggerEntryBlur,
+};
 </script>
 </body>
 </html>

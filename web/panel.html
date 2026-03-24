@@ -19,6 +19,69 @@ html, body {
     /* 浮动由 Python window.move() 驱动, 不在 CSS 层做 transform */
 }
 
+body.opening .panel {
+    animation: panel-enter-blur 0.42s cubic-bezier(0.22, 1, 0.36, 1) both,
+               panel-live-blur 9s ease-in-out 0.42s infinite;
+}
+body.closing .panel {
+    animation: panel-exit-blur 0.16s ease-in both;
+}
+body:not(.opening):not(.closing) .panel {
+    animation: panel-live-blur 9s ease-in-out infinite;
+}
+
+@keyframes panel-enter-blur {
+    0% {
+        opacity: 0;
+        filter: blur(16px);
+        box-shadow: 0 0 40px rgba(243, 175, 18, 0.22), 0 10px 38px rgba(0,0,0,0.28);
+    }
+    65% {
+        opacity: 1;
+        filter: blur(1.2px);
+    }
+    100% {
+        opacity: 1;
+        filter: blur(0px);
+        box-shadow: 0 2px 16px rgba(0,0,0,0.18);
+    }
+}
+
+@keyframes panel-exit-blur {
+    0% {
+        opacity: 1;
+        filter: blur(0px);
+    }
+    100% {
+        opacity: 0;
+        filter: blur(14px);
+        box-shadow: 0 0 34px rgba(243, 175, 18, 0.16), 0 8px 30px rgba(0,0,0,0.18);
+    }
+}
+
+@keyframes panel-live-blur {
+    0% {
+        filter: blur(0px);
+        box-shadow: 0 2px 16px rgba(0,0,0,0.18);
+    }
+    25% {
+        filter: blur(0.18px);
+        box-shadow: -2px 5px 22px rgba(0,0,0,0.16), 0 0 18px rgba(243, 175, 18, 0.05);
+    }
+    50% {
+        filter: blur(0.08px);
+        box-shadow: 0 3px 18px rgba(0,0,0,0.2), 0 0 14px rgba(66, 140, 230, 0.05);
+    }
+    75% {
+        filter: blur(0.2px);
+        box-shadow: 2px 5px 22px rgba(0,0,0,0.17), 0 0 18px rgba(243, 175, 18, 0.05);
+    }
+    100% {
+        filter: blur(0px);
+        box-shadow: 0 2px 16px rgba(0,0,0,0.18);
+    }
+}
+
 /* ═══ Panel Float (sinusoidal, ≤5px) ═══ */
 @keyframes panel-float {
     0%   { transform: translate(0px,    0px); }
@@ -41,6 +104,8 @@ html, body {
     font-family: 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
     font-size: 12px;
     color: #555;
+    filter: blur(0px);
+    will-change: filter, box-shadow, opacity;
 }
 
 .panel-header {
@@ -231,8 +296,16 @@ var panelType = '';
     });
 })();
 
+function preClose() {
+    document.body.classList.remove('opening');
+    document.body.classList.add('closing');
+}
+
 document.getElementById('panel-close').addEventListener('click', function() {
-    if (window.pywebview && window.pywebview.api) window.pywebview.api.close_panel();
+    preClose();
+    setTimeout(function() {
+        if (window.pywebview && window.pywebview.api) window.pywebview.api.close_panel();
+    }, 120);
 });
 
 function doAction(action) {
@@ -435,6 +508,8 @@ function vizReset() {
 /* ═══ Init panel by type ═══ */
 function initPanel(type, state) {
     panelType = type;
+    document.body.classList.remove('closing');
+    document.body.classList.add('opening');
     document.documentElement.style.opacity = '1';
     document.body.style.opacity = '1';
     var title = document.getElementById('panel-title');
@@ -495,6 +570,7 @@ function initPanel(type, state) {
     }
 
     if (state) updatePanel(state);
+    setTimeout(function() { document.body.classList.remove('opening'); }, 460);
 }
 
 /* ═══ Update panel state ═══ */
@@ -536,6 +612,7 @@ function updatePanel(data) {
 
 window.Panel = {
     init: initPanel,
+    preClose: preClose,
     update: updatePanel,
     noteOn: pianoNoteOn,
     noteReset: pianoReset,

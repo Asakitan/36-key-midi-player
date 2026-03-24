@@ -45,6 +45,10 @@ html, body {
     pointer-events: auto;
     backdrop-filter: blur(12px);
 }
+.info.entering {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+}
 .info.closing {
     backdrop-filter: blur(0px);
     transition: opacity 0.55s ease, backdrop-filter 0.55s ease;
@@ -53,8 +57,19 @@ html, body {
 /* ═══ Breathing animation for position ═══ */
 .position {
     position: absolute;
+    filter: blur(0px);
+    opacity: 1;
     animation: breath 8s linear infinite;
     animation-delay: .2s;
+    transition: filter 0.42s ease, opacity 0.32s ease;
+}
+.info.entering .position {
+    filter: blur(18px);
+    opacity: 0;
+}
+.info.closing .position {
+    filter: blur(14px);
+    opacity: 0;
 }
 @keyframes breath {
     0%   { transform: translate(0); }
@@ -89,6 +104,7 @@ html, body {
     transition: border-color 0.2s ease;
     animation: itemDown 0.4s ease forwards;
     opacity: 0;
+    filter: blur(10px);
     transform: translateY(-80px);
 }
 .item:nth-child(1) { animation-delay: 0.20s; }
@@ -98,16 +114,16 @@ html, body {
 .item:nth-child(5) { animation-delay: 0.00s; }
 
 @keyframes itemDown {
-    from { transform: translateY(-80px); opacity: 0; }
-    to   { transform: translateY(0);     opacity: 1; }
+    from { transform: translateY(-80px); opacity: 0; filter: blur(14px); }
+    to   { transform: translateY(0);     opacity: 1; filter: blur(0px); }
 }
 
 .closing .item {
     animation: itemUp 0.3s ease forwards;
 }
 @keyframes itemUp {
-    from { transform: translateY(0);     opacity: 1; }
-    to   { transform: translateY(-80px); opacity: 0; }
+    from { transform: translateY(0);     opacity: 1; filter: blur(0px); }
+    to   { transform: translateY(-80px); opacity: 0; filter: blur(14px); }
 }
 
 .item .in-circle {
@@ -161,10 +177,12 @@ html, body {
 
 .leftInfoBox {
     opacity: 0;
-    transition: opacity 0.4s ease;
+    filter: blur(14px);
+    transition: opacity 0.4s ease, filter 0.42s ease;
 }
 .leftInfoBox.show {
     opacity: 1;
+    filter: blur(0px);
     animation: padding_open 1s ease forwards;
 }
 
@@ -312,12 +330,14 @@ html, body {
     left: 0;
     list-style: none;
     opacity: 0;
+    filter: blur(12px);
     transform: translateY(-30px);
     pointer-events: none;
-    transition: opacity 0.25s ease, transform 0.25s ease;
+    transition: opacity 0.25s ease, transform 0.25s ease, filter 0.3s ease;
 }
 .child-menu.show {
     opacity: 1;
+    filter: blur(0px);
     transform: translateY(0);
     pointer-events: auto;
 }
@@ -988,7 +1008,7 @@ function _initFisheyeGL() {
     if (_feGl) return true;
     _feCanvas = document.createElement('canvas');
     _feCanvas.style.cssText = 'position:fixed;inset:-3%;width:106%;height:106%;z-index:-1;' +
-        'pointer-events:none;opacity:0;transition:opacity 0.5s ease;';
+        'pointer-events:none;opacity:0;filter:blur(14px);transition:opacity 0.5s ease,filter 0.42s ease;';
     document.getElementById('popup-overlay').prepend(_feCanvas);
 
     var gl = _feCanvas.getContext('webgl', {alpha:true, antialias:false, premultipliedAlpha:false});
@@ -1066,11 +1086,11 @@ function setFisheyeBg(dataUrl) {
             el.id = 'fisheye-bg-fallback';
             el.style.cssText = 'position:fixed;inset:-3%;width:106%;height:106%;z-index:-1;' +
                 'background-size:cover;background-position:center;opacity:0;' +
-                'transition:opacity 0.5s;pointer-events:none;filter:blur(1px);';
+                'transition:opacity 0.5s,filter 0.42s;pointer-events:none;filter:blur(14px);';
             document.getElementById('popup-overlay').prepend(el);
         }
         el.style.backgroundImage = 'url(' + dataUrl + ')';
-        setTimeout(function(){ el.style.opacity = '0.75'; }, 50);
+        setTimeout(function(){ el.style.opacity = '0.78'; el.style.filter = 'blur(1.2px)'; }, 50);
         return;
     }
 
@@ -1083,7 +1103,9 @@ function setFisheyeBg(dataUrl) {
         if (!_feRunning) {
             _feRunning = true;
             requestAnimationFrame(_fisheyeFrame);
-            setTimeout(function(){ _feCanvas.style.opacity = '0.75'; }, 50);
+            setTimeout(function(){ _feCanvas.style.opacity = '0.82'; _feCanvas.style.filter = 'blur(1.1px)'; }, 50);
+        } else {
+            _feCanvas.style.filter = 'blur(1.1px)';
         }
     };
     img.src = dataUrl;
@@ -1091,9 +1113,15 @@ function setFisheyeBg(dataUrl) {
 
 function stopFisheyeBg() {
     _feRunning = false;
-    if (_feCanvas) _feCanvas.style.opacity = '0';
+    if (_feCanvas) {
+        _feCanvas.style.opacity = '0';
+        _feCanvas.style.filter = 'blur(14px)';
+    }
     var fb = document.getElementById('fisheye-bg-fallback');
-    if (fb) fb.style.opacity = '0';
+    if (fb) {
+        fb.style.opacity = '0';
+        fb.style.filter = 'blur(14px)';
+    }
 }
 
 /* ═══ Menu Open / Close ═══ */
@@ -1107,7 +1135,9 @@ function openMenu(x, y) {
     pos.style.top  = Math.max(100, Math.min(y || 300, window.innerHeight - 400)) + 'px';
 
     overlay.classList.remove('closing');
+    overlay.classList.add('entering');
     overlay.classList.add('visible');
+    setTimeout(function() { overlay.classList.remove('entering'); }, 20);
 
     /* Reset item animations */
     menuBar.querySelectorAll('.item').forEach(function(el) {
@@ -1132,6 +1162,7 @@ function closeMenu() {
     void tvoff.offsetWidth;
     tvoff.classList.add('active');
 
+    overlay.classList.remove('entering');
     overlay.classList.add('closing');
     setTimeout(function() {
         overlay.classList.remove('visible', 'closing');
