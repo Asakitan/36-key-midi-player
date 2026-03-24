@@ -91,7 +91,6 @@ def _capture_fisheye_base64(strength: float = 0.25, quality: int = 60) -> Option
     如果依赖不满足返回 None.
     """
     try:
-        import numpy as np
         from PIL import Image
         import base64, io
 
@@ -909,7 +908,6 @@ class SAOWebViewGUI:
 
     def _apply_barrel_distortion(self, img):
         """Apply barrel distortion via moderngl GPU, fallback to numpy if unavailable."""
-        import numpy as np
         from PIL import Image
         w, h = img.size
 
@@ -1341,6 +1339,10 @@ class SAOWebViewGUI:
                     f'音符数: {note_count}   BPM: {bpm}\n'
                     f'时长: {dur_str}   调号: {key_str}\n'
                     f'推荐移调: {tr_str}')
+            # 菜单必须可见才能显示弹窗 — 若已关闭则先打开
+            if not self._menu_visible:
+                self._open_menu()
+                time.sleep(0.55)   # 等菜单动画完成
             self._eval_menu(f'SAO.showAlert("曲目信息", "{body}", false)')
         except Exception:
             self._eval_menu(f'SAO.showToast("已加载: {self._safe_js(fname)}")')
