@@ -377,18 +377,29 @@ class SAOWebViewGUI:
         self._hp_visible = False
         self._exit_animating = False
 
+        # 延音/键位模式 状态
+        self._sustain_active = False
+        self._kb_mode = 'normal'
+
         # 回调
         self.player.on_progress = self._on_progress
         self.player.on_playback_end = self._on_playback_end
         self.player.on_note_play = self._on_note_play
+        self.player.on_sustain_change = self._on_sustain_change
+        self.player.on_shift_change = self._on_shift_change
 
     # ─── 音符回调 → 面板 ───
     def _on_note_play(self, key, note, is_chord=False):
-        """Player 触发音符 → 推送到 piano / viz 面板."""
+        """Player 触发音符 → 推送到 piano / viz 面板 (non-blocking)."""
         try:
             dur = int(min(2000, max(100, note.duration * 1000)))
             vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8
             midi_note = note.note
+            safe_key = self._safe_js(key)
+        except Exception:
+            return
+
+        def _push():
             piano_win = self._panel_wins.get('piano')
             if piano_win:
                 try:
@@ -398,11 +409,34 @@ class SAOWebViewGUI:
             viz_win = self._panel_wins.get('viz')
             if viz_win:
                 try:
-                    viz_win.evaluate_js(f'Panel.vizTrigger("{self._safe_js(key)}",{vel:.2f})')
+                    viz_win.evaluate_js(f'Panel.vizTrigger("{safe_key}",{vel:.2f})')
                 except Exception:
                     pass
-        except Exception:
-            pass
+
+        threading.Thread(target=_push, daemon=True).start()
+
+    # ─── 延音/键位回调 → 状态面板 ───
+    def _on_sustain_change(self, active: bool):
+        """Player 延音踏板变化 → 推送到 status 面板."""
+        self._sustain_active = active
+        self._push_status_update({'sustain': active})
+
+    def _on_shift_change(self, mode: str):
+        """Player 键位模式变化 → 推送到 status 面板."""
+        self._kb_mode = mode
+        _labels = {'normal': '正常', 'shift': 'SHIFT ↑', 'ctrl': 'CTRL ↓',
+                   'lt': 'LT ↓↓', 'gt': 'GT ↑↑'}
+        self._push_status_update({'kb_mode': _labels.get(mode, mode)})
+
+    def _push_status_update(self, partial_state: dict):
+        """非阻塞推送部分状态到所有已打开的面板."""
+        def _push():
+            for pt, win in list(self._panel_wins.items()):
+                try:
+                    win.evaluate_js(f'Panel.update({json.dumps(partial_state)})')
+                except Exception:
+                    pass
+        threading.Thread(target=_push, daemon=True).start()
 
     # ─── 音效 ───
     def _play_sound(self, name: str):
@@ -431,7 +465,7 @@ class SAOWebViewGUI:
         try:
             _sw = ctypes.windll.user32.GetSystemMetrics(0)
             _sh = ctypes.windll.user32.GetSystemMetrics(1)
-            cx, cy = (_sw - 430) // 2, (_sh - 320) // 2
+            cx, cy = (_sw - 430) // 2, (_sh - 500) // 2
         except Exception:
             cx, cy = 500, 300
         self._hp_target_x = fx
@@ -440,7 +474,7 @@ class SAOWebViewGUI:
         # HP 悬浮窗 — transparent=True 由 pywebview 原生处理透明
         self.hp_win = webview.create_window(
             '♪ SAO HP', hp_url,
-            width=430, height=320,
+            width=430, height=500,
             x=cx, y=cy,
             frameless=True,
             easy_drag=False,           # 自行处理拖拽 (CSS app-region)
@@ -573,7 +607,7 @@ class SAOWebViewGUI:
             user32 = ctypes.windll.user32
             if expanded:
                 # 右键菜单打开: 扩展到全窗口 (含菜单空间)
-                hrgn = gdi32.CreateRectRgn(0, 0, 430, 320)
+                hrgn = gdi32.CreateRectRgn(0, 0, 430, 500)
             else:
                 # 默认: 只保留 HP 条 (body pad=8 + XTBox=40 + number=20 = 68px)
                 hrgn = gdi32.CreateRectRgn(0, 0, 420, 68)
@@ -634,7 +668,7 @@ class SAOWebViewGUI:
                 try:
                     _sw = ctypes.windll.user32.GetSystemMetrics(0)
                     _sh = ctypes.windll.user32.GetSystemMetrics(1)
-                    sx, sy = (_sw - 430) // 2, (_sh - 320) // 2
+                    sx, sy = (_sw - 430) // 2, (_sh - 500) // 2
                 except Exception:
                     sx, sy = 500, 300
             tx, ty = self._hp_target_x, self._hp_target_y
@@ -1281,12 +1315,12 @@ class SAOWebViewGUI:
             'bass': self._bass_on,
             'directc': self._direct_c,
             'glissando': self._glissando,
-            'sustain': False,
+            'sustain': self._sustain_active,
             'play_state': '播放中' if self._playing else ('已暂停' if self._paused else '就绪'),
             'mode': mode_label,
             'bpm': 0,
-            'kb_mode': {'normal': '正常', 'shift': 'SHIFT ↑', 'ctrl': 'CTRL ↓'}.get(
-                getattr(getattr(self.player, 'simulator', None), '_current_mode', 'normal'), '正常'),
+            'kb_mode': {'normal': '正常', 'shift': 'SHIFT ↑', 'ctrl': 'CTRL ↓',
+                        'lt': 'LT ↓↓', 'gt': 'GT ↑↑'}.get(self._kb_mode, '正常'),
         }
 
     def _sync_all_panels(self):

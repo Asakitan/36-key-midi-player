@@ -957,11 +957,18 @@ class SAOPlayerPanel(tk.Frame):
         self._bottom.create_text(12, 12, text='STATUS', anchor='w',
                                  font=get_sao_font(6), fill='#b0b0b0')
 
-        # 描述/职业
-        desc = self._profession if self._profession else '咲 Midi Player SAO Edition'
-        self._bottom.create_text(15, h // 2 + 2, text=desc,
-                                 font=get_cjk_font(10), fill='#777777',
+        # ── 键位模式 + 延音状态 ──
+        sm = self._shift_mode if self._shift_mode else '普通模式'
+        sm_color = '#2196f3' if sm == '普通模式' else ('#e65100' if 'CTRL' in sm else '#1565c0')
+        self._bottom.create_text(15, h // 2 - 2, text=sm,
+                                 font=get_cjk_font(9, True), fill=sm_color,
                                  anchor='w')
+        # 延音指示
+        sus_text = '延音 ON' if self._sustain else ''
+        if sus_text:
+            self._bottom.create_text(w - 12, h // 2 - 2, text=sus_text,
+                                     font=get_sao_font(7, True), fill='#3ad86c',
+                                     anchor='e')
 
         # 底部系统标签
         if h > 50:
@@ -1216,24 +1223,20 @@ class SAOPlayerGUI:
             bot_fill_w = min(top_fill_w, bot_max_w)
             alpha_base = 0.96 if self._playing and not self._paused else 0.86
 
-            # 上层
+            # 上层 — 固定透明度 (不使用渐隐)
             h_top = max(1, self._hp_bar_bot_top - self._hp_bar_y)
             grad_top = np.zeros((h_top, top_fill_w, 4), dtype=np.uint8)
             grad_top[:, :, :3] = c
-            ts = np.linspace(0, 1, top_fill_w)
-            alphas = (255 * alpha_base * (0.18 + (1.0 - ts) * 0.74)).clip(0, 255).astype(np.uint8)
-            grad_top[:, :, 3] = alphas[np.newaxis, :]
+            grad_top[:, :, 3] = int(255 * alpha_base * 0.82)
             fill_top_img = Image.fromarray(grad_top)
             shell.paste(fill_top_img, (self._hp_bar_x, self._hp_bar_y), fill_top_img)
 
-            # 下层
+            # 下层 — 固定透明度
             if bot_fill_w > 0:
                 h_bot = max(1, self._hp_bar_bot_full - self._hp_bar_bot_top)
                 grad_bot = np.zeros((h_bot, bot_fill_w, 4), dtype=np.uint8)
                 grad_bot[:, :, :3] = c
-                ts_b = np.linspace(0, 1, bot_fill_w)
-                alphas_b = (255 * alpha_base * (0.18 + (1.0 - ts_b) * 0.74)).clip(0, 255).astype(np.uint8)
-                grad_bot[:, :, 3] = alphas_b[np.newaxis, :]
+                grad_bot[:, :, 3] = int(255 * alpha_base * 0.82)
                 fill_bot_img = Image.fromarray(grad_bot)
                 shell.paste(fill_bot_img, (self._hp_bar_x, self._hp_bar_bot_top), fill_bot_img)
 
@@ -3648,7 +3651,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.23+3423\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.24+3424\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3930,11 +3933,19 @@ void main() {
         white = '#edf7ff'
         dim_cyan = '#173746'
         dim_gold = '#5e4211'
-        # TV-on: slit → full screen during first 62% of animation, then holds
-        boot_t = min(1.0, progress / 0.62)
+        # TV-on: 0→1 during 0–0.62, settled: 1.0 during 0.62–0.80, TV-close: 1→0 during 0.80–1.0
+        if progress <= 0.62:
+            boot_t = progress / 0.62
+        elif progress <= 0.80:
+            boot_t = 1.0
+        else:
+            boot_t = max(0.0, 1.0 - (progress - 0.80) / 0.20)
+        tv_close_f = max(0.0, (progress - 0.80) / 0.20)  # 0→1 during close phase
 
         try:
-            win.attributes('-alpha', max(0.0, min(0.95, (1.0 - progress) ** 0.28 * 0.92)))
+            base_alpha = max(0.0, min(0.95, (1.0 - progress) ** 0.28 * 0.92))
+            # fade window to near-zero as TV screen collapses
+            win.attributes('-alpha', max(0.0, base_alpha * (1.0 - tv_close_f * 0.95)))
         except Exception:
             pass
 
@@ -3947,6 +3958,10 @@ void main() {
                 yy = y + scan_shift
                 col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
                 cv.create_line(0, yy, sw, yy, fill=col, width=1)
+
+        # suppress all Canvas HUD elements once TV-close is under way
+        if tv_close_f > 0.08:
+            return
 
         span = int(lerp(min(sw * 0.42, 520), min(sw * 0.22, 260), deploy))
         aperture = int(lerp(172, 28, deploy))
@@ -4354,14 +4369,9 @@ void main() {
         tv_fade = ease_in_out(tv_fade)
 
         try:
-            # Window must stay opaque while GL's tvMask draws the TV-close effect;
-            # only snap to transparent after the mask has fully collapsed
+            # fade window all the way to transparent as TV-close completes
             peak_alpha = min(0.97, 0.12 + 0.58 * lock_e + 0.20 * purge_e)
-            if tv_fade < 0.92:
-                win.attributes('-alpha', peak_alpha)
-            else:
-                snap = min(1.0, (tv_fade - 0.92) / 0.08)
-                win.attributes('-alpha', max(0.0, peak_alpha * (1.0 - snap)))
+            win.attributes('-alpha', max(0.0, peak_alpha * (1.0 - tv_fade * 0.97)))
         except Exception:
             pass
 
