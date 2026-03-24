@@ -391,6 +391,95 @@ html, body {
     color: #999;
 }
 
+/* ═══ File Picker Dialog ═══ */
+.saoPickerBox {
+    width: 480px;
+    box-shadow: 0 0 32px 4px rgba(0,0,0,0.35);
+    border-radius: 2px;
+    display: flex;
+    flex-direction: column;
+    animation: XOpen ease 0.4s forwards;
+}
+.picker-header {
+    height: 52px;
+    background: rgba(255, 255, 255, 0.85);
+    box-shadow: rgba(0,0,0,.25) 0 8px 12px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.picker-header span {
+    font-weight: 800;
+    color: rgb(100, 99, 100);
+    font-size: 16px;
+    letter-spacing: 2px;
+}
+.picker-path-bar {
+    background: rgba(66, 140, 230, 0.1);
+    padding: 6px 14px;
+    font-size: 11px;
+    color: rgba(50, 110, 200, 0.9);
+    font-family: Consolas, 'Courier New', monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+    border-bottom: 1px solid rgba(66,140,230,0.18);
+}
+.picker-list {
+    overflow-y: auto;
+    background: rgba(238, 238, 238, 0.88);
+    flex: 1;
+    max-height: 320px;
+}
+.picker-list::-webkit-scrollbar { width: 4px; }
+.picker-list::-webkit-scrollbar-track { background: rgba(200,200,200,0.2); }
+.picker-list::-webkit-scrollbar-thumb { background: rgba(66,140,230,0.35); border-radius: 2px; }
+.picker-item {
+    display: flex;
+    align-items: center;
+    padding: 9px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(210,210,210,0.4);
+    font-size: 13px;
+    color: #555;
+    gap: 8px;
+    transition: background 0.1s;
+}
+.picker-item:last-child { border-bottom: none; }
+.picker-item:hover { background: rgba(243,175,18,0.15); }
+.picker-item.is-dir  { color: rgb(55, 120, 210); }
+.picker-item.is-up   { color: rgb(140,140,140); font-style: italic; }
+.picker-item i { font-style: normal; min-width: 20px; text-align: center; font-size: 14px; }
+.picker-item .item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-item .item-info { font-size: 10px; color: #aaa; white-space: nowrap; }
+.picker-empty { padding: 28px; text-align: center; color: #aaa; font-size: 13px; }
+.picker-footer {
+    height: 58px;
+    background: rgba(255,255,255,0.82);
+    box-shadow: rgba(0,0,0,.07) 0 -10px 12px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    flex-shrink: 0;
+}
+.btn-use-folder {
+    padding: 6px 14px;
+    background: rgba(66,140,230,0.8);
+    color: #fff;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: 'yuanJWD', sans-serif;
+    letter-spacing: 1px;
+    display: none;
+    transition: background 0.15s;
+}
+.btn-use-folder:hover { background: rgba(66,140,230,1); }
+.picker-mode-folder .btn-use-folder { display: block; }
+
 /* ═══════════════════════════════════════
    Alert Dialog
    ═══════════════════════════════════════ */
@@ -697,6 +786,19 @@ html, body {
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
+<!-- File Picker Dialog -->
+<div class="saoMsgBox_fa" id="filepicker-dialog">
+    <div class="saoPickerBox" id="filepicker-box">
+        <div class="picker-header"><span id="picker-title">选择文件</span></div>
+        <div class="picker-path-bar" id="picker-path"></div>
+        <div class="picker-list" id="picker-list"></div>
+        <div class="picker-footer">
+            <div class="btn-use-folder" id="picker-use-folder">✔ 使用此文件夹</div>
+            <div class="btn-circle btn-close" id="picker-close"><div class="inner"></div></div>
+        </div>
+    </div>
+</div>
+
 <!-- Alert Dialog -->
 <div class="saoMsgBox_fa" id="alert-dialog">
     <div class="saoMsgBox">
@@ -980,6 +1082,97 @@ function hideAllSubMenus() {
     });
 }
 
+/* ═══ File Picker ═══ */
+var _pickerMode = 'file';
+var _pickerCurrentDir = '';
+
+function showFilePicker(dataJson) {
+    var data = (typeof dataJson === 'string') ? JSON.parse(dataJson) : dataJson;
+    _pickerMode = data.mode || 'file';
+    _pickerCurrentDir = data.current || '';
+    document.getElementById('picker-title').textContent = _pickerMode === 'folder' ? '选择文件夹' : '选择文件';
+    document.getElementById('picker-path').textContent = _pickerCurrentDir;
+    document.getElementById('filepicker-box').className =
+        'saoPickerBox' + (_pickerMode === 'folder' ? ' picker-mode-folder' : '');
+
+    var list = document.getElementById('picker-list');
+    list.innerHTML = '';
+
+    if (data.parent) {
+        var upEl = document.createElement('div');
+        upEl.className = 'picker-item is-up';
+        upEl.innerHTML = '<i>↑</i><span class="item-name">.. 上级目录</span>';
+        upEl.addEventListener('click', function() {
+            playSound('snd-click');
+            _pickerBrowse(data.parent);
+        });
+        list.appendChild(upEl);
+    }
+
+    (data.dirs || []).forEach(function(d) {
+        var el = document.createElement('div');
+        el.className = 'picker-item is-dir';
+        el.innerHTML = '<i>📁</i><span class="item-name">' + _escHtml(d.name) + '</span>';
+        el.addEventListener('click', function() {
+            playSound('snd-click');
+            _pickerBrowse(d.path);
+        });
+        list.appendChild(el);
+    });
+
+    (data.files || []).forEach(function(f) {
+        var el = document.createElement('div');
+        el.className = 'picker-item';
+        var infoStr = f.size ? '<span class="item-info">' + _fmtSize(f.size) + '</span>' : '';
+        el.innerHTML = '<i>🎵</i><span class="item-name">' + _escHtml(f.name) + '</span>' + infoStr;
+        el.addEventListener('click', function() {
+            playSound('snd-click');
+            closeFilePicker();
+            if (window.pywebview && window.pywebview.api) {
+                window.pywebview.api.select_file(f.path);
+            }
+        });
+        list.appendChild(el);
+    });
+
+    if (!(data.parent) && !(data.dirs||[]).length && !(data.files||[]).length) {
+        list.innerHTML = '<div class="picker-empty">暂无 MIDI 文件</div>';
+    }
+
+    playSound('snd-alert');
+    document.getElementById('filepicker-dialog').classList.add('show');
+}
+
+function closeFilePicker() {
+    document.getElementById('filepicker-dialog').classList.remove('show');
+}
+
+function _pickerBrowse(path) {
+    if (!window.pywebview || !window.pywebview.api) return;
+    window.pywebview.api.browse_dir(path).then(function(result) {
+        var d = (typeof result === 'string') ? JSON.parse(result) : result;
+        d.mode = _pickerMode;
+        showFilePicker(d);
+    });
+}
+
+function _escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function _fmtSize(bytes) {
+    if (bytes < 1024) return bytes + 'B';
+    if (bytes < 1048576) return Math.round(bytes/1024) + 'K';
+    return (bytes/1048576).toFixed(1) + 'M';
+}
+
+document.getElementById('picker-close').addEventListener('click', closeFilePicker);
+document.getElementById('picker-use-folder').addEventListener('click', function() {
+    closeFilePicker();
+    if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.select_folder(_pickerCurrentDir);
+    }
+});
+
 /* ═══ Circle click handlers ═══ */
 menuBar.querySelectorAll('.item').forEach(function(item) {
     item.addEventListener('click', function(e) {
@@ -1065,7 +1258,9 @@ function updateBadge(id, isOn) {
 /* ═══ Escape key to close ═══ */
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
-        if (document.getElementById('alert-dialog').classList.contains('show')) {
+        if (document.getElementById('filepicker-dialog').classList.contains('show')) {
+            closeFilePicker();
+        } else if (document.getElementById('alert-dialog').classList.contains('show')) {
             closeAlert();
         } else if (menuOpen) {
             if (window.pywebview && window.pywebview.api) {
@@ -1088,6 +1283,8 @@ window.SAO = {
     showToast: showToast,
     setFisheyeBg: setFisheyeBg,
     stopFisheyeBg: stopFisheyeBg,
+    showFilePicker: showFilePicker,
+    closeFilePicker: closeFilePicker,
 };
 </script>
 </body>

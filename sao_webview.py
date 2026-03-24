@@ -221,6 +221,34 @@ class SAOWebAPI:
             'file': os.path.basename(self._g._current_file) if self._g._current_file else '',
         })
 
+    def browse_dir(self, path: str) -> str:
+        """文件选择器: 返回目录内容 JSON"""
+        try:
+            items = sorted(os.listdir(path), key=lambda x: x.lower())
+            parent = os.path.dirname(path)
+            parent = parent if parent != path else None
+            dirs = [d for d in items
+                    if os.path.isdir(os.path.join(path, d)) and not d.startswith('.')]
+            files = [f for f in items if f.lower().endswith(('.mid', '.midi'))]
+            return json.dumps({
+                'current': path,
+                'parent': parent,
+                'dirs': [{'name': d, 'path': os.path.join(path, d)} for d in dirs],
+                'files': [{'name': f, 'path': os.path.join(path, f),
+                           'size': os.path.getsize(os.path.join(path, f))} for f in files],
+            }, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({'current': path, 'parent': None,
+                               'dirs': [], 'files': [], 'error': str(e)})
+
+    def select_file(self, path: str):
+        """文件选择器选中文件"""
+        threading.Thread(target=self._g._load_file, args=(path,), daemon=True).start()
+
+    def select_folder(self, path: str):
+        """文件选择器选中文件夹 → 启动文件夹循环"""
+        threading.Thread(target=self._g._start_folder_loop, args=(path,), daemon=True).start()
+
 
 # ════════════════════════════════════════════════
 #  面板 JS API Bridge
@@ -1290,19 +1318,15 @@ class SAOWebViewGUI:
     #  文件管理
     # ════════════════════════════════════════
     def _open_file(self):
-        if self._menu_visible:
-            self._close_menu()
-            time.sleep(0.6)
+        if not self._menu_visible:
+            self._open_menu()
+            time.sleep(0.5)
         last = self.settings.get('last_file', '')
         init_dir = (os.path.dirname(last) if last and os.path.isdir(os.path.dirname(last))
                     else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Midi'))
-        result = self.hp_win.create_file_dialog(
-            webview.OPEN_DIALOG,
-            directory=init_dir,
-            file_types=('MIDI Files (*.mid;*.midi)', 'All Files (*.*)'),
-        )
-        if result and len(result) > 0:
-            self._load_file(result[0])
+        data = json.loads(self._api.browse_dir(init_dir))
+        data['mode'] = 'file'
+        self._eval_menu(f'SAO.showFilePicker({json.dumps(data, ensure_ascii=False)})')
 
     def _load_file(self, path: str):
         self._current_file = path
@@ -1339,32 +1363,34 @@ class SAOWebViewGUI:
                     f'音符数: {note_count}   BPM: {bpm}\n'
                     f'时长: {dur_str}   调号: {key_str}\n'
                     f'推荐移调: {tr_str}')
-            # 菜单必须可见才能显示弹窗 — 若已关闭则先打开
-            if not self._menu_visible:
-                self._open_menu()
-                time.sleep(0.55)   # 等菜单动画完成
             self._eval_menu(f'SAO.showAlert("曲目信息", "{body}", false)')
         except Exception:
             self._eval_menu(f'SAO.showToast("已加载: {self._safe_js(fname)}")')
 
     def _open_folder(self):
-        if self._menu_visible:
-            self._close_menu()
-            time.sleep(0.6)
-        result = self.hp_win.create_file_dialog(webview.FOLDER_DIALOG)
-        if result and len(result) > 0:
-            folder = result[0]
-            files = sorted([os.path.join(folder, f) for f in os.listdir(folder)
-                            if f.lower().endswith(('.mid', '.midi'))])
-            if files:
-                self._folder_loop_files = files
-                self._folder_loop_index = 0
-                self._folder_loop_active = True
-                self._load_file(files[0])
-                self._toggle_play()
-                self._eval_menu(f'SAO.showToast("文件夹循环: {len(files)} 首")')
-            else:
-                self._eval_menu('SAO.showAlert("提示", "文件夹中没有 MIDI 文件", false)')
+        if not self._menu_visible:
+            self._open_menu()
+            time.sleep(0.5)
+        last = self.settings.get('last_file', '')
+        init_dir = (os.path.dirname(last) if last and os.path.isdir(os.path.dirname(last))
+                    else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Midi'))
+        data = json.loads(self._api.browse_dir(init_dir))
+        data['mode'] = 'folder'
+        self._eval_menu(f'SAO.showFilePicker({json.dumps(data, ensure_ascii=False)})')
+
+    def _start_folder_loop(self, folder: str):
+        """启动文件夹循环 (由文件选择器调用)."""
+        files = sorted([os.path.join(folder, f) for f in os.listdir(folder)
+                        if f.lower().endswith(('.mid', '.midi'))])
+        if files:
+            self._folder_loop_files = files
+            self._folder_loop_index = 0
+            self._folder_loop_active = True
+            self._load_file(files[0])
+            self._toggle_play()
+            self._eval_menu(f'SAO.showToast("文件夹循环: {len(files)} 首")')
+        else:
+            self._eval_menu('SAO.showAlert("提示", "文件夹中没有 MIDI 文件", false)')
 
     # ════════════════════════════════════════
     #  进度 / 播放结束
