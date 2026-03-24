@@ -16,7 +16,7 @@ html, body {
     overflow: visible;
     opacity: 0;
     transition: opacity 0.2s;
-    animation: panel-float 11s ease-in-out 1.2s infinite;
+    /* 浮动由 Python window.move() 驱动, 不在 CSS 层做 transform */
 }
 
 /* ═══ Panel Float (sinusoidal, ≤5px) ═══ */

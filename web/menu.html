@@ -392,13 +392,22 @@ html, body {
 }
 
 /* ═══ File Picker Dialog ═══ */
+/* Picker float (sinusoidal, ≤4px) */
+@keyframes picker-float {
+    0%   { transform: translate(0px,   0px); }
+    15%  { transform: translate(-2px,  1.5px); }
+    35%  { transform: translate(-1px, -3px); }
+    55%  { transform: translate(2px,  -1.5px); }
+    75%  { transform: translate(2.5px, 1px); }
+    100% { transform: translate(0px,   0px); }
+}
 .saoPickerBox {
     width: 480px;
     box-shadow: 0 0 32px 4px rgba(0,0,0,0.35);
     border-radius: 2px;
     display: flex;
     flex-direction: column;
-    animation: XOpen ease 0.4s forwards;
+    animation: XOpen ease 0.4s forwards, picker-float 9s ease-in-out 0.5s infinite;
 }
 .picker-header {
     height: 52px;
@@ -479,6 +488,112 @@ html, body {
 }
 .btn-use-folder:hover { background: rgba(66,140,230,1); }
 .picker-mode-folder .btn-use-folder { display: block; }
+
+/* ═══════════════════════════════════════
+   Leaderboard Dialog
+   ═══════════════════════════════════════ */
+.leaderboard-dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 550;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    background: rgba(0,0,0,0.3);
+}
+.leaderboard-dialog.show { display: flex; }
+
+.lb-box {
+    width: 520px;
+    max-height: 70vh;
+    background: rgba(255,255,255,0.95);
+    border-radius: 2px;
+    box-shadow: 0 0 32px 4px rgba(0,0,0,0.35);
+    display: flex;
+    flex-direction: column;
+    animation: XOpen ease 0.5s forwards, picker-float 11s ease-in-out 0.6s infinite;
+    overflow: hidden;
+}
+.lb-header {
+    height: 52px;
+    background: rgba(255,255,255,0.9);
+    box-shadow: rgba(0,0,0,.2) 0 6px 10px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    gap: 8px;
+}
+.lb-header span {
+    font-weight: 800;
+    color: rgb(100, 99, 100);
+    font-size: 16px;
+    letter-spacing: 2px;
+}
+.lb-tabs {
+    display: flex;
+    background: rgba(240,240,240,0.9);
+    border-bottom: 1px solid rgba(200,200,200,0.4);
+    flex-shrink: 0;
+}
+.lb-tab {
+    flex: 1;
+    text-align: center;
+    padding: 8px 0;
+    font-size: 11px;
+    color: #888;
+    cursor: pointer;
+    transition: color 0.15s, border-bottom 0.15s;
+    border-bottom: 2px solid transparent;
+}
+.lb-tab:hover { color: #555; }
+.lb-tab.active { color: #f3af12; border-bottom-color: #f3af12; }
+
+.lb-list {
+    flex: 1;
+    overflow-y: auto;
+    background: rgba(238,238,238,0.85);
+    max-height: 400px;
+}
+.lb-list::-webkit-scrollbar { width: 4px; }
+.lb-list::-webkit-scrollbar-thumb { background: rgba(66,140,230,0.35); border-radius: 2px; }
+
+.lb-row {
+    display: flex;
+    align-items: center;
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(210,210,210,0.35);
+    font-size: 12px;
+    color: #555;
+    gap: 8px;
+}
+.lb-row:nth-child(-n+3) { background: rgba(243,175,18,0.08); }
+.lb-row .lb-rank {
+    width: 28px;
+    font-weight: bold;
+    color: #aaa;
+    text-align: center;
+}
+.lb-row:nth-child(1) .lb-rank { color: #f3af12; font-size: 16px; }
+.lb-row:nth-child(2) .lb-rank { color: #999; font-size: 14px; }
+.lb-row:nth-child(3) .lb-rank { color: #b87333; font-size: 14px; }
+.lb-row .lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-row .lb-lv { color: #428ce6; font-size: 11px; min-width: 44px; }
+.lb-row .lb-stat { color: #888; font-size: 11px; min-width: 60px; text-align: right; }
+
+.lb-row.lb-self { background: rgba(66,140,230,0.12); font-weight: bold; }
+
+.lb-empty { padding: 40px; text-align: center; color: #aaa; font-size: 13px; }
+.lb-loading { padding: 40px; text-align: center; color: #aaa; font-size: 13px; }
+
+.lb-footer {
+    height: 50px;
+    background: rgba(255,255,255,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
 
 /* ═══════════════════════════════════════
    Alert Dialog
@@ -770,6 +885,8 @@ html, body {
                 <li class="sep"></li>
                 <li data-action="switch_sao"><i>◆</i><span>SAO Entity UI</span></li>
                 <li data-action="switch_old"><i>↺</i><span>Old School UI</span></li>
+                <li class="sep"></li>
+                <li data-action="leaderboard"><i>◆</i><span>排行榜</span></li>
                 <li data-action="exit"><i>✕</i><span>退出</span></li>
             </ul>
         </div>
@@ -795,6 +912,25 @@ html, body {
         <div class="picker-footer">
             <div class="btn-use-folder" id="picker-use-folder">✔ 使用此文件夹</div>
             <div class="btn-circle btn-close" id="picker-close"><div class="inner"></div></div>
+        </div>
+    </div>
+</div>
+
+<!-- Leaderboard Dialog -->
+<div class="leaderboard-dialog" id="lb-dialog">
+    <div class="lb-box">
+        <div class="lb-header"><span>◆ LEADERBOARD ◆</span></div>
+        <div class="lb-tabs" id="lb-tabs">
+            <div class="lb-tab active" data-sort="xp">经验值</div>
+            <div class="lb-tab" data-sort="level">等级</div>
+            <div class="lb-tab" data-sort="songs_played">演奏数</div>
+            <div class="lb-tab" data-sort="play_time">总时长</div>
+        </div>
+        <div class="lb-list" id="lb-list">
+            <div class="lb-loading">加载中...</div>
+        </div>
+        <div class="lb-footer">
+            <div class="btn-circle btn-close" id="lb-close"><div class="inner"></div></div>
         </div>
     </div>
 </div>
@@ -1258,7 +1394,9 @@ function updateBadge(id, isOn) {
 /* ═══ Escape key to close ═══ */
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
-        if (document.getElementById('filepicker-dialog').classList.contains('show')) {
+        if (document.getElementById('lb-dialog').classList.contains('show')) {
+            closeLeaderboard();
+        } else if (document.getElementById('filepicker-dialog').classList.contains('show')) {
             closeFilePicker();
         } else if (document.getElementById('alert-dialog').classList.contains('show')) {
             closeAlert();
@@ -1270,6 +1408,67 @@ document.addEventListener('keydown', function(e) {
             }
         }
     }
+});
+
+/* ═══ Leaderboard ═══ */
+var _lbCurrentSort = 'xp';
+
+function showLeaderboard(dataJson) {
+    var data = (typeof dataJson === 'string') ? JSON.parse(dataJson) : dataJson;
+    var list = document.getElementById('lb-list');
+
+    if (!data || !data.entries || data.entries.length === 0) {
+        list.innerHTML = '<div class="lb-empty">暂无排行数据<br><span style="font-size:11px;color:#bbb;">完成演奏后数据将自动上传</span></div>';
+    } else {
+        list.innerHTML = '';
+        var selfDevice = data.self_device || '';
+        data.entries.forEach(function(e) {
+            var row = document.createElement('div');
+            row.className = 'lb-row';
+            if (e.is_self) row.className += ' lb-self';
+
+            var statVal = '';
+            if (_lbCurrentSort === 'xp') statVal = 'XP ' + e.xp;
+            else if (_lbCurrentSort === 'level') statVal = 'Lv.' + e.level;
+            else if (_lbCurrentSort === 'songs_played') statVal = e.songs_played + '曲';
+            else if (_lbCurrentSort === 'play_time') statVal = _fmtTime(e.play_time);
+
+            row.innerHTML =
+                '<span class="lb-rank">' + (e.rank <= 3 ? ['🥇','🥈','🥉'][e.rank-1] : '#'+e.rank) + '</span>' +
+                '<span class="lb-name">' + _escHtml(e.username) + (e.profession ? ' <span style="color:#ccc;font-size:10px;">' + _escHtml(e.profession) + '</span>' : '') + '</span>' +
+                '<span class="lb-lv">Lv.' + e.level + '</span>' +
+                '<span class="lb-stat">' + statVal + '</span>';
+            list.appendChild(row);
+        });
+    }
+
+    playSound('snd-alert');
+    document.getElementById('lb-dialog').classList.add('show');
+}
+
+function closeLeaderboard() {
+    document.getElementById('lb-dialog').classList.remove('show');
+}
+
+function _fmtTime(sec) {
+    if (sec < 60) return Math.round(sec) + 's';
+    if (sec < 3600) return Math.round(sec / 60) + 'min';
+    return (sec / 3600).toFixed(1) + 'h';
+}
+
+document.getElementById('lb-close').addEventListener('click', closeLeaderboard);
+
+document.getElementById('lb-tabs').querySelectorAll('.lb-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+        document.querySelectorAll('.lb-tab').forEach(function(t) { t.classList.remove('active'); });
+        tab.classList.add('active');
+        _lbCurrentSort = tab.getAttribute('data-sort');
+        document.getElementById('lb-list').innerHTML = '<div class="lb-loading">加载中...</div>';
+        playSound('snd-click');
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.fetch_leaderboard(_lbCurrentSort);
+        }
+    });
 });
 
 /* ═══ Python bridge: expose JS functions ═══ */
@@ -1285,6 +1484,8 @@ window.SAO = {
     stopFisheyeBg: stopFisheyeBg,
     showFilePicker: showFilePicker,
     closeFilePicker: closeFilePicker,
+    showLeaderboard: showLeaderboard,
+    closeLeaderboard: closeLeaderboard,
 };
 </script>
 </body>

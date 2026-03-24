@@ -2537,11 +2537,15 @@ class SAOFilePicker(tk.Toplevel):
         self.attributes('-topmost', True)
         self.configure(bg=self._BG)
 
-        w, h = 520, 480
+        self._final_w, self._final_h = 520, 480
+        self._initial_w = 135
         # 始终居中于屏幕
-        px = (self.winfo_screenwidth()  - w) // 2
-        py = (self.winfo_screenheight() - h) // 2
-        self.geometry(f'{w}x{h}+{px}+{py}')
+        self._px = (self.winfo_screenwidth()  - self._final_w) // 2
+        self._py = (self.winfo_screenheight() - self._final_h) // 2
+        # 从窄条开始 (与 SAODialog 展开风格一致)
+        self.geometry(f'{self._initial_w}x{self._final_h}'
+                      f'+{self._px + (self._final_w - self._initial_w) // 2}'
+                      f'+{self._py}')
 
         try:
             self.update_idletasks()
@@ -2551,13 +2555,13 @@ class SAOFilePicker(tk.Toplevel):
         except Exception:
             pass
 
-        self._build_ui(w, h, title)
+        self._build_ui(self._final_w, self._final_h, title)
         self._load_dir(self._current_dir)
 
         self._drag = {'x': 0, 'y': 0}
         self.transient(parent)
-        # 延迟 grab — 等窗口完整绘制后再抢占焦点, 避免窗口一闪即灭
-        self.after(120, self._delayed_grab)
+        # 展开动画 → 完成后 grab
+        self.after(50, self._animate_expand)
 
     def _delayed_grab(self):
         """窗口完全映射后才 grab_set, 防止 grab 冲突导致窗口闪退"""
@@ -2568,6 +2572,33 @@ class SAOFilePicker(tk.Toplevel):
                 self.focus_force()
         except Exception:
             pass
+
+    def _animate_expand(self):
+        """SAO 风格宽度展开动画 (135px → 520px, 500ms ease-out cubic)."""
+        import time as _time
+        t0 = _time.time()
+        dur = 0.5
+        fw = self._final_w
+        fh = self._final_h
+        iw = self._initial_w
+        px = self._px
+        py = self._py
+
+        def _step():
+            if not self.winfo_exists():
+                return
+            elapsed = _time.time() - t0
+            t = min(1.0, elapsed / dur)
+            et = 1.0 - (1.0 - t) ** 3  # ease-out cubic
+            w = int(iw + (fw - iw) * et)
+            x = px + (fw - w) // 2
+            self.geometry(f'{w}x{fh}+{x}+{py}')
+            if t < 1.0:
+                self.after(16, _step)
+            else:
+                # 展开完成, grab 焦点
+                self.after(50, self._delayed_grab)
+        _step()
 
     def _build_ui(self, w, h, title):
         # ── 外边框 1px ──
@@ -2821,18 +2852,51 @@ class SAOFilePicker(tk.Toplevel):
         result = self.result
         callback = self.callback
         parent = self.master
-        # 先释放 grab 并销毁窗口, 再通过 after 调用回调
-        # 避免 grab 冲突导致第二个对话框被阻塞
         try:
             self.grab_release()
         except Exception:
             pass
-        self.destroy()
-        if callback and result:
-            try:
-                parent.after(80, lambda: callback(result))
-            except Exception:
-                callback(result)
+        # 收起动画 (反向 520→135px, 300ms)
+        self._animate_collapse(result, callback, parent)
+
+    def _animate_collapse(self, result, callback, parent):
+        """SAO 风格收起动画 (宽度 → 135px, 300ms ease-in)."""
+        import time as _time
+        t0 = _time.time()
+        dur = 0.3
+        fw = self._final_w
+        iw = self._initial_w
+        try:
+            cx = self.winfo_x() + self.winfo_width() // 2
+            cy = self.winfo_y()
+        except Exception:
+            cx = self._px + fw // 2
+            cy = self._py
+
+        def _step():
+            if not self.winfo_exists():
+                if callback and result:
+                    try:
+                        parent.after(50, lambda: callback(result))
+                    except Exception:
+                        callback(result)
+                return
+            elapsed = _time.time() - t0
+            t = min(1.0, elapsed / dur)
+            et = t ** 2  # ease-in quad
+            w = int(fw - (fw - iw) * et)
+            x = cx - w // 2
+            self.geometry(f'{w}x{self._final_h}+{x}+{cy}')
+            if t < 1.0:
+                self.after(16, _step)
+            else:
+                self.destroy()
+                if callback and result:
+                    try:
+                        parent.after(50, lambda: callback(result))
+                    except Exception:
+                        callback(result)
+        _step()
 
 
 # ──────────────────── SAO 通用按钮 ────────────────────
@@ -3012,7 +3076,7 @@ class SAOTitleBar(tk.Frame):
     """SAO 风格标题栏"""
 
     def __init__(self, parent, root, title="咲 Midi Player",
-                 version="v3.4.0+3400", on_close=None, **kw):
+                 version="v3.4.1+3401", on_close=None, **kw):
         super().__init__(parent, bg='#080c12', height=36, **kw)
         self.root = root
         self.on_close = on_close

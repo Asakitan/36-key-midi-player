@@ -249,6 +249,11 @@ class SAOWebAPI:
         """文件选择器选中文件夹 → 启动文件夹循环"""
         threading.Thread(target=self._g._start_folder_loop, args=(path,), daemon=True).start()
 
+    def fetch_leaderboard(self, sort_by: str = 'xp'):
+        """排行榜 JS 回调: 拉取数据并推送到 menu.html"""
+        threading.Thread(target=self._g._fetch_leaderboard,
+                         args=(sort_by,), daemon=True).start()
+
 
 # ════════════════════════════════════════════════
 #  面板 JS API Bridge
@@ -267,6 +272,8 @@ class PanelAPI:
                 x = win.x + int(dx)
                 y = win.y + int(dy)
                 win.move(x, y)
+                # 更新浮动基准点
+                self._g._panel_origins[self._type] = (x, y)
         except Exception:
             pass
 
@@ -359,6 +366,8 @@ class SAOWebViewGUI:
         self._fisheye_active = False
         self._fisheye_gen = 0  # 鱼眼循环代数 (防止多线程重复)
         self._panel_wins = {}  # panel_type -> webview window
+        self._panel_float_active = True   # 面板浮动动画开关
+        self._panel_origins = {}          # panel_type -> (base_x, base_y)
 
         # 回调
         self.player.on_progress = self._on_progress
@@ -848,12 +857,20 @@ class SAOWebViewGUI:
             import base64 as b64mod, io
             from PIL import Image
 
-            hx = self.hp_win.x if self.hp_win else 0
-            hy = self.hp_win.y if self.hp_win else 0
+            hx, hy = 0, 0
+            try:
+                if self.hp_win and hasattr(self.hp_win, 'x'):
+                    hx = self.hp_win.x or 0
+                    hy = self.hp_win.y or 0
+            except Exception:
+                pass
 
+            img = None
             try:
                 import mss
                 with mss.mss() as sct:
+                    if not sct.monitors or len(sct.monitors) < 2:
+                        raise RuntimeError('no monitors')
                     target = sct.monitors[1]
                     for m in sct.monitors[1:]:
                         if (m['left'] <= hx < m['left'] + m['width'] and
@@ -861,10 +878,18 @@ class SAOWebViewGUI:
                             target = m
                             break
                     raw = sct.grab(target)
+                    if raw is None:
+                        raise RuntimeError('grab returned None')
                     img = Image.frombytes('RGB', raw.size, raw.rgb)
             except Exception:
-                from PIL import ImageGrab
-                img = ImageGrab.grab()
+                try:
+                    from PIL import ImageGrab
+                    img = ImageGrab.grab()
+                except Exception:
+                    return None
+
+            if img is None:
+                return None
 
             # 缩到 540p 以保持鱼眼清晰度 (WebGL 拉伸至全屏)
             w, h = img.size
@@ -876,7 +901,7 @@ class SAOWebViewGUI:
             img.save(buf, format='JPEG', quality=quality)
             return b64mod.b64encode(buf.getvalue()).decode('ascii')
         except Exception as e:
-            print(f"[SAO] monitor capture: {e}")
+            # 静默处理 — 热切换时窗口已销毁是预期行为
             return None
 
     # ── GPU barrel distortion (moderngl) ──
@@ -992,9 +1017,14 @@ class SAOWebViewGUI:
     def _fisheye_loop(self, gen: int):
         """后台截屏循环 — ~15fps 截屏推送, 浏览器 WebGL 以 60fps 实时渲染."""
         import time as _time
-        while self._fisheye_active and self._menu_visible and gen == self._fisheye_gen:
+        while (self._fisheye_active and self._menu_visible
+               and gen == self._fisheye_gen
+               and not self._pending_switch):
             t0 = _time.time()
-            self._push_fisheye_background()
+            try:
+                self._push_fisheye_background()
+            except Exception:
+                break
             elapsed = _time.time() - t0
             sleep_t = max(0.01, 0.066 - elapsed)   # ~15fps 截屏刷新
             _time.sleep(sleep_t)
@@ -1004,7 +1034,15 @@ class SAOWebViewGUI:
         """切换面板窗口 (control/piano/status/viz)."""
         if panel_type in self._panel_wins:
             win = self._panel_wins.pop(panel_type, None)
+            self._panel_origins.pop(panel_type, None)
             if win:
+                # 保存位置
+                try:
+                    self.settings.set(f'wv_{panel_type}_x', win.x)
+                    self.settings.set(f'wv_{panel_type}_y', win.y)
+                    self.settings.save()
+                except Exception:
+                    pass
                 try:
                     win.evaluate_js('document.documentElement.style.opacity="0"')
                 except Exception:
@@ -1050,6 +1088,7 @@ class SAOWebViewGUI:
             js_api=api,
         )
         self._panel_wins[panel_type] = win
+        self._panel_origins[panel_type] = (int(sx), int(sy))
 
         def _init():
             time.sleep(1.0)
@@ -1060,7 +1099,40 @@ class SAOWebViewGUI:
                 pass
             # 面板窗口 0.95 透明度 (Win32 LWA_ALPHA)
             self._set_window_alpha(f'SAO {panel_type}', 0.95)
+            # 启动面板浮动循环
+            self._start_panel_float(panel_type)
         threading.Thread(target=_init, daemon=True).start()
+
+    def _start_panel_float(self, panel_type):
+        """Python 侧 sinusoidal window.move() 浮动 — 整个窗口(含阴影)一起移动."""
+        import math as _math
+
+        def _float_loop():
+            import time as _time
+            t0 = _time.time()
+            # 每个面板有独立的相位偏移, 避免同步
+            phase = hash(panel_type) % 1000 / 1000.0 * 6.28
+            while self._panel_float_active and panel_type in self._panel_wins:
+                win = self._panel_wins.get(panel_type)
+                if not win:
+                    break
+                origin = self._panel_origins.get(panel_type)
+                if not origin:
+                    break
+                bx, by = origin
+                elapsed = _time.time() - t0
+                # Lissajous 轨迹, 幅度 ≤4px
+                dx = int(3.0 * _math.sin(elapsed * 0.55 + phase)
+                         + 1.5 * _math.sin(elapsed * 1.17 + phase))
+                dy = int(2.5 * _math.sin(elapsed * 0.42 + phase + 1.0)
+                         + 1.0 * _math.sin(elapsed * 0.93 + phase))
+                try:
+                    win.move(bx + dx, by + dy)
+                except Exception:
+                    break
+                _time.sleep(0.033)  # ~30fps
+
+        threading.Thread(target=_float_loop, daemon=True).start()
 
     def _get_panel_state(self):
         mode_sys = self.settings.get('mode_system', 'classic')
@@ -1102,6 +1174,7 @@ class SAOWebViewGUI:
             except Exception:
                 pass
         self._panel_wins.clear()
+        self._panel_origins.clear()
 
     # ─── 同步信息 ───
     def _sync_menu_info(self):
@@ -1140,6 +1213,7 @@ class SAOWebViewGUI:
             'panel_status': lambda: self._toggle_panel('status'),
             'panel_viz': lambda: self._toggle_panel('viz'),
             'midi_channel': self._show_channel_settings,
+            'leaderboard': self._show_leaderboard,
             'switch_sao': self._switch_to_sao_ui,
             'switch_old': self._switch_to_old_ui,
             'exit': self._exit,
@@ -1168,6 +1242,7 @@ class SAOWebViewGUI:
             'panel_status': lambda: self._toggle_panel('status'),
             'panel_viz': lambda: self._toggle_panel('viz'),
             'midi_channel': self._show_channel_settings,
+            'leaderboard': self._show_leaderboard,
             'switch_sao': self._switch_to_sao_ui,
             'switch_old': self._switch_to_old_ui,
             'exit': self._exit,
@@ -1315,6 +1390,39 @@ class SAOWebViewGUI:
             print(f"[SAO] channel settings: {e}")
 
     # ════════════════════════════════════════
+    #  排行榜
+    # ════════════════════════════════════════
+    def _show_leaderboard(self):
+        """打开排行榜对话框."""
+        if not self._menu_visible:
+            self._open_menu()
+            time.sleep(0.5)
+        self._fetch_leaderboard('xp')
+
+    def _fetch_leaderboard(self, sort_by: str = 'xp'):
+        """拉取排行榜数据并推送到 menu.html."""
+        try:
+            from leaderboard import fetch_leaderboard, _get_device_id
+            data = fetch_leaderboard(sort_by=sort_by, limit=50)
+            if data is None:
+                self._eval_menu('SAO.showAlert("排行榜", "无法连接服务器，请稍后再试", false)')
+                return
+            my_id = _get_device_id()
+            rows = data if isinstance(data, list) else data.get('players', [])
+            for i, r in enumerate(rows):
+                r['rank'] = i + 1
+                r['is_self'] = (r.get('device_id', '') == my_id)
+            payload = json.dumps({
+                'sort': sort_by,
+                'entries': rows,
+                'self_device': my_id,
+            }, ensure_ascii=False)
+            self._eval_menu(f'SAO.showLeaderboard({payload})')
+        except Exception as e:
+            print(f"[SAO] leaderboard: {e}")
+            self._eval_menu('SAO.showAlert("排行榜", "加载失败: ' + str(e).replace('"', '\\"') + '", false)')
+
+    # ════════════════════════════════════════
     #  文件管理
     # ════════════════════════════════════════
     def _open_file(self):
@@ -1439,6 +1547,22 @@ class SAOWebViewGUI:
                 if self._menu_visible:
                     self._eval_menu(f'SAO.showToast("LEVEL UP!  Lv.{old_lv} → Lv.{new_lv}", 3000)')
             self._sync_menu_info()
+        except Exception:
+            pass
+
+        # 排行榜上传 (后台, 不阻塞)
+        try:
+            from leaderboard import upload_stats
+            from character_profile import load_profile as _lp
+            _prof = _lp()
+            threading.Thread(target=upload_stats, kwargs={
+                'username': _prof.get('username', 'Player'),
+                'level': _prof.get('level', 1),
+                'xp': _prof.get('xp', 0),
+                'songs_played': _prof.get('songs_played', 0),
+                'play_time': _prof.get('play_time', 0),
+                'profession': _prof.get('profession', ''),
+            }, daemon=True).start()
         except Exception:
             pass
 

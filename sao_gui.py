@@ -1254,6 +1254,7 @@ class SAOPlayerGUI:
             '关于': [
                 {'icon': '◇', 'label': '关于本程序', 'command': self._show_about},
                 {'icon': '✎', 'label': '修改角色资料', 'command': self._edit_profile},
+                {'icon': '◆', 'label': '排行榜', 'command': self._show_leaderboard},
                 {'icon': '◇', 'label': '切换到 WebView UI', 'command': self._switch_to_webview_ui},
                 {'icon': '↺', 'label': '切换到 Old School UI', 'command': self._switch_to_old_ui},
             ],
@@ -2012,8 +2013,11 @@ class SAOPlayerGUI:
         """
         悬浮按钮点击时的径向运动模糊效果 (SAO 菜单展开/收起).
 
-        以悬浮按钮为中心, 截取屏幕 → 径向缩放模糊 → 叠加层 300ms 渐隐.
-        全部在后台线程完成重活, 主线程仅显示结果图.
+        以悬浮按钮为中心, 截取屏幕 → 径向缩放模糊 → 叠加层渐隐.
+        • 后台线程: 截屏 + 径向模糊
+        • 主线程: 显示结果 + 渐隐动画
+        • WDA_EXCLUDEFROMCAPTURE: 防止鱼眼层捕获到此叠加层 (消除撕裂)
+        • BILINEAR 缩放: 减少锯齿/马赛克感
         """
         try:
             from PIL import ImageGrab, Image, ImageTk, ImageFilter
@@ -2056,21 +2060,20 @@ class SAOPlayerGUI:
             if shot is None:
                 return
 
-            # 半分辨率处理
-            hw, hh = sw // 3, sh // 3
-            small = shot.resize((hw, hh), Image.NEAREST)
-            cx, cy = fx / 3.0, fy / 3.0  # 焦点在缩减分辨率坐标
+            # 半分辨率处理 (1/2 而非 1/3, 提升清晰度)
+            hw, hh = sw // 2, sh // 2
+            small = shot.resize((hw, hh), Image.BILINEAR)
+            cx, cy = fx / 2.0, fy / 2.0
 
-            # 径向缩放模糊: 多次微缩放叠加 (减少层数提升性能)
+            # 径向缩放模糊: 多次微缩放叠加
             import numpy as np
             acc = np.array(small, dtype=np.float32)
-            n_layers = 4
+            n_layers = 5
             for i in range(1, n_layers + 1):
-                scale = 1.0 + i * 0.015  # 逐层放大
+                scale = 1.0 + i * 0.012
                 nw = int(hw * scale)
                 nh = int(hh * scale)
-                zoomed = small.resize((nw, nh), Image.NEAREST)
-                # 以焦点为中心裁剪回原尺寸
+                zoomed = small.resize((nw, nh), Image.BILINEAR)
                 ox = int(cx * scale - cx)
                 oy = int(cy * scale - cy)
                 ox = max(0, min(ox, nw - hw))
@@ -2080,28 +2083,26 @@ class SAOPlayerGUI:
             blurred = Image.fromarray(
                 (acc / (n_layers + 1)).clip(0, 255).astype(np.uint8))
 
-            # 亮度微调: 展开时略亮, 收起时略暗
             from PIL import ImageEnhance
             if closing:
                 blurred = ImageEnhance.Brightness(blurred).enhance(0.85)
             else:
                 blurred = ImageEnhance.Brightness(blurred).enhance(1.12)
 
-            full = blurred.resize((sw, sh), Image.NEAREST)
+            full = blurred.resize((sw, sh), Image.BILINEAR)
 
-            # 投递到主线程显示
             try:
                 self.root.after(0, lambda img=full: _display(img))
             except Exception:
                 pass
 
         def _display(pil_img):
-            """主线程: 显示模糊图 + 300ms ease-out 渐隐."""
+            """主线程: 显示模糊图 + 350ms ease-out 渐隐."""
             try:
                 mb_ov = tk.Toplevel(self.root)
                 mb_ov.overrideredirect(True)
                 mb_ov.attributes('-topmost', True)
-                mb_ov.attributes('-alpha', 0.75)
+                mb_ov.attributes('-alpha', 0.0)
                 mb_ov.geometry(f'{sw}x{sh}+0+0')
                 cv = tk.Canvas(mb_ov, width=sw, height=sh,
                                highlightthickness=0, bg='black')
@@ -2109,26 +2110,44 @@ class SAOPlayerGUI:
                 photo = ImageTk.PhotoImage(pil_img)
                 cv.create_image(0, 0, image=photo, anchor='nw')
                 cv._photo = photo
+
+                # WDA_EXCLUDEFROMCAPTURE: 鱼眼截屏不会捕获到此 overlay
+                try:
+                    import ctypes as _ct
+                    _u32 = _ct.windll.user32
+                    mb_ov.update_idletasks()
+                    hwnd = _u32.GetParent(mb_ov.winfo_id()) or mb_ov.winfo_id()
+                    _u32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+                except Exception:
+                    pass
             except Exception:
                 return
 
-            # 300ms ease-out 渐隐
+            # 快速渐入 (50ms) → 缓慢渐隐 (350ms), 消除突然出现的闪烁感
             _t0 = time.time()
-            _dur = 0.30
+            _fadein_dur = 0.05
+            _fadeout_dur = 0.35
+            _peak = 0.72
 
-            def _mblur_fade():
+            def _mblur_anim():
                 dt = time.time() - _t0
-                if dt >= _dur:
+                if dt < _fadein_dur:
+                    # 渐入阶段
+                    a = _peak * (dt / _fadein_dur)
+                elif dt < _fadein_dur + _fadeout_dur:
+                    # 渐隐阶段
+                    t = (dt - _fadein_dur) / _fadeout_dur
+                    a = _peak * (1.0 - t ** 0.6)
+                else:
                     try: mb_ov.destroy()
                     except Exception: pass
                     return
-                a = max(0.0, 0.75 * (1.0 - (dt / _dur) ** 0.5))
-                try: mb_ov.attributes('-alpha', a)
+                try: mb_ov.attributes('-alpha', max(0.0, a))
                 except Exception: pass
-                try: mb_ov.after(16, _mblur_fade)
+                try: mb_ov.after(16, _mblur_anim)
                 except Exception: pass
 
-            mb_ov.after(16, _mblur_fade)
+            mb_ov.after(1, _mblur_anim)
 
         import threading as _th
         _th.Thread(target=_build_and_show, daemon=True).start()
@@ -2159,7 +2178,7 @@ class SAOPlayerGUI:
 
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        hw, hh = sw // 2, sh // 2
+        hw, hh = int(sw * 0.85), int(sh * 0.85)   # 85% 分辨率 (清晰度提升)
 
         # ── 创建叠加层窗口 (不设 topmost, 自然低于 topmost UI) ──
         # GPU/numpy 初始化已移至后台 _worker 线程 (消除主线程阻塞)
@@ -2373,7 +2392,7 @@ class SAOPlayerGUI:
                 _ctx = None
 
             # ── numpy 后备 ──
-            qw, qh = (hw, hh) if _gl_ok else (sw // 4, sh // 4)
+            qw, qh = (hw, hh) if _gl_ok else (int(sw * 0.5), int(sh * 0.5))
             _np_maps = None
             if not _gl_ok:
                 try:
@@ -2402,7 +2421,7 @@ class SAOPlayerGUI:
                     continue
                 try:
                     if _gl_ok:
-                        small = shot.resize((hw, hh), Image.NEAREST)
+                        small = shot.resize((hw, hh), Image.BILINEAR)
                         _tex.write(small.tobytes())
                         _fbo.use()
                         _ctx.clear()
@@ -2411,7 +2430,7 @@ class SAOPlayerGUI:
                         raw = _fbo.color_attachments[0].read()
                         dist = Image.frombytes('RGB', (hw, hh), raw)
                     else:
-                        tiny = shot.resize((qw, qh), Image.NEAREST)
+                        tiny = shot.resize((qw, qh), Image.BILINEAR)
                         _x0, _x1, _y0, _y1, _wfx, _wfy = _np_maps
                         a = _np.array(tiny, dtype=_np.float32)
                         t = a[_y0, _x0] * (1 - _wfx) + a[_y0, _x1] * _wfx
@@ -2424,7 +2443,7 @@ class SAOPlayerGUI:
                     continue
                 if not _running[0]:
                     break
-                full = dist.resize((sw, sh), Image.NEAREST)
+                full = dist.resize((sw, sh), Image.BILINEAR)
                 _latest_frame[0] = full
                 # 限制帧率, 释放 CPU 给主线程
                 _elapsed = _time.time() - _t_start
@@ -3116,6 +3135,23 @@ class SAOPlayerGUI:
         except Exception:
             pass
 
+        # 排行榜上传 (后台, 不阻塞)
+        try:
+            import threading as _thr
+            from leaderboard import upload_stats
+            from character_profile import load_profile as _lp
+            _prof = _lp()
+            _thr.Thread(target=upload_stats, kwargs={
+                'username': _prof.get('username', 'Player'),
+                'level': _prof.get('level', 1),
+                'xp': _prof.get('xp', 0),
+                'songs_played': _prof.get('songs_played', 0),
+                'play_time': _prof.get('play_time', 0),
+                'profession': _prof.get('profession', ''),
+            }, daemon=True).start()
+        except Exception:
+            pass
+
         if self._player_panel:
             self._player_panel.update_status("播放完成", False)
             self._player_panel.update_progress(0, 0)
@@ -3258,7 +3294,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.0+3400\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.1+3401\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3284,6 +3320,37 @@ class SAOPlayerGUI:
 
         self.root.after(600, lambda: show_welcome_dialog(
             self._float, on_done=on_profile_done))
+
+    def _show_leaderboard(self):
+        """打开排行榜对话框 (SAO_GUI tkinter 版)."""
+        if self._sao_menu.visible:
+            self._sao_menu.close()
+
+        def _do():
+            try:
+                from leaderboard import fetch_leaderboard, _get_device_id
+                data = fetch_leaderboard(sort_by='xp', limit=50)
+                if data is None:
+                    SAODialog.showinfo(self._float, "排行榜", "无法连接服务器，请稍后再试")
+                    return
+                my_id = _get_device_id()
+                rows = data if isinstance(data, list) else data.get('players', [])
+                lines = ["◆ LEADERBOARD ◆\n"]
+                for i, r in enumerate(rows):
+                    rank = i + 1
+                    name = r.get('username', '???')[:12]
+                    lv = r.get('level', 1)
+                    xp = r.get('xp', r.get('total_xp', 0))
+                    marker = '  ◄ YOU' if r.get('device_id', '') == my_id else ''
+                    lines.append(f"#{rank:<3} Lv.{lv:<4} {name:<14} XP:{xp}{marker}")
+                if not rows:
+                    lines.append("暂无数据")
+                SAODialog.showinfo(self._float, "排行榜", "\n".join(lines))
+            except Exception as e:
+                print(f"[SAO] leaderboard: {e}")
+                SAODialog.showinfo(self._float, "排行榜", f"加载失败: {e}")
+
+        self.root.after(600, lambda: threading.Thread(target=_do, daemon=True).start())
 
     def _on_close(self):
         self._destroyed = True
