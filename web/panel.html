@@ -4,8 +4,20 @@
 <meta charset="UTF-8">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-@font-face { font-family: 'sao'; src: url('../assets/fonts/SAOUI.ttf'); }
-@font-face { font-family: 'yuanJWD'; src: url('../assets/fonts/ZhuZiAYuanJWD.ttf'); }
+@font-face {
+    font-family: 'sao';
+    src: url('../assets/fonts/SAOUI.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+}
+@font-face {
+    font-family: 'yuanJWD';
+    src: url('../assets/fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+}
 
 html, body {
     height: 100%;
@@ -101,12 +113,95 @@ body:not(.opening):not(.closing) .panel {
     border-radius: 4px;
     box-shadow: 0 2px 16px rgba(0,0,0,0.18);
     overflow: hidden;
-    font-family: 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
+    font-family: 'sao', 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
     font-size: 12px;
     color: #555;
     filter: blur(0px);
     will-change: filter, box-shadow, opacity;
+    position: relative;
 }
+
+.panel-hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+}
+
+.panel-header,
+.panel-body {
+    position: relative;
+    z-index: 1;
+}
+
+@keyframes hud-drift-far-left {
+    0% { transform: translate3d(-8px, 0px, 0); opacity: .40; }
+    50% { transform: translate3d(10px, 4px, 0); opacity: .72; }
+    100% { transform: translate3d(-8px, 0px, 0); opacity: .40; }
+}
+@keyframes hud-drift-near-left {
+    0% { transform: translate3d(-20px, 0px, 0); opacity: .38; }
+    50% { transform: translate3d(16px, -5px, 0); opacity: .90; }
+    100% { transform: translate3d(-20px, 0px, 0); opacity: .38; }
+}
+@keyframes hud-drift-far-right {
+    0% { transform: translate3d(8px, 0px, 0); opacity: .36; }
+    50% { transform: translate3d(-10px, 5px, 0); opacity: .70; }
+    100% { transform: translate3d(8px, 0px, 0); opacity: .36; }
+}
+@keyframes hud-drift-near-right {
+    0% { transform: translate3d(18px, 0px, 0); opacity: .36; }
+    50% { transform: translate3d(-18px, -6px, 0); opacity: .88; }
+    100% { transform: translate3d(18px, 0px, 0); opacity: .36; }
+}
+
+.hud-lane {
+    position: absolute;
+    width: 118px;
+    height: 40px;
+    border: 1px solid rgba(104, 228, 255, 0.34);
+    clip-path: polygon(0 8%, 88% 8%, 100% 0, 100% 100%, 12% 100%, 0 84%);
+    box-shadow: inset 0 0 14px rgba(104, 228, 255, 0.06);
+}
+.hud-lane::before,
+.hud-lane::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+}
+.hud-lane::before {
+    background: linear-gradient(90deg, rgba(255,255,255,0), rgba(104,228,255,.16), rgba(255,255,255,0));
+}
+.hud-lane::after {
+    background: repeating-linear-gradient(90deg, rgba(255,255,255,0) 0 10px, rgba(255,255,255,.10) 10px 11px, rgba(255,255,255,0) 11px 18px);
+    opacity: .28;
+}
+.hud-lane.gold {
+    border-color: rgba(243, 175, 18, 0.34);
+    box-shadow: inset 0 0 14px rgba(243, 175, 18, 0.08);
+}
+.hud-lane.gold::before {
+    background: linear-gradient(90deg, rgba(255,255,255,0), rgba(243,175,18,.18), rgba(255,255,255,0));
+}
+.hud-lane .hud-label {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 12px;
+    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-size: 10px;
+    letter-spacing: 1.2px;
+    color: rgba(104, 228, 255, 0.78);
+}
+.hud-lane.gold .hud-label {
+    color: rgba(243, 175, 18, 0.82);
+}
+
+.hud-left-far { left: 8px; top: 42px; animation: hud-drift-far-left 8.4s ease-in-out infinite; }
+.hud-left-near { left: 14px; bottom: 18px; animation: hud-drift-near-left 5.8s ease-in-out infinite; }
+.hud-right-far { right: 8px; top: 58px; animation: hud-drift-far-right 8.0s ease-in-out infinite; }
+.hud-right-near { right: 12px; bottom: 22px; animation: hud-drift-near-right 5.6s ease-in-out infinite; }
 
 .panel-header {
     background: rgba(245, 245, 247, 0.97);
@@ -166,7 +261,7 @@ body:not(.opening):not(.closing) .panel {
 .ctrl-value {
     min-width: 65px;
     text-align: center;
-    font-family: 'Consolas', monospace;
+    font-family: 'sao', 'yuanJWD', sans-serif;
     font-size: 12px;
     color: #333;
 }
@@ -259,6 +354,12 @@ body:not(.opening):not(.closing) .panel {
 </head>
 <body>
 <div class="panel" id="panel">
+    <div class="panel-hud" aria-hidden="true">
+        <div class="hud-lane hud-left-far"><span class="hud-label">SYS CORE</span></div>
+        <div class="hud-lane gold hud-left-near"><span class="hud-label">GAIN ROUTE</span></div>
+        <div class="hud-lane hud-right-far"><span class="hud-label">NERVE GEAR</span></div>
+        <div class="hud-lane gold hud-right-near"><span class="hud-label">LINK RATE</span></div>
+    </div>
     <div class="panel-header" id="panel-header">
         <span class="panel-title" id="panel-title">面板</span>
         <span class="panel-close" id="panel-close">×</span>

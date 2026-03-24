@@ -8,8 +8,20 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 /* ═══ SAO Fonts ═══ */
-@font-face { font-family: 'sao'; src: url('../assets/fonts/SAOUI.ttf'); }
-@font-face { font-family: 'yuanJWD'; src: url('../assets/fonts/ZhuZiAYuanJWD.ttf'); }
+@font-face {
+    font-family: 'sao';
+    src: url('../assets/fonts/SAOUI.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+}
+@font-face {
+    font-family: 'yuanJWD';
+    src: url('../assets/fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+}
 
 /* ═══ Body — native pywebview transparency ═══
    transparent=True in pywebview handles the background.
@@ -75,6 +87,7 @@ body {
     animation: hp-slide-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both,
                hp-live-blur 8.5s ease-in-out 0.7s infinite,
                sao-float 9s ease-in-out 0.7s infinite;
+    position: relative;
 }
 
 .XTBox.hp-reenter {
@@ -200,6 +213,68 @@ body {
     background: linear-gradient(to right, rgb(248, 140, 122), rgb(239, 104, 78));
 }
 
+@keyframes hp-hud-left-far {
+    0% { transform: translate3d(-10px, 0, 0); opacity: .36; }
+    50% { transform: translate3d(12px, 4px, 0); opacity: .70; }
+    100% { transform: translate3d(-10px, 0, 0); opacity: .36; }
+}
+@keyframes hp-hud-left-near {
+    0% { transform: translate3d(-18px, 0, 0); opacity: .32; }
+    50% { transform: translate3d(18px, -5px, 0); opacity: .88; }
+    100% { transform: translate3d(-18px, 0, 0); opacity: .32; }
+}
+@keyframes hp-hud-right-far {
+    0% { transform: translate3d(10px, 0, 0); opacity: .34; }
+    50% { transform: translate3d(-12px, 5px, 0); opacity: .70; }
+    100% { transform: translate3d(10px, 0, 0); opacity: .34; }
+}
+@keyframes hp-hud-right-near {
+    0% { transform: translate3d(18px, 0, 0); opacity: .32; }
+    50% { transform: translate3d(-18px, -5px, 0); opacity: .86; }
+    100% { transform: translate3d(18px, 0, 0); opacity: .32; }
+}
+
+.hp-hud {
+    position: absolute;
+    inset: -18px -10px -12px -10px;
+    pointer-events: none;
+    overflow: visible;
+}
+.hp-hud-lane {
+    position: absolute;
+    width: 112px;
+    height: 18px;
+    border: 1px solid rgba(104, 228, 255, 0.34);
+    clip-path: polygon(0 14%, 88% 14%, 100% 0, 100% 100%, 10% 100%, 0 78%);
+    box-shadow: inset 0 0 12px rgba(104, 228, 255, 0.08);
+}
+.hp-hud-lane::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(90deg, rgba(255,255,255,0) 0 10px, rgba(255,255,255,.10) 10px 11px, rgba(255,255,255,0) 11px 18px);
+    opacity: .28;
+}
+.hp-hud-lane.gold {
+    border-color: rgba(243, 175, 18, 0.34);
+    box-shadow: inset 0 0 12px rgba(243, 175, 18, 0.08);
+}
+.hp-hud-label {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: rgba(104, 228, 255, 0.78);
+}
+.hp-hud-lane.gold .hp-hud-label { color: rgba(243, 175, 18, 0.82); }
+.hp-left-far { left: -6px; top: 4px; animation: hp-hud-left-far 8.0s ease-in-out infinite; }
+.hp-left-near { left: 10px; bottom: -8px; animation: hp-hud-left-near 5.4s ease-in-out infinite; }
+.hp-right-far { right: -8px; top: 22px; animation: hp-hud-right-far 8.4s ease-in-out infinite; }
+.hp-right-near { right: 4px; bottom: 2px; animation: hp-hud-right-near 5.7s ease-in-out infinite; }
+
 /* ═══ Playing status indicator ═══ */
 @keyframes pulse {
     0%, 100% { opacity: 0.5; }
@@ -221,7 +296,7 @@ body {
     backdrop-filter: blur(8px);
     border-radius: 4px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-    font-family: 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
+    font-family: 'sao', 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
     font-size: 12px;
     color: #333;
     z-index: 1000;
@@ -312,6 +387,12 @@ body {
 
 <!-- HP Component -->
 <div class="XTBox" id="hp">
+    <div class="hp-hud" aria-hidden="true">
+        <div class="hp-hud-lane hp-left-far"><span class="hp-hud-label">SYS CORE</span></div>
+        <div class="hp-hud-lane gold hp-left-near"><span class="hp-hud-label">GAIN ROUTE</span></div>
+        <div class="hp-hud-lane hp-right-far"><span class="hp-hud-label">NERVE GEAR</span></div>
+        <div class="hp-hud-lane gold hp-right-near"><span class="hp-hud-label">LINK RATE</span></div>
+    </div>
     <div class="xt_left"></div>
     <div class="xt_right"><span id="username">Player</span></div>
     <div class="number_xt">

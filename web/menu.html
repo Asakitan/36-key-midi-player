@@ -9,8 +9,26 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 /* ═══ SAO Fonts ═══ */
-@font-face { font-family: 'sao'; src: url('../assets/fonts/SAOUI.ttf'); }
-@font-face { font-family: 'yuanJWD'; src: url('../assets/fonts/ZhuZiAYuanJWD.ttf'); }
+@font-face {
+    font-family: 'sao';
+    src: url('../assets/fonts/SAOUI.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+}
+@font-face {
+    font-family: 'yuanJWD';
+    src: url('../assets/fonts/ZhuZiAYuanJWD.ttf') format('truetype');
+    font-style: normal;
+    font-weight: 400;
+    font-display: block;
+}
+
+:root {
+    --font-sao: 'sao', 'Segoe UI', sans-serif;
+    --font-round: 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
+    --font-ui: 'sao', 'yuanJWD', 'Segoe UI', sans-serif;
+}
 
 /* ═══════════════════════════════════════
    PopUpMenu — fullscreen overlay
@@ -22,9 +40,32 @@ html, body {
     overflow: hidden;
     user-select: none;
     -webkit-user-select: none;
-    font-family: 'sao', 'yuanJWD', sans-serif;
+    font-family: var(--font-ui);
     letter-spacing: 1px;
     color: #555;
+}
+
+.position,
+.leftInfoBox,
+.child-menu,
+.child-menu li span,
+.child-menu li .shortcut,
+.title,
+.des,
+.toast,
+.current-file,
+.picker-header span,
+.picker-path-bar,
+.picker-item,
+.btn-use-folder,
+.lb-box,
+.lb-tab,
+.lb-row,
+.saoMsgBox,
+.alert-title,
+.alert-body,
+.alert-footer {
+    font-family: var(--font-ui) !important;
 }
 
 .info {
@@ -33,6 +74,7 @@ html, body {
     left: 0; top: 0;
     width: 100vw;
     height: 100vh;
+    overflow: hidden;
     background: rgba(0, 0, 0, 0.30);
     backdrop-filter: blur(0px);
     perspective: 600px;
@@ -54,25 +96,85 @@ html, body {
     transition: opacity 0.55s ease, backdrop-filter 0.55s ease;
 }
 
+.menu-hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+}
+.menu-hud-lane {
+    position: absolute;
+    width: 152px;
+    height: 28px;
+    border: 1px solid rgba(104, 228, 255, 0.26);
+    clip-path: polygon(0 16%, 88% 16%, 100% 0, 100% 100%, 10% 100%, 0 76%);
+    box-shadow: inset 0 0 18px rgba(104, 228, 255, 0.06);
+}
+.menu-hud-lane.gold {
+    border-color: rgba(243, 175, 18, 0.24);
+    box-shadow: inset 0 0 18px rgba(243, 175, 18, 0.06);
+}
+.menu-hud-lane::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(90deg, rgba(255,255,255,0) 0 12px, rgba(255,255,255,.08) 12px 13px, rgba(255,255,255,0) 13px 22px);
+    opacity: .26;
+}
+.menu-hud-label {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    transform: translateY(-50%);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    letter-spacing: 1.1px;
+    color: rgba(104, 228, 255, 0.72);
+}
+.menu-hud-lane.gold .menu-hud-label { color: rgba(243, 175, 18, 0.74); }
+@keyframes menu-hud-left-far {
+    0% { transform: translate3d(-20px, 0, 0); opacity: .30; }
+    50% { transform: translate3d(20px, 8px, 0); opacity: .66; }
+    100% { transform: translate3d(-20px, 0, 0); opacity: .30; }
+}
+@keyframes menu-hud-left-near {
+    0% { transform: translate3d(-34px, 0, 0); opacity: .28; }
+    50% { transform: translate3d(28px, -10px, 0); opacity: .84; }
+    100% { transform: translate3d(-34px, 0, 0); opacity: .28; }
+}
+@keyframes menu-hud-right-far {
+    0% { transform: translate3d(20px, 0, 0); opacity: .30; }
+    50% { transform: translate3d(-20px, 8px, 0); opacity: .66; }
+    100% { transform: translate3d(20px, 0, 0); opacity: .30; }
+}
+@keyframes menu-hud-right-near {
+    0% { transform: translate3d(34px, 0, 0); opacity: .28; }
+    50% { transform: translate3d(-28px, -10px, 0); opacity: .84; }
+    100% { transform: translate3d(34px, 0, 0); opacity: .28; }
+}
+.menu-hud-left-far { left: 64px; top: 148px; animation: menu-hud-left-far 8.4s ease-in-out infinite; }
+.menu-hud-left-near { left: 88px; bottom: 112px; animation: menu-hud-left-near 5.9s ease-in-out infinite; }
+.menu-hud-right-far { right: 72px; top: 168px; animation: menu-hud-right-far 8.0s ease-in-out infinite; }
+.menu-hud-right-near { right: 94px; bottom: 132px; animation: menu-hud-right-near 5.6s ease-in-out infinite; }
+
 /* ═══ Breathing animation for position ═══ */
 .position {
     position: absolute;
-    filter: blur(0px);
     opacity: 1;
     animation: breath 8s linear infinite;
     animation-delay: .2s;
-    transition: filter 0.42s ease, opacity 0.32s ease;
+    transition: opacity 0.32s ease, transform 0.52s cubic-bezier(0.16, 1, 0.3, 1);
     transform-origin: 78% 42%;
     isolation: isolate;
-    will-change: transform, filter, opacity;
+    will-change: transform, opacity;
 }
 .info.entering .position {
-    filter: blur(18px);
     opacity: 0;
+    transform: translate(34px, -6px) scale(0.82) skewX(-7deg);
 }
 .info.closing .position {
-    filter: blur(14px);
     opacity: 0;
+    transform: translate(24px, -2px) scale(0.88) skewX(-6deg);
 }
 .position::before,
 .position::after {
@@ -81,28 +183,50 @@ html, body {
     pointer-events: none;
     border-radius: 50%;
     opacity: 0;
+    transform-origin: 88% 42%;
     transition: opacity 0.35s ease, filter 0.35s ease, transform 0.35s ease;
 }
 .position::before {
-    inset: -120px -180px -120px -260px;
+    top: -96px;
+    right: -138px;
+    bottom: -108px;
+    left: 152px;
     background:
-        radial-gradient(circle at 76% 38%, rgba(243,175,18,0.32), rgba(243,175,18,0.10) 22%, rgba(77,232,244,0.08) 48%, rgba(255,255,255,0.0) 72%),
-        radial-gradient(circle at 22% 58%, rgba(255,255,255,0.18), rgba(255,255,255,0.0) 55%);
-    filter: blur(24px);
-    transform: scale(0.84);
+        radial-gradient(ellipse at 88% 42%, rgba(243,175,18,0.22), rgba(243,175,18,0.14) 14%, rgba(77,232,244,0.08) 30%, rgba(255,255,255,0.0) 58%),
+        radial-gradient(ellipse at 78% 44%, rgba(255,255,255,0.14), rgba(255,255,255,0.06) 12%, rgba(255,255,255,0.0) 34%),
+        linear-gradient(108deg, rgba(255,255,255,0.0) 0%, rgba(77,232,244,0.03) 50%, rgba(243,175,18,0.08) 72%, rgba(255,255,255,0.0) 100%);
+    box-shadow:
+        0 0 72px rgba(243,175,18,0.16),
+        0 0 116px rgba(77,232,244,0.06),
+        0 0 22px rgba(255,255,255,0.06) inset;
+    clip-path: polygon(28% 8%, 100% 0, 100% 100%, 22% 90%, 6% 52%);
+    transform: translateX(28px) scale(0.72, 0.88);
     z-index: -2;
+    mix-blend-mode: screen;
 }
 .position::after {
-    inset: -36px -72px -30px -110px;
-    background: linear-gradient(90deg,
-        rgba(255,255,255,0.0) 0%,
-        rgba(255,255,255,0.16) 18%,
-        rgba(243,175,18,0.24) 35%,
-        rgba(77,232,244,0.14) 62%,
-        rgba(255,255,255,0.0) 100%);
-    filter: blur(15px);
-    transform: scaleX(0.62);
+    top: -24px;
+    right: -26px;
+    bottom: -18px;
+    left: 184px;
+    background:
+        linear-gradient(90deg,
+            rgba(255,255,255,0.0) 0%,
+            rgba(255,255,255,0.10) 18%,
+            rgba(243,175,18,0.18) 52%,
+            rgba(77,232,244,0.10) 76%,
+            rgba(255,255,255,0.0) 100%),
+        repeating-linear-gradient(90deg,
+            rgba(255,255,255,0.0) 0px,
+            rgba(255,255,255,0.0) 10px,
+            rgba(255,255,255,0.035) 11px,
+            rgba(255,255,255,0.0) 12px,
+            rgba(255,255,255,0.0) 20px);
+    box-shadow: 0 0 18px rgba(255,255,255,0.08);
+    clip-path: polygon(0 18%, 100% 0, 100% 100%, 0 82%, 12% 50%);
+    transform: translateX(24px) scaleX(0.42) skewX(-10deg);
     z-index: -1;
+    mix-blend-mode: screen;
 }
 .info.visible .position::before,
 .info.visible .position::after {
@@ -139,61 +263,55 @@ html, body {
 @keyframes sao-focus-in {
     0% {
         opacity: 0;
-        filter: blur(26px);
         transform: translate(34px, -6px) scale(0.82) skewX(-7deg);
     }
     42% {
         opacity: 1;
-        filter: blur(7px);
         transform: translate(-8px, 2px) scale(1.05) skewX(-1.5deg);
     }
     72% {
-        filter: blur(1.2px);
         transform: translate(3px, -1px) scale(0.992);
     }
     100% {
         opacity: 1;
-        filter: blur(0px);
         transform: translate(0px, 0px) scale(1);
     }
 }
 @keyframes sao-focus-out {
     0% {
         opacity: 1;
-        filter: blur(0px);
         transform: translate(0,0) scale(1);
     }
     100% {
         opacity: 0;
-        filter: blur(18px);
         transform: translate(24px, -2px) scale(0.88) skewX(-6deg);
     }
 }
 @keyframes sao-bloom-in {
-    0% { opacity: 0; filter: blur(40px); transform: scale(0.72); }
-    55% { opacity: 1; filter: blur(18px); transform: scale(1.06); }
-    100% { opacity: 0.92; filter: blur(24px); transform: scale(1); }
+    0% { opacity: 0; transform: translateX(44px) scale(0.48, 0.70); }
+    52% { opacity: 0.84; transform: translateX(8px) scale(1.02, 1.03); }
+    100% { opacity: 0.64; transform: translateX(0) scale(0.98, 1); }
 }
 @keyframes sao-bloom-out {
-    from { opacity: 0.92; filter: blur(24px); transform: scale(1); }
-    to { opacity: 0; filter: blur(40px); transform: scale(0.78); }
+    from { opacity: 0.64; transform: translateX(0) scale(0.98, 1); }
+    to { opacity: 0; transform: translateX(26px) scale(0.56, 0.76); }
 }
 @keyframes sao-bloom-idle {
-    0%,100% { opacity: 0.78; filter: blur(24px); transform: scale(1); }
-    50% { opacity: 0.98; filter: blur(28px); transform: scale(1.03); }
+    0%,100% { opacity: 0.48; transform: translateX(0) scale(0.98, 1); }
+    50% { opacity: 0.72; transform: translateX(-3px) scale(1.01, 1.02); }
 }
 @keyframes sao-streak-in {
-    0% { opacity: 0; filter: blur(22px); transform: translateX(-50px) scaleX(0.34); }
-    60% { opacity: 0.9; filter: blur(10px); transform: translateX(8px) scaleX(1.06); }
-    100% { opacity: 0.52; filter: blur(15px); transform: translateX(0) scaleX(1); }
+    0% { opacity: 0; transform: translateX(-18px) scaleX(0.18) skewX(-10deg); }
+    60% { opacity: 0.62; transform: translateX(6px) scaleX(1.02) skewX(-10deg); }
+    100% { opacity: 0.36; transform: translateX(0) scaleX(0.92) skewX(-10deg); }
 }
 @keyframes sao-streak-out {
-    from { opacity: 0.52; filter: blur(15px); transform: translateX(0) scaleX(1); }
-    to { opacity: 0; filter: blur(24px); transform: translateX(36px) scaleX(0.42); }
+    from { opacity: 0.36; transform: translateX(0) scaleX(0.92) skewX(-10deg); }
+    to { opacity: 0; transform: translateX(28px) scaleX(0.28) skewX(-10deg); }
 }
 @keyframes sao-streak-idle {
-    0%,100% { opacity: 0.42; transform: translateX(0) scaleX(1); }
-    50% { opacity: 0.58; transform: translateX(4px) scaleX(1.03); }
+    0%,100% { opacity: 0.24; transform: translateX(0) scaleX(0.92) skewX(-10deg); }
+    50% { opacity: 0.40; transform: translateX(3px) scaleX(0.98) skewX(-10deg); }
 }
 
 /* ═══════════════════════════════════════
@@ -254,11 +372,137 @@ html, body {
     transition: background 0.2s ease;
 }
 
-.item .in-circle i {
-    font-style: normal;
-    font-size: 22px;
+.item .in-circle i,
+.item .in-circle .sao-icon {
     color: rgb(185, 183, 183);
     transition: color 0.2s ease;
+}
+
+.sao-icon {
+    position: relative;
+    width: 24px;
+    height: 24px;
+    display: inline-block;
+    flex: 0 0 auto;
+}
+.sao-icon::before,
+.sao-icon::after {
+    content: '';
+    position: absolute;
+    box-sizing: border-box;
+}
+
+.sao-icon-user::before {
+    width: 8px;
+    height: 8px;
+    left: 8px;
+    top: 3px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    background: transparent;
+}
+.sao-icon-user::after {
+    width: 16px;
+    height: 9px;
+    left: 4px;
+    top: 13px;
+    border: 2px solid currentColor;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border-bottom: 0;
+}
+
+.sao-icon-play::before {
+    left: 8px;
+    top: 5px;
+    width: 0;
+    height: 0;
+    border-top: 7px solid transparent;
+    border-bottom: 7px solid transparent;
+    border-left: 12px solid currentColor;
+}
+
+.sao-icon-file::before {
+    left: 3px;
+    top: 8px;
+    width: 18px;
+    height: 11px;
+    border: 2px solid currentColor;
+    border-radius: 2px;
+    background: transparent;
+}
+.sao-icon-file::after {
+    left: 5px;
+    top: 5px;
+    width: 8px;
+    height: 5px;
+    border: 2px solid currentColor;
+    border-bottom: 0;
+    border-top-left-radius: 2px;
+    border-top-right-radius: 1px;
+    background: transparent;
+}
+
+.sao-icon-settings {
+    border: 2px solid currentColor;
+    border-radius: 50%;
+}
+.sao-icon-settings::before {
+    inset: 7px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    background: transparent;
+}
+.sao-icon-settings::after {
+    left: 50%;
+    top: 50%;
+    width: 22px;
+    height: 22px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background:
+        linear-gradient(currentColor, currentColor) center 1px / 2px 4px no-repeat,
+        linear-gradient(currentColor, currentColor) center calc(100% - 1px) / 2px 4px no-repeat,
+        linear-gradient(currentColor, currentColor) 1px center / 4px 2px no-repeat,
+        linear-gradient(currentColor, currentColor) calc(100% - 1px) center / 4px 2px no-repeat,
+        linear-gradient(45deg, transparent 41%, currentColor 41%, currentColor 59%, transparent 59%) center / 100% 100% no-repeat;
+    opacity: 0.9;
+}
+
+.sao-icon-keys::before {
+    left: 2px;
+    top: 4px;
+    width: 20px;
+    height: 16px;
+    border: 2px solid currentColor;
+    border-radius: 2px;
+    background:
+        linear-gradient(to right,
+            transparent 0,
+            transparent 3px,
+            currentColor 3px,
+            currentColor 4px,
+            transparent 4px,
+            transparent 8px,
+            currentColor 8px,
+            currentColor 9px,
+            transparent 9px,
+            transparent 13px,
+            currentColor 13px,
+            currentColor 14px,
+            transparent 14px,
+            transparent 18px,
+            currentColor 18px,
+            currentColor 19px,
+            transparent 19px);
+}
+.sao-icon-keys::after {
+    left: 4px;
+    top: 4px;
+    width: 4px;
+    height: 8px;
+    background: currentColor;
+    box-shadow: 6px 0 0 currentColor, 12px 0 0 currentColor;
 }
 
 /* Active circle */
@@ -345,22 +589,25 @@ html, body {
 .leftInfoBox .bottom {
     background: rgba(229, 227, 227, 0.8);
     width: 240px;
-    height: 168px;
+    height: 54px;
     position: relative;
     overflow: hidden;
 }
 
 .bottom .des {
     text-align: left;
-    padding: 15px 10px;
+    padding: 14px 10px;
     font-size: 13px;
     color: #666;
-    line-height: 1.6;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* LeftInfo panel animations */
 @keyframes padding_open {
-    0%   { padding-left: 240px; padding-top: 252px; padding-bottom: 168px; opacity: 0; }
+    0%   { padding-left: 240px; padding-top: 252px; padding-bottom: 54px; opacity: 0; }
     50%  { padding-left: 0; padding-top: 0; opacity: 1; }
     100% { padding-bottom: 0; }
 }
@@ -504,7 +751,7 @@ html, body {
     margin-left: auto;
     margin-right: 8px;
     white-space: nowrap;
-    font-family: 'Consolas', 'Courier New', monospace;
+    font-family: 'sao', 'yuanJWD', sans-serif;
     letter-spacing: 0;
 }
 .child-menu li:hover .shortcut {
@@ -516,7 +763,7 @@ html, body {
     font-size: 10px;
     padding: 1px 5px;
     border-radius: 8px;
-    margin-left: auto;
+    font-family: 'sao', 'yuanJWD', sans-serif;
     margin-right: 8px;
 }
 .badge.on {
@@ -566,7 +813,7 @@ html, body {
     padding: 6px 14px;
     font-size: 11px;
     color: rgba(50, 110, 200, 0.9);
-    font-family: Consolas, 'Courier New', monospace;
+    font-family: 'sao', 'yuanJWD', sans-serif;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -617,8 +864,7 @@ html, body {
     color: #fff;
     border-radius: 3px;
     cursor: pointer;
-    font-size: 12px;
-    font-family: 'yuanJWD', sans-serif;
+    font-family: 'sao', 'yuanJWD', sans-serif;
     letter-spacing: 1px;
     display: none;
     transition: background 0.15s;
@@ -917,6 +1163,13 @@ html, body {
 <!-- ═══ Fullscreen overlay ═══ -->
 <div class="info" id="popup-overlay">
 
+    <div class="menu-hud" aria-hidden="true">
+        <div class="menu-hud-lane menu-hud-left-far"><span class="menu-hud-label">SYS CORE</span></div>
+        <div class="menu-hud-lane gold menu-hud-left-near"><span class="menu-hud-label">GAIN ROUTE</span></div>
+        <div class="menu-hud-lane menu-hud-right-far"><span class="menu-hud-label">NERVE GEAR</span></div>
+        <div class="menu-hud-lane gold menu-hud-right-near"><span class="menu-hud-label">LINK RATE</span></div>
+    </div>
+
     <div class="position" id="menu-position">
 
         <!-- LeftInfo Panel -->
@@ -965,19 +1218,19 @@ html, body {
         <!-- MenuBar Circles -->
         <ul class="item_box" id="menu-bar">
             <li class="item active" data-name="userInfo" data-idx="0">
-                <div class="in-circle"><i>👤</i></div>
+                <div class="in-circle"><span class="sao-icon sao-icon-user"></span></div>
             </li>
             <li class="item" data-name="playCtrl" data-idx="1">
-                <div class="in-circle"><i>▶</i></div>
+                <div class="in-circle"><span class="sao-icon sao-icon-play"></span></div>
             </li>
             <li class="item" data-name="fileMenu" data-idx="2">
-                <div class="in-circle"><i>📂</i></div>
+                <div class="in-circle"><span class="sao-icon sao-icon-file"></span></div>
             </li>
             <li class="item" data-name="settings" data-idx="3">
-                <div class="in-circle"><i>⚙</i></div>
+                <div class="in-circle"><span class="sao-icon sao-icon-settings"></span></div>
             </li>
             <li class="item" data-name="panels" data-idx="4">
-                <div class="in-circle"><i>🎹</i></div>
+                <div class="in-circle"><span class="sao-icon sao-icon-keys"></span></div>
             </li>
         </ul>
 
@@ -1032,7 +1285,7 @@ html, body {
 
 <!-- Current file display -->
 <div class="current-file" id="current-file"></div>
-<div class="current-file" style="bottom:5px;font-size:10px;color:rgba(255,255,255,0.3);font-family:Consolas,monospace;">F5 播放  F6 停止  F7 加速  F8 减速</div>
+<div class="current-file" style="bottom:5px;font-size:10px;color:rgba(255,255,255,0.3);font-family:'sao','yuanJWD',sans-serif;letter-spacing:0.8px;">F5 播放  F6 停止  F7 加速  F8 减速</div>
 
 <!-- TV Off Overlay -->
 <div id="tv-off-overlay"></div>

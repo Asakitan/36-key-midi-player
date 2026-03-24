@@ -41,6 +41,7 @@ def is_webview_available() -> bool:
 _GWL_EXSTYLE = -20
 _WS_EX_LAYERED = 0x00080000
 _LWA_COLORKEY = 0x00000001
+_LWA_ALPHA = 0x00000002
 _COLORREF_KEY = 0x00010001  # RGB(1,0,1) → COLORREF 0x00BBGGRR
 
 
@@ -370,6 +371,7 @@ class SAOWebViewGUI:
         self._panel_wins = {}  # panel_type -> webview window
         self._panel_float_active = True   # 面板浮动动画开关
         self._panel_origins = {}          # panel_type -> (base_x, base_y)
+        self._hp_visible = False
 
         # 回调
         self.player.on_progress = self._on_progress
@@ -439,6 +441,7 @@ class SAOWebViewGUI:
             frameless=True,
             easy_drag=False,           # 自行处理拖拽 (CSS app-region)
             transparent=True,
+            hidden=True,
             on_top=True,
             js_api=self._api,
         )
@@ -489,21 +492,40 @@ class SAOWebViewGUI:
     def _apply_webview2_transparency(self):
         """Win32: 为 HP 窗口设置 LWA_COLORKEY 透明 + .NET WebView2 透明背景,
         消除白色底色."""
-        # 方案 1: .NET (pythonnet) — 最可靠
-        try:
-            hwnd = ctypes.windll.user32.FindWindowW(None, '♪ SAO HP')
-            if hwnd:
-                _make_transparent_ctypes(hwnd)
-        except Exception:
-            pass
-        # 方案 2: 通过 pywebview 内部 Form 设置 WebView2 DefaultBackgroundColor
-        try:
-            gui = getattr(self.hp_win, 'gui', None)
-            form = getattr(gui, 'BrowserForm', None) if gui else None
-            if form:
-                _setup_dotnet_transparency(form)
-        except Exception:
-            pass
+        def _apply_for(title: str, win_obj):
+            # 方案 1: Win32 色键透明
+            try:
+                hwnd = ctypes.windll.user32.FindWindowW(None, title)
+                if hwnd:
+                    _make_transparent_ctypes(hwnd)
+            except Exception:
+                pass
+            # 方案 2: 通过 pywebview 内部 Form 设置 WebView2 DefaultBackgroundColor
+            try:
+                gui = getattr(win_obj, 'gui', None)
+                form = getattr(gui, 'BrowserForm', None) if gui else None
+                if form:
+                    _setup_dotnet_transparency(form)
+            except Exception:
+                pass
+
+        _apply_for('♪ SAO HP', self.hp_win)
+        _apply_for('SAO Menu', self.menu_win)
+
+    def _reassert_hp_transparency(self, alpha: float = 1.0, retries: int = 4, delay: float = 0.18):
+        """反复重置 HP 窗口透明状态，修复热切换后偶发白底。"""
+        def _apply_once():
+            try:
+                self._apply_webview2_transparency()
+                self._set_window_alpha('♪ SAO HP', alpha)
+                self._setup_click_through()
+                self._ensure_hp_on_top()
+            except Exception:
+                pass
+
+        _apply_once()
+        for i in range(1, max(1, retries)):
+            threading.Timer(delay * i, _apply_once).start()
 
     # ─── 任务栏图标 ───
     def _set_window_icon(self, title: str):
@@ -571,7 +593,7 @@ class SAOWebViewGUI:
             pass
 
     def _set_window_alpha(self, title, alpha):
-        """Win32 LWA_ALPHA — 设置窗口整体透明度 (0.0~1.0)."""
+        """Win32 LWA_ALPHA — 设置窗口整体透明度 (0.0~1.0), 保留色键透明."""
         try:
             user32 = ctypes.windll.user32
             hwnd = user32.FindWindowW(None, title)
@@ -579,12 +601,22 @@ class SAOWebViewGUI:
                 return
             GWL_EXSTYLE = -20
             WS_EX_LAYERED = 0x00080000
-            LWA_ALPHA = 0x00000002
             ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             if not (ex & WS_EX_LAYERED):
                 user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED)
             alpha_byte = int(max(0, min(255, alpha * 255)))
-            user32.SetLayeredWindowAttributes(hwnd, 0, alpha_byte, LWA_ALPHA)
+            user32.SetLayeredWindowAttributes(hwnd, _COLORREF_KEY, alpha_byte,
+                                              _LWA_ALPHA | _LWA_COLORKEY)
+        except Exception:
+            pass
+
+    def _reassert_menu_transparency(self, alpha: float = None):
+        """菜单窗口 show/maximize/热切换后再次强制透明背景状态."""
+        try:
+            self._apply_webview2_transparency()
+            if alpha is None:
+                alpha = 1.0 if self._menu_visible else 0.0
+            self._set_window_alpha('SAO Menu', alpha)
         except Exception:
             pass
 
@@ -623,6 +655,13 @@ class SAOWebViewGUI:
         # 初始化 HP
         def _init():
             from character_profile import calc_level
+            try:
+                if self.hp_win and not self._hp_visible:
+                    self.hp_win.show()
+                    self._hp_visible = True
+            except Exception:
+                pass
+            time.sleep(0.18)
             self._eval_hp(f'setUsername("{self._safe_js(self._username)}")')
             lv, cur_xp, need_xp = calc_level(self._xp)
             self._eval_hp(f'updateHP({cur_xp}, {need_xp}, {lv})')
@@ -632,9 +671,12 @@ class SAOWebViewGUI:
             self._setup_click_through()
             # WebView2 透明背景 (防止白底)
             self._apply_webview2_transparency()
+            self._reassert_hp_transparency(1.0, retries=6, delay=0.22)
             # 任务栏图标
             self._set_window_icon('♪ SAO HP')
             self._set_window_icon('SAO Menu')
+            # 菜单窗口在启动阶段保持完全透明, 避免偶发白色方框闪现
+            self._set_window_alpha('SAO Menu', 0.0)
             # 重新触发 HP 入场动态模糊 (避免页面预加载时动画已经跑完)
             self._eval_hp('if (window.HP && HP.retriggerEntryBlur) HP.retriggerEntryBlur()')
             # HP 窗口入场动画: 从中央滑到记忆位置
@@ -766,11 +808,12 @@ class SAOWebViewGUI:
         try:
             _hwnd2 = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
             if _hwnd2:
-                GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000; LWA_ALPHA = 2
+                GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000
                 _ex2 = ctypes.windll.user32.GetWindowLongW(_hwnd2, GWL_EXSTYLE)
                 if not (_ex2 & WS_EX_LAYERED):
                     ctypes.windll.user32.SetWindowLongW(_hwnd2, GWL_EXSTYLE, _ex2 | WS_EX_LAYERED)
-                ctypes.windll.user32.SetLayeredWindowAttributes(_hwnd2, 0, 0, LWA_ALPHA)
+                ctypes.windll.user32.SetLayeredWindowAttributes(_hwnd2, _COLORREF_KEY, 0,
+                                                                _LWA_ALPHA | _LWA_COLORKEY)
         except Exception:
             pass
         try:
@@ -781,6 +824,7 @@ class SAOWebViewGUI:
             self.menu_win.maximize()
         except Exception:
             pass
+        self._reassert_menu_transparency(0.0)
         # HP 栏保持在菜单窗口上方
         self._ensure_hp_on_top()
 
@@ -795,16 +839,16 @@ class SAOWebViewGUI:
 
         # 延迟开菜单动画, 再渐显窗口 (此时鱼眼已在渲染)
         def _init_menu():
+            self._reassert_menu_transparency(0.0)
             time.sleep(0.12)
             self._eval_menu('SAO.openMenu(500, 300)')
             time.sleep(0.04)  # 让鱼眼 canvas 先渲染一帧
             try:
                 hwnd = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
                 if hwnd:
-                    LWA_ALPHA = 2
                     for step in range(1, 9):   # ~120ms 渐显
                         ctypes.windll.user32.SetLayeredWindowAttributes(
-                            hwnd, 0, int(255 * step / 8), LWA_ALPHA)
+                            hwnd, _COLORREF_KEY, int(255 * step / 8), _LWA_ALPHA | _LWA_COLORKEY)
                         time.sleep(0.015)
             except Exception:
                 pass
@@ -821,7 +865,7 @@ class SAOWebViewGUI:
         def _fade_and_hide():
             try:
                 hwnd = ctypes.windll.user32.FindWindowW(None, 'SAO Menu')
-                GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000; LWA_ALPHA = 2
+                GWL_EXSTYLE = -20; WS_EX_LAYERED = 0x80000
                 if hwnd:
                     _ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
                     if not (_ex & WS_EX_LAYERED):
@@ -830,9 +874,11 @@ class SAOWebViewGUI:
                     steps = 18        # ~400ms, 每步 ~22ms
                     for i in range(steps):
                         alpha = int(255 * (1 - (i + 1) / steps))
-                        ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA)
+                        ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, _COLORREF_KEY, alpha,
+                                                                        _LWA_ALPHA | _LWA_COLORKEY)
                         time.sleep(0.022)
-                    ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA)
+                    ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, _COLORREF_KEY, 0,
+                                                                    _LWA_ALPHA | _LWA_COLORKEY)
             except Exception:
                 pass
             time.sleep(0.05)

@@ -15,7 +15,10 @@ import json
 import ctypes
 import math
 import time
+import threading
 from typing import Optional
+
+from PIL import Image, ImageDraw, ImageTk
 
 from player import MidiPlayer
 from midi_parser import NoteEvent
@@ -172,6 +175,31 @@ def _apply_viz_light_theme(viz):
         for child in w.winfo_children():
             _patch(child)
     _patch(viz)
+
+
+def _set_clickthrough_style(win):
+    """给装饰/条带窗口设置 Win32 透明点击穿透样式。"""
+    try:
+        user32 = ctypes.windll.user32
+        GWL_EXSTYLE = -20
+        WS_EX_LAYERED = 0x00080000
+        WS_EX_TRANSPARENT = 0x00000020
+        WS_EX_TOOLWINDOW = 0x00000080
+        hwnd = user32.GetParent(win.winfo_id()) or win.winfo_id()
+        style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        style |= (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW)
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+    except Exception:
+        pass
+
+
+def _make_sao_panel_hud(parent, width: int, height: int, alpha: float = 0.18):
+    """生成一个轻量 SAO HUD 画布，提供左右错层飘移装饰。"""
+    cv = tk.Canvas(parent, width=width, height=height, bg=parent.cget('bg'),
+                   highlightthickness=0, bd=0)
+    cv.place(x=0, y=0, relwidth=1, relheight=1)
+    cv.lower()
+    return cv
 
 
 # ══════════════════════════════════════════════════════════
@@ -525,6 +553,17 @@ class SAOPlayerPanel(tk.Frame):
 
         # ── 背景: 白色半透明 (对标 rgba(255,255,255,.85)) ──
         self._top.create_rectangle(0, 0, w, h, fill='#ffffff', outline='')
+        self._top.create_line(10, 10, 88, 10, fill='#8adfff', width=1)
+        self._top.create_line(10, 10, 10, 24, fill='#8adfff', width=1)
+        self._top.create_line(w - 12, h - 10, w - 92, h - 10, fill='#f3af12', width=1)
+        self._top.create_line(w - 12, h - 10, w - 12, h - 28, fill='#f3af12', width=1)
+        self._top.create_rectangle(22, 50, 80, 62, outline='#8adfff', width=1)
+        self._top.create_rectangle(w - 86, 66, w - 22, 78, outline='#f3af12', width=1)
+        for i in range(5):
+            x = 28 + i * 10
+            self._top.create_line(x, 68, x, 73 + (i % 2) * 3, fill='#8adfff', width=1)
+            rx = w - 32 - i * 10
+            self._top.create_line(rx, 92, rx, 98 - (i % 2) * 3, fill='#f3af12', width=1)
 
         # ── 右三角指示器 (对标 LeftInfo .right-triangle, 连接 MenuBar) ──
         # clip-path: polygon(100% 50%, 0 100%, 0 0) → 尖头朝右
@@ -578,6 +617,13 @@ class SAOPlayerPanel(tk.Frame):
                 self._top.create_rectangle(xp_x, xp_y,
                                            xp_x + xp_fill, xp_y + xp_h,
                                            fill='#f3af12', outline='')
+        if h > 176:
+            self._top.create_text(22, h - 26, text='COORD', anchor='w',
+                                  font=get_sao_font(8), fill='#8adfff')
+            self._top.create_text(w - 22, h - 26, text='RATE', anchor='e',
+                                  font=get_sao_font(8), fill='#f3af12')
+            self._top.create_line(18, h - 18, 88, h - 18, fill='#8adfff', width=1)
+            self._top.create_line(w - 92, h - 18, w - 18, h - 18, fill='#f3af12', width=1)
 
     def _redraw_bottom(self, w, h):
         """对标 SAO-UI LeftInfo .bottom — 描述文字"""
@@ -587,6 +633,10 @@ class SAOPlayerPanel(tk.Frame):
 
         # 背景 (对标 rgba(229,227,227,0.8))
         self._bottom.create_rectangle(0, 0, w, h, fill='#e5e3e3', outline='')
+        self._bottom.create_line(12, 14, 92, 14, fill='#8adfff', width=1)
+        self._bottom.create_line(w - 14, h - 14, w - 102, h - 14, fill='#f3af12', width=1)
+        self._bottom.create_rectangle(16, h - 28, 82, h - 18, outline='#8adfff', width=1)
+        self._bottom.create_rectangle(w - 88, 18, w - 20, 28, outline='#f3af12', width=1)
 
         # 下三角装饰 (对标 .bottom-triangle)
         self._bottom.create_polygon(30, 0, 37.5, -10, 45, 0,
@@ -603,6 +653,8 @@ class SAOPlayerPanel(tk.Frame):
         self._bottom.create_text(15, h // 2, text=desc,
                                  font=get_cjk_font(10), fill='#777777',
                                  anchor='w')
+        self._bottom.create_text(w - 18, h // 2, text='NERVE GEAR',
+                     font=get_sao_font(8), fill='#9a9a9a', anchor='e')
 
 
 # ══════════════════════════════════════════════════════════
@@ -675,6 +727,10 @@ class SAOPlayerGUI:
         self._lift_loop_active = False
         self._skip_canvas_click = False
         self._float_progress_pct = 0.0
+        self._hp_alpha_windows = []
+        self._hp_alpha_photos = []
+        self._float_hud_ids = []
+        self._float_hud_text = []
         self._destroyed = False  # hot-switch 守卫: 阻止 after() 回调在 root 销毁后执行
         # 浮动呼吸动画
         self._breath_active = False
@@ -702,6 +758,252 @@ class SAOPlayerGUI:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('midi.28keys.player.sao')
         except:
             pass
+
+    def _create_hp_alpha_strip_windows(self):
+        """创建 HP 填充条带窗口组：每条独立 alpha，实现右透左实的桌面透过。"""
+        self._hp_alpha_windows = []
+        self._hp_alpha_photos = []
+        trans = '#010201'
+        strip_count = 20
+        for idx in range(strip_count):
+            try:
+                win = tk.Toplevel(self.root)
+                win.overrideredirect(True)
+                win.attributes('-topmost', True)
+                win.attributes('-transparentcolor', trans)
+                win.attributes('-alpha', 0.0)
+                win.configure(bg=trans)
+                cv = tk.Canvas(win, width=12, height=26, bg=trans, highlightthickness=0, bd=0)
+                cv.pack(fill=tk.BOTH, expand=True)
+                win.withdraw()
+                try:
+                    win.update_idletasks()
+                    _set_clickthrough_style(win)
+                except Exception:
+                    pass
+                self._hp_alpha_windows.append({'win': win, 'canvas': cv, 'index': idx, 'photo': None})
+                self._hp_alpha_photos.append(None)
+            except Exception:
+                self._hp_alpha_windows = []
+                self._hp_alpha_photos = []
+                break
+
+    def _destroy_hp_alpha_strip_windows(self):
+        for item in getattr(self, '_hp_alpha_windows', []):
+            try:
+                item['win'].destroy()
+            except Exception:
+                pass
+        self._hp_alpha_windows = []
+        self._hp_alpha_photos = []
+
+    def _render_hp_strip_image(self, strip_w: int, strip_h: int, alpha: float, color_hex: str,
+                               draw_top: bool, draw_bottom: bool) -> ImageTk.PhotoImage:
+        """渲染单个 HP 条带：矩形 + 台阶底边，依赖独立窗口 alpha 形成真实透过。"""
+        strip_w = max(2, int(strip_w))
+        strip_h = max(4, int(strip_h))
+        rgba = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5)) + (255,)
+        img = Image.new('RGBA', (strip_w, strip_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        if draw_top:
+            draw.rectangle((0, 0, strip_w, min(strip_h, 14)), fill=rgba)
+        if draw_bottom:
+            bottom_top = max(12, strip_h - 9)
+            draw.rectangle((0, bottom_top, strip_w, strip_h), fill=rgba)
+        if not draw_top and not draw_bottom:
+            draw.rectangle((0, 0, strip_w, strip_h), fill=(0, 0, 0, 0))
+        return ImageTk.PhotoImage(img)
+
+    def _sync_hp_alpha_strip_windows(self):
+        """同步 HP 条带窗口位置/显隐/alpha，形成从左实到右透的真实桌面透过。"""
+        if not getattr(self, '_hp_alpha_windows', None):
+            return
+        try:
+            if not self._float.winfo_exists():
+                return
+        except Exception:
+            return
+
+        if not self._float.winfo_viewable():
+            for item in self._hp_alpha_windows:
+                try:
+                    item['win'].withdraw()
+                except Exception:
+                    pass
+            return
+
+        pct = max(0.0, min(1.0, self._float_progress_pct))
+        bar_left = self._float.winfo_x() + self._hp_bar_x
+        bar_top = self._float.winfo_y() + self._hp_bar_y
+        top_width = max(1, self._hp_bar_right - self._hp_bar_x)
+        bot_width = max(1, self._hp_bar_step_x - self._hp_bar_x)
+        bot_y = self._float.winfo_y() + self._hp_bar_bot_top
+        bot_h = max(1, self._hp_bar_bot_full - self._hp_bar_bot_top)
+        top_h = max(1, self._hp_bar_bot_top - self._hp_bar_y)
+        total_h = max(1, self._hp_bar_bot_full - self._hp_bar_y)
+        fill_top = int(top_width * pct)
+        fill_bot = int(bot_width * pct)
+
+        if pct >= 0.60:
+            color_hex = '#9ad334'
+        elif pct >= 0.25:
+            color_hex = '#f4fa49'
+        else:
+            color_hex = '#ef684e'
+
+        strip_count = len(self._hp_alpha_windows)
+        strip_w = max(4, int(math.ceil(top_width / max(1, strip_count))))
+        for idx, item in enumerate(self._hp_alpha_windows):
+            sx = bar_left + idx * strip_w
+            ex = min(bar_left + top_width, sx + strip_w)
+            if ex <= sx:
+                try:
+                    item['win'].withdraw()
+                except Exception:
+                    pass
+                continue
+
+            local_x1 = sx - bar_left
+            local_x2 = ex - bar_left
+            draw_top = local_x1 < fill_top
+            draw_bottom = local_x1 < fill_bot
+            if not draw_top and not draw_bottom:
+                try:
+                    item['win'].withdraw()
+                except Exception:
+                    pass
+                continue
+
+            alpha = 0.18 + (1.0 - idx / max(1, strip_count - 1)) * 0.74
+            alpha *= 0.96 if self._playing and not self._paused else 0.86
+            photo = self._render_hp_strip_image(ex - sx, total_h, alpha, color_hex, draw_top, draw_bottom)
+            self._hp_alpha_photos[idx] = photo
+            item['photo'] = photo
+            try:
+                item['canvas'].configure(width=ex - sx, height=total_h)
+                item['canvas'].delete('all')
+                item['canvas'].create_image(0, 0, image=photo, anchor='nw')
+                item['win'].geometry(f'{ex - sx}x{total_h}+{sx}+{bar_top}')
+                item['win'].attributes('-alpha', alpha)
+                item['win'].deiconify()
+                item['win'].lift(self._float)
+            except Exception:
+                pass
+
+    def _build_float_hud_items(self):
+        """构建悬浮 HP 两侧错层 HUD 元素。"""
+        cv = self._float_cv
+        self._float_hud_ids = []
+        spec = [
+            ('left_far', 24, 20, 78, '#86dfff'),
+            ('left_near', 34, 44, 112, '#f3af12'),
+            ('right_far', 396, 18, 334, '#86dfff'),
+            ('right_near', 392, 46, 302, '#f3af12'),
+        ]
+        for name, x1, y1, x2, color in spec:
+            lid = cv.create_line(x1, y1, x2, y1, fill=color, width=1)
+            vid = cv.create_line(x1, y1 - 10, x1, y1 + 10, fill=color, width=1)
+            rid = cv.create_rectangle(min(x1, x2), y1 + 5, max(x1, x2), y1 + 18, outline=color, width=1)
+            self._float_hud_ids.append((name, lid, vid, rid, color))
+        self._float_hud_text = [
+            cv.create_text(62, 16, text='HP LINK', fill='#86dfff', font=get_sao_font(8), anchor='w'),
+            cv.create_text(356, 16, text='NERVE', fill='#f3af12', font=get_sao_font(8), anchor='e'),
+        ]
+
+    def _animate_float_hud(self):
+        if self._destroyed:
+            return
+        try:
+            if not self._float_cv.winfo_exists():
+                return
+        except Exception:
+            return
+
+        t = time.time()
+        for idx, (name, lid, vid, rid, color) in enumerate(getattr(self, '_float_hud_ids', [])):
+            far = 'far' in name
+            side = -1 if 'left' in name else 1
+            drift_x = int((7 if far else 14) * math.sin(t * (0.72 if far else 1.55) + idx * 0.9))
+            drift_y = int((3 if far else 5) * math.sin(t * (0.48 if far else 1.18) + idx * 1.3))
+            base_y = 20 if idx % 2 == 0 else 44
+            if side < 0:
+                x1 = 24 + drift_x
+                x2 = (82 if far else 118) + drift_x
+            else:
+                x1 = 394 + drift_x
+                x2 = (336 if far else 298) + drift_x
+            y = base_y + drift_y
+            self._float_cv.coords(lid, x1, y, x2, y)
+            self._float_cv.coords(vid, x1, y - 8, x1, y + 8)
+            self._float_cv.coords(rid, min(x1, x2), y + 5, max(x1, x2), y + (14 if far else 18))
+        if getattr(self, '_float_hud_text', None):
+            self._float_cv.coords(self._float_hud_text[0], 58 + int(8 * math.sin(t * 0.95)), 16 + int(2 * math.sin(t * 0.55)))
+            self._float_cv.coords(self._float_hud_text[1], 360 + int(10 * math.sin(t * 1.18 + 1.1)), 16 + int(2 * math.sin(t * 0.7 + 0.5)))
+
+        self._sync_hp_alpha_strip_windows()
+        try:
+            self.root.after(16, self._animate_float_hud)
+        except Exception:
+            pass
+
+    def _attach_sao_panel_fx(self, panel, header, inner, accent='#86dfff'):
+        """给 Tk 浮动面板附加 SAO 风格 HUD 背景和左右错层漂移。"""
+        try:
+            panel.update_idletasks()
+            pw = max(80, panel.winfo_width())
+            ph = max(60, panel.winfo_height())
+        except Exception:
+            return
+
+        if getattr(panel, '_sao_fx_inited', False):
+            return
+        panel._sao_fx_inited = True
+        header_cv = _make_sao_panel_hud(header, pw, 24)
+        body_cv = _make_sao_panel_hud(inner, pw, ph)
+        panel._sao_header_hud = header_cv
+        panel._sao_body_hud = body_cv
+
+        def _tick():
+            try:
+                if self._destroyed or not panel.winfo_exists():
+                    return
+            except Exception:
+                return
+            tt = time.time() + (hash(str(panel)) % 17) * 0.13
+            header_cv.delete('all')
+            body_cv.delete('all')
+            cyan = '#86dfff'
+            gold = '#f3af12'
+            hx = int(12 + 8 * math.sin(tt * 1.18))
+            rx = int(pw - 14 + 10 * math.sin(tt * 0.92 + 1.2))
+            header_cv.create_line(hx, 7, hx + 88, 7, fill=cyan, width=1)
+            header_cv.create_line(hx, 7, hx, 18, fill=cyan, width=1)
+            header_cv.create_line(rx - 96, 16, rx, 16, fill=gold, width=1)
+            header_cv.create_line(rx, 6, rx, 16, fill=gold, width=1)
+            header_cv.create_rectangle(hx + 12, 11, hx + 56, 19, outline=cyan, width=1)
+            header_cv.create_rectangle(rx - 72, 4, rx - 18, 11, outline=gold, width=1)
+
+            left_far = int(10 + 5 * math.sin(tt * 0.66))
+            left_near = int(20 + 12 * math.sin(tt * 1.35 + 0.8))
+            right_far = int(pw - 18 + 7 * math.sin(tt * 0.72 + 1.1))
+            right_near = int(pw - 34 + 12 * math.sin(tt * 1.45 + 2.1))
+            body_cv.create_line(left_far, 30, left_far + 78, 30, fill=cyan, width=1)
+            body_cv.create_line(left_near, ph - 44, left_near + 102, ph - 44, fill=gold, width=1)
+            body_cv.create_line(right_far - 88, 42, right_far, 42, fill=cyan, width=1)
+            body_cv.create_line(right_near - 110, ph - 58, right_near, ph - 58, fill=gold, width=1)
+            for i in range(5):
+                lx = left_far + i * 12
+                rx2 = right_far - i * 13
+                body_cv.create_line(lx, 48, lx, 54 + (i % 2) * 3, fill=cyan, width=1)
+                body_cv.create_line(rx2, ph - 74, rx2, ph - 68 - (i % 2) * 3, fill=gold, width=1)
+            body_cv.create_rectangle(left_near + 8, ph - 36, left_near + 66, ph - 24, outline=cyan, width=1)
+            body_cv.create_rectangle(right_near - 74, 22, right_near - 12, 34, outline=gold, width=1)
+            try:
+                self.root.after(16, _tick)
+            except Exception:
+                pass
+
+        _tick()
 
     # ══════════════════════════════════════════════
     #  悬浮触发按钮 — 纯 SAO-UI HP 组件 (对标 HP/src/index.vue)
@@ -944,6 +1246,9 @@ class SAOPlayerGUI:
 
         # 初始隐藏 — LinkStart 完成后才显示
         self._float.withdraw()
+        self._create_hp_alpha_strip_windows()
+        self._build_float_hud_items()
+        self._animate_float_hud()
 
     # ──────── 浮动呼吸动画 ────────
     def _start_float_breath(self):
@@ -977,6 +1282,7 @@ class SAOPlayerGUI:
             dx = int(2 * math.sin(elapsed * 0.52) + 1 * math.sin(elapsed * 1.13))
             dy = int(2 * math.sin(elapsed * 0.38 + 1.0) + 1 * math.sin(elapsed * 0.91))
             self._float.geometry(f'+{self._breath_base_x + dx}+{self._breath_base_y + dy}')
+            self._sync_hp_alpha_strip_windows()
         except Exception:
             pass
         try:
@@ -1049,6 +1355,7 @@ class SAOPlayerGUI:
             mx = e.x_root - self._fw // 2
             my = e.y_root - self._fh // 2
             self._float.geometry(f'+{mx}+{my}')
+            self._sync_hp_alpha_strip_windows()
 
     def _float_release(self, e):
         if self._skip_canvas_click:
@@ -1133,6 +1440,11 @@ class SAOPlayerGUI:
                 c = '#ef684e'  # red
             cv.itemconfig(self._float_hp_fill_top, fill=c)
             cv.itemconfig(self._float_hp_fill_bot, fill=c)
+
+            if self._hp_alpha_windows:
+                cv.coords(self._float_hp_fill_top, -1, -1, -1, -1)
+                cv.coords(self._float_hp_fill_bot, -1, -1, -1, -1)
+                self._sync_hp_alpha_strip_windows()
         except Exception:
             pass
 
@@ -1158,6 +1470,7 @@ class SAOPlayerGUI:
             x = int(x0 + (x1 - x0) * et)
             y = int(y0 + (y1 - y0) * et)
             self._float.geometry(f'+{x}+{y}')
+            self._sync_hp_alpha_strip_windows()
             if t < 1.0:
                 try:
                     self.root.after(16, tick)
@@ -1449,7 +1762,7 @@ class SAOPlayerGUI:
         tk.Label(hdr, text='◆ Piano', bg='#f5f5f7', fg='#646364',
                  font=get_sao_font(8)).pack(side=tk.LEFT, padx=8)
         close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
-                             font=('Consolas', 11), cursor='hand2')
+                             font=get_sao_font(10, True), cursor='hand2')
         close_lbl.pack(side=tk.RIGHT, padx=6)
         close_lbl.bind('<Button-1>', lambda e: self._toggle_piano_panel())
 
@@ -1468,6 +1781,7 @@ class SAOPlayerGUI:
 
         self._mini_piano = SAOMiniPiano(inner, octaves=5)
         self._mini_piano.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+        self._attach_sao_panel_fx(self._piano_panel, hdr, inner)
         self._fade_panel_in(self._piano_panel, target=0.90)
         self._attach_panel_float(self._piano_panel, phase=0.0)
         self.settings.set('show_piano', True)
@@ -1518,7 +1832,7 @@ class SAOPlayerGUI:
         tk.Label(hdr, text='◉ 状态', bg='#f5f5f7', fg='#646364',
                  font=get_sao_font(8, True)).pack(side=tk.LEFT, padx=8)
         close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
-                             font=('Consolas', 11), cursor='hand2')
+                             font=get_sao_font(10, True), cursor='hand2')
         close_lbl.pack(side=tk.RIGHT, padx=6)
         close_lbl.bind('<Button-1>', lambda e: self._toggle_status_panel())
 
@@ -1573,7 +1887,7 @@ class SAOPlayerGUI:
         self._status_bpm_lbl = tk.Label(bpm_row,
                                          text=f'{bpm_val:.0f}' if bpm_val else '—',
                                          bg='#ffffff', fg='#333333',
-                                         font=('Consolas', 10))
+                                         font=get_sao_font(9, True))
         self._status_bpm_lbl.pack(side=tk.RIGHT)
 
         # 速度行
@@ -1583,7 +1897,7 @@ class SAOPlayerGUI:
                  font=get_sao_font(8)).pack(side=tk.LEFT)
         self._status_spd_lbl = tk.Label(spd_row, text=f'{self._speed:.2f}×',
                                          bg='#ffffff', fg='#333333',
-                                         font=('Consolas', 10))
+                                         font=get_sao_font(9, True))
         self._status_spd_lbl.pack(side=tk.RIGHT)
 
         # 拖拽
@@ -1598,6 +1912,7 @@ class SAOPlayerGUI:
         hdr.bind('<Button-1>', sdstart)
         hdr.bind('<B1-Motion>', sdmove)
 
+        self._attach_sao_panel_fx(self._status_panel, hdr, inner)
         self._fade_panel_in(self._status_panel, target=0.92)
         self._attach_panel_float(self._status_panel, phase=2.0)
         self._update_status_panel()
@@ -1681,7 +1996,7 @@ class SAOPlayerGUI:
         tk.Label(hdr, text='◆ Visualizer', bg='#f5f5f7', fg='#646364',
                  font=get_sao_font(8)).pack(side=tk.LEFT, padx=8)
         close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
-                             font=('Consolas', 11), cursor='hand2')
+                             font=get_sao_font(10, True), cursor='hand2')
         close_lbl.pack(side=tk.RIGHT, padx=6)
         close_lbl.bind('<Button-1>', lambda e: self._toggle_viz_panel())
 
@@ -1700,6 +2015,7 @@ class SAOPlayerGUI:
         self._visualizer = MidiVisualizer(inner, settings=self.settings)
         self._visualizer.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         _apply_viz_light_theme(self._visualizer)
+        self._attach_sao_panel_fx(self._viz_panel, hdr, inner)
         if self._playing:
             self._visualizer.start()
         self._fade_panel_in(self._viz_panel, target=0.90)
@@ -1753,7 +2069,7 @@ class SAOPlayerGUI:
         tk.Label(hdr, text='⚙ 控制面板', bg='#f5f5f7', fg='#646364',
                  font=get_sao_font(8, True)).pack(side=tk.LEFT, padx=8)
         close_lbl = tk.Label(hdr, text='×', bg='#f5f5f7', fg='#999999',
-                              font=('Consolas', 11), cursor='hand2')
+                              font=get_sao_font(10, True), cursor='hand2')
         close_lbl.pack(side=tk.RIGHT, padx=6)
         close_lbl.bind('<Button-1>', lambda e: self._toggle_control_panel())
         _cd = {'x': 0, 'y': 0}
@@ -1819,7 +2135,7 @@ class SAOPlayerGUI:
                               command=lambda v: self._set_bass_density_direct(float(v)))
         dens_scale.pack(side=tk.LEFT, padx=(6, 2))
         dens_lbl = tk.Label(row_dens, text=f'{self._bass_density:.0%}', bg='#ffffff',
-                             fg='#333333', font=('Consolas', 9), width=4)
+                             fg='#333333', font=get_sao_font(8, True), width=4)
         dens_lbl.pack(side=tk.LEFT)
         self._control_panel._dens_var = dens_var
         self._control_panel._dens_lbl = dens_lbl
@@ -1832,14 +2148,14 @@ class SAOPlayerGUI:
         tk.Label(row_spd, text='速度', bg='#ffffff', fg='#999999',
                  font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
         btn_sm = tk.Label(row_spd, text='−', bg='#eeeeee', fg='#646364',
-                          font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
+                          font=get_sao_font(10, True), padx=7, pady=1, cursor='hand2')
         btn_sm.pack(side=tk.LEFT)
         btn_sm.bind('<Button-1>', lambda e: self._speed_down())
         spd_lbl = tk.Label(row_spd, text=f'{self._speed:.2f}×', bg='#ffffff',
-                            fg='#333333', font=('Consolas', 10), width=6)
+                            fg='#333333', font=get_sao_font(9, True), width=6)
         spd_lbl.pack(side=tk.LEFT, padx=4)
         btn_sp = tk.Label(row_spd, text='+', bg='#eeeeee', fg='#646364',
-                          font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
+                          font=get_sao_font(10, True), padx=7, pady=1, cursor='hand2')
         btn_sp.pack(side=tk.LEFT)
         btn_sp.bind('<Button-1>', lambda e: self._speed_up())
         self._control_panel._spd_lbl = spd_lbl
@@ -1850,14 +2166,14 @@ class SAOPlayerGUI:
         tk.Label(row_tr, text='移调', bg='#ffffff', fg='#999999',
                  font=get_sao_font(8), width=5, anchor='w').pack(side=tk.LEFT)
         btn_tm = tk.Label(row_tr, text='−', bg='#eeeeee', fg='#646364',
-                          font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
+                          font=get_sao_font(10, True), padx=7, pady=1, cursor='hand2')
         btn_tm.pack(side=tk.LEFT)
         btn_tm.bind('<Button-1>', lambda e: self._transpose_down())
         tr_lbl = tk.Label(row_tr, text=f'{self._transpose:+d} 半音', bg='#ffffff',
-                           fg='#333333', font=('Consolas', 10), width=7)
+                           fg='#333333', font=get_sao_font(9, True), width=7)
         tr_lbl.pack(side=tk.LEFT, padx=4)
         btn_tp = tk.Label(row_tr, text='+', bg='#eeeeee', fg='#646364',
-                          font=('Consolas', 11, 'bold'), padx=7, pady=1, cursor='hand2')
+                          font=get_sao_font(10, True), padx=7, pady=1, cursor='hand2')
         btn_tp.pack(side=tk.LEFT)
         btn_tp.bind('<Button-1>', lambda e: self._transpose_up())
         btn_rst = tk.Label(row_tr, text='重置', bg='#eeeeee', fg='#646364',
@@ -1892,6 +2208,7 @@ class SAOPlayerGUI:
         midi_btn.bind('<Button-1>', lambda e: self._show_channel_settings())
         self._control_panel._gl_lbl = gl_lbl
 
+        self._attach_sao_panel_fx(self._control_panel, hdr, inner)
         self._fade_panel_in(self._control_panel, target=0.95)
         self._attach_panel_float(self._control_panel, phase=3.0)
         self.settings.set('show_control', True)
@@ -3295,7 +3612,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.3+3403\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.5+3405\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3368,12 +3685,13 @@ class SAOPlayerGUI:
             pass
         self.player.stop()
         # 销毁所有浮动面板
-        for panel in [self._piano_panel, self._viz_panel, self._status_panel]:
+        for panel in [self._piano_panel, self._viz_panel, self._status_panel, self._control_panel]:
             try:
                 if panel and panel.winfo_exists():
                     panel.destroy()
             except Exception:
                 pass
+        self._destroy_hp_alpha_strip_windows()
         try:
             if self._float and self._float.winfo_exists():
                 self._float.destroy()
