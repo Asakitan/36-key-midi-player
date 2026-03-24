@@ -37,6 +37,18 @@ body {
     60%  { opacity: 1; transform: scale(1.03); }
     100% { opacity: 1; transform: scale(1); }
 }
+/* ═══ Idle Float (sinusoidal Lissajous, ≤5px) ═══ */
+@keyframes sao-float {
+    0%   { transform: translate(0px,    0px); }
+    12%  { transform: translate(2px,   -3px); }
+    25%  { transform: translate(4px,   -1px); }
+    38%  { transform: translate(3px,    2.5px); }
+    50%  { transform: translate(0.5px,  4px); }
+    62%  { transform: translate(-2.5px, 2.5px); }
+    75%  { transform: translate(-4px,  -0.5px); }
+    88%  { transform: translate(-2px,  -3px); }
+    100% { transform: translate(0px,    0px); }
+}
 
 .XTBox {
     --bgColor: rgba(205, 221, 248, 0.75);
@@ -52,7 +64,8 @@ body {
     color: #e1dede;
     font-size: 12px;
     cursor: grab;
-    animation: hp-slide-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: hp-slide-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) both,
+               sao-float 9s ease-in-out 0.7s infinite;
 }
 
 .xt_left, .xt_right, .number_xt { height: 100%; }

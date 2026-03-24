@@ -56,7 +56,12 @@ def _load_ui_mode():
     """从 settings.json 读取 ui_mode"""
     import json
     try:
-        cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings.json')
+        # 打包后 __file__ 指向 exe 内部临时目录, 必须用 sys.executable 所在目录
+        if getattr(sys, 'frozen', False):
+            base = os.path.dirname(sys.executable)
+        else:
+            base = os.path.dirname(os.path.abspath(__file__))
+        cfg = os.path.join(base, 'settings.json')
         if os.path.exists(cfg):
             with open(cfg, 'r', encoding='utf-8') as f:
                 data = json.load(f)

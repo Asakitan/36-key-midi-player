@@ -18,6 +18,16 @@ html, body {
     transition: opacity 0.2s;
 }
 
+/* ═══ Panel Float (sinusoidal, ≤5px) ═══ */
+@keyframes panel-float {
+    0%   { transform: translate(0px,    0px); }
+    20%  { transform: translate(-3px,   2px); }
+    40%  { transform: translate(-1.5px, -3.5px); }
+    60%  { transform: translate(2.5px,  -2px); }
+    80%  { transform: translate(3px,    1.5px); }
+    100% { transform: translate(0px,    0px); }
+}
+
 .panel {
     margin: 4px;
     height: calc(100% - 8px);
@@ -30,6 +40,7 @@ html, body {
     font-family: 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
     font-size: 12px;
     color: #555;
+    animation: panel-float 11s ease-in-out 1.2s infinite;
 }
 
 .panel-header {
