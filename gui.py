@@ -349,7 +349,7 @@ def get_icon_path():
 class CustomTitleBar(tk.Frame):
     """自定义无边框窗口标题栏 - 扁平暗色设计"""
 
-    def __init__(self, parent, root, title="咲 Midi Player", version="v3.4.24+3424",
+    def __init__(self, parent, root, title="咲 Midi Player", version="v3.5.0",
                  on_close=None, **kwargs):
         super().__init__(parent, bg=ModernColors.TITLEBAR, height=36, **kwargs)
         self.root = root
@@ -3229,7 +3229,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                        title="咲 Midi Player", version="v3.4.24+3424",
+                        title="咲 Midi Player", version="v3.5.0",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 
@@ -3390,8 +3390,11 @@ class MidiPlayerGUI:
             self.settings.set('opacity', 1.0)
 
     def _bind_callbacks(self):
-        def on_note(key, note, is_chord=False):
-            duration_ms = int(min(2000, max(100, note.duration * 1000)))
+        def on_note(key, note, is_chord=False, hold_duration=None):
+            if hold_duration is not None:
+                duration_ms = int(min(2000, max(100, hold_duration * 1000)))
+            else:
+                duration_ms = int(min(2000, max(100, note.duration * 1000)))
             self.root.after(0, lambda: self.piano.highlight_key(key, duration_ms))
             self.root.after(0, lambda: self.info.update_note(key, note, is_chord))
             vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8

@@ -3715,7 +3715,7 @@ class MidiPlayer:
             self.simulator.press_key_async(final_key, humanized_duration)
             
             if self.on_note_play and note_info:
-                self.on_note_play(final_key, note_info, is_chord)
+                self.on_note_play(final_key, note_info, is_chord, humanized_duration)
         
         # === 屏幕防漂移：每 N 个音符检测一次游戏UI ===
         if keys_to_press and self._mode_system == 'classic':

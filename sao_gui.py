@@ -863,11 +863,22 @@ class SAOPlayerPanel(tk.Frame):
         _lv, _cur_xp, _need_xp = _cl(
             getattr(self, '_xp_total', 0) if hasattr(self, '_xp_total') else 0)
 
-        # EXP 标签
-        self._top.create_text(20, 108, text='EXP', anchor='w',
-                              font=get_sao_font(7), fill=LABEL)
-        self._top.create_text(w - 20, 108, text=f'{_cur_xp} / {_need_xp}',
-                              anchor='e', font=get_sao_font(8), fill='#999999')
+        # EXP 标签 / 播放时间
+        if getattr(self, '_is_playing', False):
+            tc = getattr(self, '_time_current', 0)
+            tt = getattr(self, '_time_total', 0)
+            cur_m, cur_s = int(tc) // 60, int(tc) % 60
+            tot_m, tot_s = int(tt) // 60, int(tt) % 60
+            self._top.create_text(20, 108, text='TIME', anchor='w',
+                                  font=get_sao_font(7), fill=CYAN)
+            self._top.create_text(w - 20, 108,
+                                  text=f'{cur_m:02d}:{cur_s:02d} / {tot_m:02d}:{tot_s:02d}',
+                                  anchor='e', font=get_sao_font(8), fill='#9cecff')
+        else:
+            self._top.create_text(20, 108, text='EXP', anchor='w',
+                                  font=get_sao_font(7), fill=LABEL)
+            self._top.create_text(w - 20, 108, text=f'{_cur_xp} / {_need_xp}',
+                                  anchor='e', font=get_sao_font(8), fill='#999999')
 
         # 经验条 (带边框)
         if h > 124:
@@ -1019,6 +1030,8 @@ class SAOPlayerGUI:
         self._current_file = None
         self._playing = False
         self._paused = False
+        self._time_current = 0
+        self._time_total = 0
         self._folder_loop_active = False
         self._folder_loop_files = []
         self._folder_loop_index = 0
@@ -1227,7 +1240,7 @@ class SAOPlayerGUI:
             h_top = max(1, self._hp_bar_bot_top - self._hp_bar_y)
             grad_top = np.zeros((h_top, top_fill_w, 4), dtype=np.uint8)
             grad_top[:, :, :3] = c
-            grad_top[:, :, 3] = int(255 * alpha_base * 0.82)
+            grad_top[:, :, 3] = int(255 * alpha_base * 0.92)
             fill_top_img = Image.fromarray(grad_top)
             shell.paste(fill_top_img, (self._hp_bar_x, self._hp_bar_y), fill_top_img)
 
@@ -1236,7 +1249,7 @@ class SAOPlayerGUI:
                 h_bot = max(1, self._hp_bar_bot_full - self._hp_bar_bot_top)
                 grad_bot = np.zeros((h_bot, bot_fill_w, 4), dtype=np.uint8)
                 grad_bot[:, :, :3] = c
-                grad_bot[:, :, 3] = int(255 * alpha_base * 0.82)
+                grad_bot[:, :, 3] = int(255 * alpha_base * 0.92)
                 fill_bot_img = Image.fromarray(grad_bot)
                 shell.paste(fill_bot_img, (self._hp_bar_x, self._hp_bar_bot_top), fill_bot_img)
 
@@ -1260,15 +1273,29 @@ class SAOPlayerGUI:
         xp_w = int(150 * 0.69)
         lv_x = num_x + xp_w + 3
         lv_w = int(150 * 0.30)
-        _lv, _cur_xp, _need_xp = calc_level(self._xp)
         try:
             fn_num = _get_hp_pil_font(12, 'sao')
-            draw.text((num_x + xp_w - 5, num_y + 9),
-                      f'{_cur_xp}/{_need_xp}', fill=(225, 222, 222, 255),
-                      font=fn_num, anchor='rm')
-            draw.text((lv_x + lv_w - 5, num_y + 9),
-                      f'lv.{self._level}', fill=(225, 222, 222, 255),
-                      font=fn_num, anchor='rm')
+            if self._playing or self._paused:
+                # 播放中/暂停中: 显示时间 mm:ss / mm:ss
+                tc = getattr(self, '_time_current', 0)
+                tt = getattr(self, '_time_total', 0)
+                cur_m, cur_s = int(tc) // 60, int(tc) % 60
+                tot_m, tot_s = int(tt) // 60, int(tt) % 60
+                time_str = f'{cur_m:02d}:{cur_s:02d}/{tot_m:02d}:{tot_s:02d}'
+                draw.text((num_x + xp_w - 5, num_y + 9),
+                          time_str, fill=(154, 236, 255, 255),
+                          font=fn_num, anchor='rm')
+                draw.text((lv_x + lv_w - 5, num_y + 9),
+                          f'lv.{self._level}', fill=(225, 222, 222, 255),
+                          font=fn_num, anchor='rm')
+            else:
+                _lv, _cur_xp, _need_xp = calc_level(self._xp)
+                draw.text((num_x + xp_w - 5, num_y + 9),
+                          f'{_cur_xp}/{_need_xp}', fill=(225, 222, 222, 255),
+                          font=fn_num, anchor='rm')
+                draw.text((lv_x + lv_w - 5, num_y + 9),
+                          f'lv.{self._level}', fill=(225, 222, 222, 255),
+                          font=fn_num, anchor='rm')
         except Exception:
             pass
 
@@ -1285,7 +1312,7 @@ class SAOPlayerGUI:
             return
         if not self._float_hwnd:
             return
-        alpha = getattr(self, '_float_alpha', 0.82)
+        alpha = getattr(self, '_float_alpha', 0.92)
         try:
             if alpha <= 0.01:
                 # alpha ≈ 0: 仍然调用 ULW (全透明), 防止 Tk 黑底暴露
@@ -1435,10 +1462,10 @@ class SAOPlayerGUI:
         PW, PT, PH, PS = 260, 16, 23, 124
         self._hp_bar_x        = bar_x + 2
         self._hp_bar_y        = bar_y + 2
-        self._hp_bar_right    = bar_x + PW - 7
+        self._hp_bar_right    = bar_x + PW - 3
         self._hp_bar_bot_top  = bar_y + PT - 1
         self._hp_bar_bot_full = bar_y + PH - 2
-        self._hp_bar_step_x   = bar_x + PS - 6
+        self._hp_bar_step_x   = bar_x + PS - 2
 
         # ── 显示名 ──
         display_name = self._username if self._username else 'Player'
@@ -1605,7 +1632,7 @@ class SAOPlayerGUI:
         """高亮悬浮 HP 组件"""
         try:
             self._hp_hover = True
-            self._float_alpha = 0.93
+            self._float_alpha = 0.97
             self._refresh_hp_layered()
         except Exception:
             pass
@@ -1614,7 +1641,7 @@ class SAOPlayerGUI:
         """恢复默认色"""
         try:
             self._hp_hover = False
-            self._float_alpha = 0.82
+            self._float_alpha = 0.92
             self._refresh_hp_layered()
         except Exception:
             pass
@@ -2856,6 +2883,53 @@ class SAOPlayerGUI:
 
             # ── 主循环: 持续产出帧 → _latest_frame ──
             _frame_interval = 0.033  # 目标 ~30fps (降低 CPU 占用)
+
+            # ── 预生成暗色 HUD 叠加层 (SAO 科技感) ──
+            _hud_overlay = None
+            try:
+                from PIL import ImageDraw as _IDraw
+                _hud = Image.new('RGBA', (sw, sh), (0, 0, 0, 0))
+                _hd = _IDraw.Draw(_hud)
+                # 暗色面纱
+                _hd.rectangle((0, 0, sw, sh), fill=(0, 0, 0, 115))
+                # 横向扫描线 (每 3px 一条, 极淡)
+                for _sy2 in range(0, sh, 3):
+                    _hd.line([(0, _sy2), (sw, _sy2)], fill=(0, 0, 0, 18))
+                # SAO 科技水平线 (上、中、下)
+                _line_positions = [
+                    int(sh * 0.08), int(sh * 0.15),
+                    int(sh * 0.85), int(sh * 0.92),
+                ]
+                for _ly in _line_positions:
+                    _hd.line([(int(sw * 0.05), _ly), (int(sw * 0.95), _ly)],
+                             fill=(156, 236, 255, 35), width=1)
+                # 中央十字准星 (淡)
+                _cx2, _cy2 = sw // 2, sh // 2
+                _hd.line([(_cx2 - 40, _cy2), (_cx2 - 12, _cy2)], fill=(156, 236, 255, 45), width=1)
+                _hd.line([(_cx2 + 12, _cy2), (_cx2 + 40, _cy2)], fill=(156, 236, 255, 45), width=1)
+                _hd.line([(_cx2, _cy2 - 40), (_cx2, _cy2 - 12)], fill=(156, 236, 255, 45), width=1)
+                _hd.line([(_cx2, _cy2 + 12), (_cx2, _cy2 + 40)], fill=(156, 236, 255, 45), width=1)
+                # 四角 SAO 括号
+                _blen = 50
+                _bpad = int(sw * 0.04)
+                _bpad_y = int(sh * 0.05)
+                _bc = (156, 236, 255, 55)
+                # 左上
+                _hd.line([(_bpad, _bpad_y), (_bpad + _blen, _bpad_y)], fill=_bc, width=1)
+                _hd.line([(_bpad, _bpad_y), (_bpad, _bpad_y + _blen)], fill=_bc, width=1)
+                # 右上
+                _hd.line([(sw - _bpad, _bpad_y), (sw - _bpad - _blen, _bpad_y)], fill=_bc, width=1)
+                _hd.line([(sw - _bpad, _bpad_y), (sw - _bpad, _bpad_y + _blen)], fill=_bc, width=1)
+                # 左下
+                _hd.line([(_bpad, sh - _bpad_y), (_bpad + _blen, sh - _bpad_y)], fill=_bc, width=1)
+                _hd.line([(_bpad, sh - _bpad_y), (_bpad, sh - _bpad_y - _blen)], fill=_bc, width=1)
+                # 右下
+                _hd.line([(sw - _bpad, sh - _bpad_y), (sw - _bpad - _blen, sh - _bpad_y)], fill=_bc, width=1)
+                _hd.line([(sw - _bpad, sh - _bpad_y), (sw - _bpad, sh - _bpad_y - _blen)], fill=_bc, width=1)
+                _hud_overlay = _hud
+            except Exception:
+                pass
+
             while _running[0]:
                 _t_start = _time.time()
                 shot = _cap_fn()
@@ -2887,6 +2961,11 @@ class SAOPlayerGUI:
                 if not _running[0]:
                     break
                 full = dist.resize((sw, sh), Image.BILINEAR)
+                # 暗色 HUD 叠加 (SAO 科技感背景)
+                if _hud_overlay is not None:
+                    full = full.convert('RGBA')
+                    full = Image.alpha_composite(full, _hud_overlay)
+                    full = full.convert('RGB')
                 _latest_frame[0] = full
                 # 限制帧率, 释放 CPU 给主线程
                 _elapsed = _time.time() - _t_start
@@ -3450,10 +3529,13 @@ class SAOPlayerGUI:
     #  回调绑定
     # ══════════════════════════════════════════════
     def _bind_callbacks(self):
-        def on_note(key, note, is_chord=False):
+        def on_note(key, note, is_chord=False, hold_duration=None):
             if self._destroyed:
                 return
-            dur = int(min(2000, max(100, note.duration * 1000)))
+            if hold_duration is not None:
+                dur = int(min(2000, max(100, hold_duration * 1000)))
+            else:
+                dur = int(min(2000, max(100, note.duration * 1000)))
             vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8
             midi_note = note.note
             if self._mini_piano:
@@ -3498,6 +3580,8 @@ class SAOPlayerGUI:
 
     def _update_progress(self, current, total):
         # 更新悬浮进度条
+        self._time_current = current
+        self._time_total = total
         if total > 0:
             self._float_progress_pct = current / total
         else:
@@ -3517,6 +3601,8 @@ class SAOPlayerGUI:
     def _on_playback_end(self):
         self._playing = False
         self._paused = False
+        self._time_current = 0
+        self._time_total = 0
         self._update_float_status()
 
         # ── 经验值 & 升级 ──
@@ -3651,7 +3737,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.24+3424\n\n"
+            "咲 Midi Player  SAO Edition\nv3.5.0\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

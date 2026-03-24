@@ -493,14 +493,16 @@ function pianoNoteOn(midi_note, velocity, duration_ms) {
     if (!el) return;
     el.style.background = bright;
 
-    var STEPS = 8, interval = Math.max(25, Math.floor(duration_ms / STEPS)), step = 0;
+    var hold_ms = Math.max(50, duration_ms * 0.75);
+    var fade_ms = Math.max(80, duration_ms * 0.25);
+    var STEPS = 8, interval = Math.max(16, Math.floor(fade_ms / STEPS)), step = 0;
     function fade() {
         step++;
         if (step > STEPS) { el.style.background = ''; delete _pianoActive[midi_note]; return; }
         el.style.background = _lerpColor(bright, normal, step / STEPS);
         _pianoActive[midi_note] = setTimeout(fade, interval);
     }
-    _pianoActive[midi_note] = setTimeout(fade, interval);
+    _pianoActive[midi_note] = setTimeout(fade, hold_ms);
 }
 
 function pianoReset() {
@@ -557,18 +559,25 @@ function _buildViz() {
     }, 60);
 }
 
-function vizTrigger(key, velocity) {
+var _barHoldEnd = new Float64Array(NUM_BARS);  // hold deadline (ms timestamp)
+
+function vizTrigger(key, velocity, duration_ms) {
     var k = key.toLowerCase();
     if (k in KEY_BAR) {
-        _barVals[KEY_BAR[k]] = Math.min(1, velocity);
-        _barPeaks[KEY_BAR[k]] = Math.min(1, velocity);
+        var idx = KEY_BAR[k];
+        _barVals[idx] = Math.min(1, velocity);
+        _barPeaks[idx] = Math.min(1, velocity);
         _beatBright = Math.min(1, _beatBright + 0.4);
+        var hold = (typeof duration_ms === 'number' && duration_ms > 0) ? duration_ms * 0.8 : 0;
+        _barHoldEnd[idx] = performance.now() + hold;
     }
 }
 
 function _vizAnimate() {
     if (!_vizRunning) return;
+    var now = performance.now();
     for (var i = 0; i < NUM_BARS; i++) {
+        if (now < _barHoldEnd[i]) continue;  // still held
         _barVals[i] *= BAR_DECAY;
         if (_barVals[i] < 0.008) _barVals[i] = 0;
         _barPeaks[i] *= 0.97;

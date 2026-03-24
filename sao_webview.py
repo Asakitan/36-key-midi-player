@@ -389,10 +389,13 @@ class SAOWebViewGUI:
         self.player.on_shift_change = self._on_shift_change
 
     # ─── 音符回调 → 面板 ───
-    def _on_note_play(self, key, note, is_chord=False):
+    def _on_note_play(self, key, note, is_chord=False, hold_duration=None):
         """Player 触发音符 → 推送到 piano / viz 面板 (non-blocking)."""
         try:
-            dur = int(min(2000, max(100, note.duration * 1000)))
+            if hold_duration is not None:
+                dur = int(min(2000, max(100, hold_duration * 1000)))
+            else:
+                dur = int(min(2000, max(100, note.duration * 1000)))
             vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8
             midi_note = note.note
             safe_key = self._safe_js(key)
@@ -409,7 +412,7 @@ class SAOWebViewGUI:
             viz_win = self._panel_wins.get('viz')
             if viz_win:
                 try:
-                    viz_win.evaluate_js(f'Panel.vizTrigger("{safe_key}",{vel:.2f})')
+                    viz_win.evaluate_js(f'Panel.vizTrigger("{safe_key}",{vel:.2f},{dur})')
                 except Exception:
                     pass
 
@@ -693,6 +696,10 @@ class SAOWebViewGUI:
         # 初始化 HP
         def _init():
             from character_profile import calc_level
+            # ── 先应用透明, 再显示窗口 (防止白底闪现) ──
+            self._apply_webview2_transparency()
+            time.sleep(0.15)
+            self._apply_webview2_transparency()  # 二次确保
             try:
                 if self.hp_win and not self._hp_visible:
                     self.hp_win.show()
@@ -707,9 +714,9 @@ class SAOWebViewGUI:
             # 设置 click-through (延迟确保窗口已完全创建)
             time.sleep(0.3)
             self._setup_click_through()
-            # WebView2 透明背景 (防止白底)
+            # WebView2 透明背景 — 持续重试
             self._apply_webview2_transparency()
-            self._reassert_hp_transparency(1.0, retries=6, delay=0.22)
+            self._reassert_hp_transparency(1.0, retries=10, delay=0.25)
             # 任务栏图标
             self._set_window_icon('♪ SAO HP')
             self._set_window_icon('SAO Menu')
