@@ -13,6 +13,7 @@ import time
 import threading
 import json
 import ctypes
+import numpy as np
 from typing import Optional
 
 # ── 延迟导入 pywebview ──
@@ -382,11 +383,21 @@ class SAOWebViewGUI:
         fx = self.settings.get('float_x', 100)
         fy = self.settings.get('float_y', 50)
 
+        # HP 悬浮窗 — 初始位置屏幕中央, 后续动画滑到记忆位置
+        try:
+            _sw = ctypes.windll.user32.GetSystemMetrics(0)
+            _sh = ctypes.windll.user32.GetSystemMetrics(1)
+            cx, cy = (_sw - 430) // 2, (_sh - 280) // 2
+        except Exception:
+            cx, cy = 500, 300
+        self._hp_target_x = fx
+        self._hp_target_y = fy
+
         # HP 悬浮窗 — transparent=True 由 pywebview 原生处理透明
         self.hp_win = webview.create_window(
             '♪ SAO HP', hp_url,
             width=430, height=280,
-            x=fx, y=fy,
+            x=cx, y=cy,
             frameless=True,
             easy_drag=False,           # 自行处理拖拽 (CSS app-region)
             transparent=True,
@@ -539,6 +550,36 @@ class SAOWebViewGUI:
         except Exception:
             pass
 
+    # ─── HP 入场动画: 从屏幕中央滑到记忆位置 ───
+    def _animate_hp_entry(self):
+        """HP 窗口从屏幕中央 ease-out 滑到记忆位置."""
+        def _slide():
+            try:
+                sx, sy = self.hp_win.x, self.hp_win.y
+            except Exception:
+                try:
+                    _sw = ctypes.windll.user32.GetSystemMetrics(0)
+                    _sh = ctypes.windll.user32.GetSystemMetrics(1)
+                    sx, sy = (_sw - 430) // 2, (_sh - 280) // 2
+                except Exception:
+                    sx, sy = 500, 300
+            tx, ty = self._hp_target_x, self._hp_target_y
+            steps = 28
+            duration = 0.65          # 总时长 (秒)
+            dt = duration / steps
+            for i in range(1, steps + 1):
+                t = i / steps
+                # ease-out cubic
+                ease = 1 - (1 - t) ** 3
+                nx = int(sx + (tx - sx) * ease)
+                ny = int(sy + (ty - sy) * ease)
+                try:
+                    self.hp_win.move(nx, ny)
+                except Exception:
+                    break
+                time.sleep(dt)
+        threading.Thread(target=_slide, daemon=True).start()
+
     # ─── WebView 就绪 ───
     def _on_webview_started(self):
         # 初始化 HP
@@ -556,6 +597,8 @@ class SAOWebViewGUI:
             # 任务栏图标
             self._set_window_icon('♪ SAO HP')
             self._set_window_icon('SAO Menu')
+            # HP 窗口入场动画: 从中央滑到记忆位置
+            self._animate_hp_entry()
         threading.Timer(0.5, _init).start()
 
         # 后台线程
@@ -1270,7 +1313,37 @@ class SAOWebViewGUI:
         fname = os.path.basename(path)
         self._eval_menu(f'SAO.updateInfo({{file: "{self._safe_js(fname)}", '
                         f'des: "当前文件: {self._safe_js(fname)}"}})')
-        self._eval_menu(f'SAO.showToast("已加载: {self._safe_js(fname)}")')
+        # 尝试解析并展示文件信息
+        self._show_midi_info(path, fname)
+
+    def _show_midi_info(self, path: str, fname: str):
+        """解析 MIDI 文件并在 SAO 弹窗中显示歌曲信息."""
+        try:
+            from midi_parser import MidiParser
+            p = MidiParser()
+            p.load(path)
+            note_count = len(p.notes)
+            duration = p.total_time
+            bpm = int(round(p.bpm)) if p.bpm else 120
+            dur_str = f'{int(duration // 60)}:{int(duration % 60):02d}'
+            # 调号
+            KEY_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+            if p.primary_key is not None:
+                mode_str = 'Major' if p.primary_mode == 'major' else 'Minor'
+                key_str = f'{KEY_NAMES[p.primary_key]} {mode_str}'
+            else:
+                key_str = '未知'
+            # 推荐移调
+            tr = self.player._detect_key_transpose([n.note for n in p.notes])
+            tr_str = f'{tr:+d}' if tr != 0 else '0 (无需移调)'
+            # 构建弹窗内容
+            body = (f'♪ {self._safe_js(fname)}\n'
+                    f'音符数: {note_count}   BPM: {bpm}\n'
+                    f'时长: {dur_str}   调号: {key_str}\n'
+                    f'推荐移调: {tr_str}')
+            self._eval_menu(f'SAO.showAlert("曲目信息", "{body}", false)')
+        except Exception:
+            self._eval_menu(f'SAO.showToast("已加载: {self._safe_js(fname)}")')
 
     def _open_folder(self):
         if self._menu_visible:
