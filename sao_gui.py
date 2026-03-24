@@ -3736,12 +3736,134 @@ class SAOPlayerGUI:
         if not ov:
             return
         try:
+            gl = ov.get('gl') or {}
+            for key in ('boot_fbo', 'boot_tex', 'boot_vao', 'boot_prog', 'ctx'):
+                obj = gl.get(key)
+                if obj is not None:
+                    try:
+                        obj.release()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        try:
             win = ov.get('win')
             if win and win.winfo_exists():
                 win.destroy()
         except Exception:
             pass
         self._entry_overlay = None
+
+    def _init_entry_boot_gl(self, width, height):
+        try:
+            import moderngl
+        except Exception:
+            return None
+        try:
+            ctx = moderngl.create_standalone_context()
+            prog = ctx.program(
+                vertex_shader='''
+#version 330
+out vec2 uv;
+vec2 pos[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+void main() {
+    vec2 p = pos[gl_VertexID];
+    uv = p * 0.5 + 0.5;
+    gl_Position = vec4(p, 0.0, 1.0);
+}
+''',
+                fragment_shader='''
+#version 330
+in vec2 uv;
+uniform vec2 u_resolution;
+uniform float u_progress;
+out vec4 fragColor;
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float band(float x, float center, float width) {
+    return exp(-pow((x - center) / max(0.0001, width), 2.0));
+}
+
+void main() {
+    vec2 p = uv - 0.5;
+    p.x *= u_resolution.x / max(1.0, u_resolution.y);
+    float r = length(p);
+    float progress = clamp(u_progress, 0.0, 1.0);
+
+    float openA = smoothstep(0.00, 0.22, progress);
+    float openB = smoothstep(0.12, 0.56, progress);
+    float settle = smoothstep(0.40, 1.00, progress);
+    float halfH = mix(0.003, 0.50, openA);
+    float halfW = mix(0.030, 0.62, openB);
+    float maskY = 1.0 - smoothstep(halfH, halfH + 0.030, abs(uv.y - 0.5));
+    float maskX = 1.0 - smoothstep(halfW, halfW + 0.045, abs(uv.x - 0.5));
+    float screenMask = clamp(maskX * maskY, 0.0, 1.0);
+
+    float ignition = band(uv.y, 0.5, mix(0.0016, 0.020, openA)) * (1.0 - smoothstep(0.18, 0.46, progress));
+    float flare = exp(-r * mix(24.0, 6.5, openB)) * (0.45 + 0.55 * (1.0 - settle));
+    float scan = 0.92 + 0.08 * sin((uv.y * u_resolution.y) * 2.8 + progress * 1100.0);
+    float noise = hash21(gl_FragCoord.xy * 0.03 + progress * 17.0) * 0.05;
+    float bezel = smoothstep(0.90, 0.18, max(abs(p.x) * 0.92, abs(p.y) * 1.25));
+    float sweep = band(uv.y, 0.26 + progress * 0.48, 0.045) + band(uv.y, 0.60 + progress * 0.12, 0.060) * 0.55;
+
+    vec3 cyan = vec3(0.52, 0.92, 1.0);
+    vec3 blue = vec3(0.08, 0.46, 1.0);
+    vec3 white = vec3(1.0, 1.0, 1.0);
+    vec3 color = vec3(0.0);
+    color += white * ignition * 1.6;
+    color += mix(blue, cyan, 0.50) * flare * (0.65 + 0.35 * openB);
+    color += cyan * screenMask * (0.18 + 0.24 * sweep + 0.18 * settle);
+    color += white * screenMask * 0.10 * (1.0 - smoothstep(0.0, 0.4, r));
+    color += vec3(0.78, 0.96, 1.0) * sweep * screenMask * 0.24;
+    color *= scan * bezel;
+    color += vec3(noise) * screenMask * 0.12;
+    color = clamp(color, 0.0, 1.0);
+    fragColor = vec4(color, 1.0);
+}
+''')
+            vao = ctx.vertex_array(prog, [])
+            tex = ctx.texture((width, height), 3)
+            fbo = ctx.framebuffer(color_attachments=[tex])
+            prog['u_resolution'].value = (float(width), float(height))
+            return {
+                'ctx': ctx,
+                'boot_prog': prog,
+                'boot_vao': vao,
+                'boot_tex': tex,
+                'boot_fbo': fbo,
+            }
+        except Exception:
+            try:
+                ctx.release()
+            except Exception:
+                pass
+            return None
+
+    def _draw_entry_boot_gl(self, cv, ov, progress):
+        gl = ov.get('gl')
+        if not gl:
+            return False
+        try:
+            prog = gl['boot_prog']
+            fbo = gl['boot_fbo']
+            vao = gl['boot_vao']
+            fbo.use()
+            gl['ctx'].clear(0.0, 0.0, 0.0, 1.0)
+            prog['u_progress'].value = float(max(0.0, min(1.0, progress)))
+            vao.render()
+            raw = fbo.read(components=3)
+            arr = np.frombuffer(raw, dtype=np.uint8).reshape(ov['sh'], ov['sw'], 3)
+            photo = ImageTk.PhotoImage(Image.fromarray(arr[::-1], 'RGB'))
+            ov['gl_photo'] = photo
+            cv.create_image(0, 0, image=photo, anchor='nw')
+            return True
+        except Exception:
+            return False
 
     def _create_entry_overlay(self, start_x, start_y, end_x, end_y):
         self._cleanup_entry_overlay()
@@ -3764,6 +3886,8 @@ class SAOPlayerGUI:
             'cv': cv,
             'sw': sw,
             'sh': sh,
+            'gl': self._init_entry_boot_gl(sw, sh),
+            'gl_photo': None,
             'start_x': start_x + self._fw // 2,
             'start_y': start_y + self._fh // 2,
             'end_x': end_x + self._fw // 2,
@@ -3795,19 +3919,35 @@ class SAOPlayerGUI:
         white = '#edf7ff'
         dim_cyan = '#173746'
         dim_gold = '#5e4211'
+        # TV-on: 0→1 during 0–0.62, settled: 1.0 during 0.62–0.80, TV-close: 1→0 during 0.80–1.0
+        if progress <= 0.62:
+            boot_t = progress / 0.62
+        elif progress <= 0.80:
+            boot_t = 1.0
+        else:
+            boot_t = max(0.0, 1.0 - (progress - 0.80) / 0.20)
+        tv_close_f = max(0.0, (progress - 0.80) / 0.20)  # 0→1 during close phase
 
         try:
-            win.attributes('-alpha', max(0.0, min(0.92, (1.0 - progress) ** 0.42 * 0.88)))
+            base_alpha = max(0.0, min(0.95, (1.0 - progress) ** 0.28 * 0.92))
+            # fade window to near-zero as TV screen collapses
+            win.attributes('-alpha', max(0.0, base_alpha * (1.0 - tv_close_f * 0.95)))
         except Exception:
             pass
 
         cv.delete('all')
-        scan_pitch = 24
-        scan_shift = int((progress * 240) % scan_pitch)
-        for y in range(-scan_pitch, sh + scan_pitch, scan_pitch):
-            yy = y + scan_shift
-            col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
-            cv.create_line(0, yy, sw, yy, fill=col, width=1)
+        boot_gl_drawn = self._draw_entry_boot_gl(cv, ov, boot_t)
+        if not boot_gl_drawn:
+            scan_pitch = 24
+            scan_shift = int((progress * 240) % scan_pitch)
+            for y in range(-scan_pitch, sh + scan_pitch, scan_pitch):
+                yy = y + scan_shift
+                col = dim_cyan if ((y // scan_pitch) % 2 == 0) else '#101823'
+                cv.create_line(0, yy, sw, yy, fill=col, width=1)
+
+        # suppress all Canvas HUD elements once TV-close is under way
+        if tv_close_f > 0.08:
+            return
 
         span = int(lerp(min(sw * 0.42, 520), min(sw * 0.22, 260), deploy))
         aperture = int(lerp(172, 28, deploy))
@@ -3833,13 +3973,14 @@ class SAOPlayerGUI:
         cv.create_line(cx - 46, cy, cx + 46, cy, fill=white, width=1)
         cv.create_line(cx, cy - 22, cx, cy + 22, fill=white, width=1)
 
-        pulse_y = int(lerp(cy - 160, cy + 88, bloom))
-        cv.create_line(max(0, cx - span - 150), pulse_y,
-                       min(sw, cx + span + 150), pulse_y,
-                       fill=cyan, width=1)
-        cv.create_line(max(0, cx - span - 110), pulse_y + 3,
-                       min(sw, cx + span + 110), pulse_y + 3,
-                       fill=dim_cyan, width=1)
+        if not boot_gl_drawn or progress > 0.28:
+            pulse_y = int(lerp(cy - 160, cy + 88, bloom))
+            cv.create_line(max(0, cx - span - 150), pulse_y,
+                           min(sw, cx + span + 150), pulse_y,
+                           fill=cyan, width=1)
+            cv.create_line(max(0, cx - span - 110), pulse_y + 3,
+                           min(sw, cx + span + 110), pulse_y + 3,
+                           fill=dim_cyan, width=1)
 
         label_x1 = max(30, cx - span - 70)
         label_x2 = min(sw - 30, cx + span + 70)
@@ -3863,8 +4004,8 @@ class SAOPlayerGUI:
     def _run_entry_animation(self, fx_start, fy_start, fx_final, fy_final):
         self._create_entry_overlay(fx_start, fy_start, fx_final, fy_final)
         anim_start = time.time()
-        total = 1.18
-        phase1 = 0.36
+        total = 1.28
+        phase1 = 0.44
 
         def _done():
             self._cleanup_entry_overlay()
@@ -3987,17 +4128,24 @@ void main() {
     float r = length(p);
     float progress = clamp(u_progress, 0.0, 1.0);
 
-    float bluePulse = smoothstep(0.00, 0.09, progress) * (1.0 - smoothstep(0.12, 0.29, progress));
-    float whitePulse = smoothstep(0.15, 0.23, progress) * (1.0 - smoothstep(0.28, 0.45, progress));
-    float exposure = smoothstep(0.01, 0.08, progress) * (1.0 - smoothstep(0.15, 0.32, progress));
-    float dualFlash = bluePulse * 0.95 + whitePulse * 1.24 + exposure * 0.82;
+    float bluePulse = smoothstep(0.00, 0.09, progress) * (1.0 - smoothstep(0.12, 0.30, progress));
+    float whitePulse = smoothstep(0.14, 0.24, progress) * (1.0 - smoothstep(0.28, 0.46, progress));
+    float exposure = smoothstep(0.00, 0.08, progress) * (1.0 - smoothstep(0.12, 0.32, progress));
+    float edgeFlood = smoothstep(0.18, 0.74, progress);
+    float tvClose = smoothstep(0.80, 1.0, progress);
 
+    float fracture1 = band(uv.y, 0.26 + progress * 0.28, 0.014) * step(0.34, hash21(vec2(floor(uv.x * 180.0), floor(progress * 80.0) + 7.0)));
+    float fracture2 = band(uv.y, 0.60 - progress * 0.18, 0.018) * step(0.42, hash21(vec2(floor(uv.x * 140.0) + 9.0, floor(progress * 110.0) + 3.0)));
+    float fracture = fracture1 + fracture2;
     vec2 radialDir = normalize(p + vec2(0.0001, 0.0));
+    vec2 hudBreak = vec2(fracture * (0.020 + whitePulse * 0.018), fracture * 0.0015);
+
     float ringRadius = mix(0.012, 0.74, progress);
-    float ringWidth = mix(0.038, 0.014, progress);
-    float refractBand = band(r, ringRadius - mix(0.015, 0.060, progress), ringWidth * 3.4)
-                      * smoothstep(0.06, 0.74, progress);
-    vec2 distort = radialDir * refractBand * (0.020 + whitePulse * 0.018)
+    float ringWidth = mix(0.040, 0.014, progress);
+    float refractBand = band(r, ringRadius - mix(0.015, 0.060, progress), ringWidth * 3.6)
+                      * smoothstep(0.05, 0.78, progress);
+    vec2 distort = radialDir * refractBand * (0.022 + whitePulse * 0.020)
+                 + hudBreak
                  + vec2(sin(uv.y * u_resolution.y * 0.090 + progress * 28.0),
                         cos(uv.x * u_resolution.x * 0.052 - progress * 21.0)) * refractBand * 0.0045;
 
@@ -4005,82 +4153,87 @@ void main() {
     float rr = length(rp);
     float rang = atan(rp.y, rp.x);
 
-    float fringe = (0.010 + bluePulse * 0.010 + whitePulse * 0.016) * (0.40 + rr * 1.9);
+    float fringe = (0.012 + bluePulse * 0.012 + whitePulse * 0.018) * (0.35 + rr * 2.1);
     float segmentA = smoothstep(0.12, 0.94, 0.5 + 0.5 * sin(rang * 16.0 + progress * 18.0 + rr * 34.0));
-    float segmentB = smoothstep(0.20, 0.97, 0.5 + 0.5 * cos(rang * 11.0 - progress * 15.0 - rr * 26.0));
+    float segmentB = smoothstep(0.20, 0.97, 0.5 + 0.5 * cos(rang * 10.0 - progress * 16.0 - rr * 24.0));
     float segmentMask = clamp(segmentA * 0.65 + segmentB * 0.95, 0.0, 1.0);
 
-    float ringR = band(rr, ringRadius + fringe * 1.05, ringWidth * 1.10) * (0.45 + 0.55 * segmentMask);
-    float ringG = band(rr, ringRadius, ringWidth) * (0.28 + 0.72 * segmentMask);
-    float ringB = band(rr, max(0.0, ringRadius - fringe), ringWidth * 0.90) * (0.38 + 0.62 * segmentMask);
+    float ringR = band(rr, ringRadius + fringe * 1.06, ringWidth * 1.08) * (0.45 + 0.55 * segmentMask);
+    float ringG = band(rr, ringRadius, ringWidth) * (0.26 + 0.74 * segmentMask);
+    float ringB = band(rr, max(0.0, ringRadius - fringe), ringWidth * 0.88) * (0.36 + 0.64 * segmentMask);
 
-    float echoR = band(rr, ringRadius + 0.026, ringWidth * 1.7) * (1.0 - smoothstep(0.24, 0.78, progress));
-    float echoC = band(rr, max(0.0, ringRadius - 0.070), ringWidth * 2.8) * (1.0 - smoothstep(0.16, 0.58, progress));
-    float echoB = band(rr, max(0.0, ringRadius - 0.128), ringWidth * 3.5) * (1.0 - smoothstep(0.10, 0.48, progress));
+    float echoR = band(rr, ringRadius + 0.030, ringWidth * 1.6) * (1.0 - smoothstep(0.24, 0.82, progress));
+    float echoC = band(rr, max(0.0, ringRadius - 0.080), ringWidth * 2.8) * (1.0 - smoothstep(0.14, 0.62, progress));
+    float echoB = band(rr, max(0.0, ringRadius - 0.136), ringWidth * 3.7) * (1.0 - smoothstep(0.10, 0.52, progress));
 
     vec2 dirA = normalize(vec2(1.0, 0.0));
     vec2 dirB = normalize(vec2(0.5, 0.8660254));
     vec2 dirC = normalize(vec2(-0.5, 0.8660254));
-    float hexScale = mix(20.0, 31.0, smoothstep(0.08, 0.80, progress));
+    float hexScale = mix(21.0, 32.0, smoothstep(0.08, 0.82, progress));
     float lineA = gridLine(rp, dirA, hexScale, 0.035);
     float lineB = gridLine(rp, dirB, hexScale, 0.033);
     float lineC = gridLine(rp, dirC, hexScale, 0.033);
     float hexWire = max(lineA, max(lineB, lineC));
     float hexNode = max(lineA * lineB, max(lineB * lineC, lineC * lineA));
-    float hexMask = band(rr, ringRadius + 0.020, ringWidth * 4.8)
-                  + band(rr, ringRadius - 0.090, ringWidth * 6.2) * 0.6;
-    float circuitry = clamp((hexWire * 0.60 + hexNode * 1.10) * hexMask, 0.0, 1.0);
+    float hexMask = band(rr, ringRadius + 0.018, ringWidth * 5.0)
+                  + band(rr, ringRadius - 0.096, ringWidth * 6.6) * 0.8;
+    float chainWave = band(fract((rang / 6.2831853) + progress * 1.55), 0.5, 0.18);
+    float nodeCascade = hexNode * hexMask * (0.35 + 0.65 * chainWave);
+    float circuitry = clamp((hexWire * 0.58 + nodeCascade * 1.22), 0.0, 1.0);
 
-    float core = exp(-rr * mix(60.0, 24.0, progress)) * (0.72 + 0.28 * whitePulse);
-    float bloom = exp(-rr * 7.2) * (bluePulse * 0.95 + whitePulse * 1.10 + exposure * 0.55);
-    float halo = exp(-rr * 3.1) * smoothstep(0.04, 0.24, progress) * (1.0 - smoothstep(0.60, 1.0, progress));
+    float core = exp(-rr * mix(62.0, 24.0, progress)) * (0.76 + 0.24 * whitePulse);
+    float bloom = exp(-rr * 7.0) * (bluePulse * 0.90 + whitePulse * 1.10 + exposure * 0.58);
+    float halo = exp(-rr * 2.8) * smoothstep(0.04, 0.22, progress) * (1.0 - smoothstep(0.58, 1.0, progress));
 
-    float edgeWave = band(rr, mix(0.18, 1.04, progress), mix(0.10, 0.022, progress));
     vec2 edgeUv = abs(uv - 0.5) * 2.0;
-    float edgeMask = pow(max(edgeUv.x, edgeUv.y), 3.6);
-    float edgeSweep = edgeWave * edgeMask * smoothstep(0.10, 0.92, progress);
+    float edgeWave = band(rr, mix(0.18, 1.04, progress), mix(0.10, 0.020, progress));
+    float edgeMask = pow(max(edgeUv.x, edgeUv.y), 3.0);
+    float edgeSweep = edgeWave * edgeMask * edgeFlood;
+    float edgeGlow = pow(max(edgeUv.x, edgeUv.y), 2.1) * (0.10 + 0.90 * edgeFlood) * (1.0 - tvClose * 0.55);
 
     float scanlines = 0.90 + 0.10 * sin((uv.y * u_resolution.y + progress * 2900.0) * 1.14);
     float scanMicro = 0.95 + 0.05 * sin((uv.y * u_resolution.y) * 4.2 + progress * 970.0);
-    float lensSweep = band(uv.y, 0.28 + progress * 0.50, 0.040) + band(uv.y, 0.60 + progress * 0.24, 0.055) * 0.6;
+    float lensSweep = band(uv.y, 0.24 + progress * 0.54, 0.045) + band(uv.y, 0.64 - progress * 0.10, 0.062) * 0.6;
 
-    float tearCenter1 = 0.33 + 0.09 * sin(progress * 12.0);
-    float tearCenter2 = 0.61 + 0.06 * cos(progress * 10.0 + 0.7);
-    float tearBand1 = band(uv.y, tearCenter1, 0.010 + whitePulse * 0.008);
-    float tearBand2 = band(uv.y, tearCenter2, 0.014 + bluePulse * 0.010);
+    float tearBand1 = band(uv.y, 0.33 + 0.09 * sin(progress * 12.0), 0.012 + whitePulse * 0.008);
+    float tearBand2 = band(uv.y, 0.61 + 0.06 * cos(progress * 10.0 + 0.7), 0.015 + bluePulse * 0.010);
     float tearPattern1 = step(0.38, hash21(vec2(floor((uv.x + distort.x * 9.0) * 220.0), floor(progress * 90.0) + 13.0)));
     float tearPattern2 = step(0.32, hash21(vec2(floor((uv.x - distort.x * 7.0) * 180.0) + 7.0, floor(progress * 126.0) + 27.0)));
     float tear = tearBand1 * tearPattern1 + tearBand2 * tearPattern2;
 
-    float chromaGlint = smoothstep(0.76, 1.0, sin(rang * 24.0 + rr * 80.0 - progress * 18.0) * 0.5 + 0.5)
-                      * band(rr, ringRadius, ringWidth * 2.2);
-    float grain = hash21(gl_FragCoord.xy * 0.05 + progress * 31.0) * 0.045;
+    float closeH = mix(0.50, 0.010, tvClose);
+    float closeW = mix(0.50, 0.022, tvClose);
+    float tvMaskY = 1.0 - smoothstep(closeH, closeH + 0.02, abs(uv.y - 0.5));
+    float tvMaskX = 1.0 - smoothstep(closeW, closeW + 0.02, abs(uv.x - 0.5));
+    float tvMask = mix(1.0, tvMaskY, smoothstep(0.80, 0.92, progress));
+    tvMask *= mix(1.0, tvMaskX, smoothstep(0.90, 1.0, progress));
 
+    float grain = hash21(gl_FragCoord.xy * 0.05 + progress * 31.0) * 0.045;
     vec3 cyan = vec3(0.60, 0.95, 1.0);
     vec3 blue = vec3(0.06, 0.48, 1.0);
     vec3 white = vec3(1.0, 1.0, 1.0);
     vec3 ghost = vec3(0.34, 0.88, 1.0);
     vec3 color = vec3(0.0);
 
-    color += mix(blue, cyan, 0.42) * exposure * (0.50 + 0.50 * exp(-rr * 2.0));
-    color += vec3(0.82, 0.96, 1.0) * lensSweep * (0.10 + exposure * 0.24);
+    color += mix(blue, cyan, 0.42) * exposure * (0.54 + 0.46 * exp(-rr * 2.0));
+    color += vec3(0.82, 0.96, 1.0) * lensSweep * (0.08 + exposure * 0.22);
     color += white * whitePulse * (0.26 + 0.74 * exp(-rr * 3.2));
-    color.r += ringR * 0.92 + echoR * 0.44 + whitePulse * 0.18;
-    color.g += ringG * 1.04 + echoC * 0.38 + circuitry * 0.24;
-    color.b += ringB * 1.82 + echoC * 0.62 + echoB * 0.54 + edgeSweep * 0.90 + circuitry * 0.36;
-    color += cyan * bloom * 0.98;
-    color += ghost * (echoC * 0.62 + echoB * 0.44 + halo * 0.58);
-    color += vec3(0.44, 0.92, 1.0) * edgeSweep;
-    color += vec3(0.52, 0.94, 1.0) * circuitry * (0.50 + bluePulse * 0.55);
-    color += vec3(0.86, 1.0, 1.0) * hexNode * hexMask * 0.34;
-    color += vec3(0.78, 0.98, 1.0) * tear * (0.50 + dualFlash * 0.46);
-    color += vec3(0.94, 0.40, 0.50) * chromaGlint * 0.20;
-    color += vec3(0.18, 0.84, 1.0) * chromaGlint * 0.48;
-    color += white * core * (0.22 + whitePulse * 0.42);
-    color += vec3(grain) * (dualFlash * 0.20 + tear * 0.24 + circuitry * 0.08);
+    color.r += ringR * 0.96 + echoR * 0.46 + whitePulse * 0.18;
+    color.g += ringG * 1.02 + echoC * 0.40 + circuitry * 0.26;
+    color.b += ringB * 1.86 + echoC * 0.66 + echoB * 0.58 + edgeSweep * 0.96 + circuitry * 0.40;
+    color += cyan * bloom * 1.02;
+    color += ghost * (echoC * 0.64 + echoB * 0.46 + halo * 0.60);
+    color += vec3(0.40, 0.90, 1.0) * edgeGlow * 0.65;
+    color += vec3(0.50, 0.94, 1.0) * edgeSweep;
+    color += vec3(0.54, 0.96, 1.0) * circuitry * (0.48 + bluePulse * 0.60);
+    color += vec3(0.92, 1.0, 1.0) * nodeCascade * 0.40;
+    color += vec3(0.80, 0.98, 1.0) * tear * (0.42 + exposure * 0.48);
+    color += white * core * (0.24 + whitePulse * 0.42);
+    color += vec3(grain) * (0.18 + tear * 0.22 + circuitry * 0.08);
 
     color *= scanlines * scanMicro;
-    color += vec3(0.07, 0.18, 0.36) * tear * 0.28;
+    color += vec3(0.08, 0.18, 0.36) * fracture * 0.32;
+    color *= tvMask;
     color = clamp(color, 0.0, 1.0);
     fragColor = vec4(color, 1.0);
 }
@@ -4186,9 +4339,13 @@ void main() {
 
         wash = 0.22 + 0.78 * lock_e
         sweep = ((lock_t * 0.45) + purge_t * 1.2) % 1.0
+        tv_fade = 0.0 if progress <= 0.82 else min(1.0, max(0.0, (progress - 0.82) / 0.18))
+        tv_fade = ease_in_out(tv_fade)
 
         try:
-            win.attributes('-alpha', min(0.95, 0.10 + 0.56 * lock_e + 0.24 * purge_e))
+            # fade window all the way to transparent as TV-close completes
+            peak_alpha = min(0.97, 0.12 + 0.58 * lock_e + 0.20 * purge_e)
+            win.attributes('-alpha', max(0.0, peak_alpha * (1.0 - tv_fade * 0.97)))
         except Exception:
             pass
 
@@ -4227,6 +4384,16 @@ void main() {
                                    cx + core_r, cy + core_r,
                                    fill='#f8feff', outline='', stipple='gray25')
 
+                if tv_fade > 0.0:
+                    fade = int(255 * tv_fade)
+                    fill = f'#{fade:02x}{fade:02x}{fade:02x}'
+                    cv.create_rectangle(0, 0, sw, sh, fill=fill, outline='',
+                                        stipple='gray50' if tv_fade < 0.7 else '')
+
+        # suppress Canvas HUD once TV-close is visually dominant
+        if tv_fade > 0.25:
+            return
+
         span = int(lerp(min(sw * 0.30, 360), min(sw * 0.38, 460), lock_e))
         aperture = int(lerp(146, 22, purge_e))
         for off, col in [(-60, cyan), (-28, dim_cyan), (28, dim_gold), (60, gold)]:
@@ -4257,13 +4424,14 @@ void main() {
             cv.create_line(cx - burst, cy, cx + burst, cy, fill=flash, width=2)
             cv.create_line(cx, cy - int(burst * 0.42), cx, cy + int(burst * 0.42), fill=flash, width=1)
 
-        scan_y = int(lerp(cy - 140, cy + 120, sweep))
-        cv.create_line(max(0, cx - span - 140), scan_y,
-                       min(sw, cx + span + 140), scan_y,
-                       fill=cyan, width=1)
-        cv.create_line(max(0, cx - span - 120), scan_y + 3,
-                       min(sw, cx + span + 120), scan_y + 3,
-                       fill=dim_cyan, width=1)
+        if tv_fade < 0.92:
+            scan_y = int(lerp(cy - 140, cy + 120, sweep))
+            cv.create_line(max(0, cx - span - 140), scan_y,
+                           min(sw, cx + span + 140), scan_y,
+                           fill=cyan, width=1)
+            cv.create_line(max(0, cx - span - 120), scan_y + 3,
+                           min(sw, cx + span + 120), scan_y + 3,
+                           fill=dim_cyan, width=1)
 
         banner_x1 = max(30, cx - span - 60)
         banner_x2 = min(sw - 30, cx + span + 60)
