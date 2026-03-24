@@ -125,6 +125,43 @@ def _get_icon_path():
     return p if os.path.exists(p) else None
 
 
+def _set_process_app_id(app_id: str):
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
+
+
+def _apply_window_icon(win):
+    icon_path = _get_icon_path()
+    if not icon_path:
+        return
+    try:
+        win.iconbitmap(default=icon_path)
+        win.iconbitmap(icon_path)
+    except Exception:
+        pass
+    try:
+        win.update_idletasks()
+        hwnd = int(_user32.GetParent(ctypes.c_void_p(win.winfo_id())))
+        if not hwnd:
+            return
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x10
+        LR_DEFAULTSIZE = 0x40
+        WM_SETICON = 0x80
+        hicon = _user32.LoadImageW(None, icon_path, IMAGE_ICON, 0, 0,
+                                   LR_LOADFROMFILE | LR_DEFAULTSIZE)
+        if hicon:
+            if not hasattr(win, '_taskbar_hicons'):
+                win._taskbar_hicons = []
+            win._taskbar_hicons.append(hicon)
+            _user32.SendMessageW(ctypes.c_void_p(hwnd), WM_SETICON, 0, hicon)
+            _user32.SendMessageW(ctypes.c_void_p(hwnd), WM_SETICON, 1, hicon)
+    except Exception:
+        pass
+
+
 def _apply_panel_style(panel):
     """为浮动 Toplevel 面板添加 DWM 圆角 + 系统阴影 — 增强浮动质感"""
     try:
@@ -1003,6 +1040,7 @@ class SAOPlayerGUI:
     """
 
     def __init__(self):
+        _set_process_app_id('midi.28keys.player.sao')
         self.root = tk.Tk()
         self.root.withdraw()  # root 永远隐藏, 只作为 Tk 事件循环
         self.root.title("咲 Midi Player SAO Edition")
@@ -1085,16 +1123,8 @@ class SAOPlayerGUI:
         self.root.after(100, self._play_link_start)
 
     def _set_icon(self):
-        icon_path = _get_icon_path()
-        if icon_path:
-            try:
-                self.root.iconbitmap(default=icon_path)
-            except:
-                pass
-        try:
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('midi.28keys.player.sao')
-        except:
-            pass
+        _set_process_app_id('midi.28keys.player.sao')
+        _apply_window_icon(self.root)
 
     def _create_hp_alpha_strip_windows(self):
         """(ULW 模式下 HP 填充已由 PIL alpha 梯度渲染, 不再需要条带窗口)"""
@@ -1425,6 +1455,7 @@ class SAOPlayerGUI:
         self._float.attributes('-topmost', True)
         self._float.geometry(f'{FW}x{FH}')
         self._float.configure(bg='#000000')
+        _apply_window_icon(self._float)
 
         # Win32: 设为分层窗口 + 任务栏可见
         self._float_hwnd = 0

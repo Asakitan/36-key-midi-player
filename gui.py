@@ -3130,6 +3130,10 @@ class MidiPlayerGUI:
     """主应用 - 自定义无边框窗口 + Apple 风格深色主题"""
 
     def __init__(self):
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('midi.28keys.player.2.0')
+        except:
+            pass
         self.root = tk.Tk()
         self.root.title(WINDOW_TITLE)
         self.root.configure(bg=ModernColors.BG_DARK)
@@ -3150,6 +3154,7 @@ class MidiPlayerGUI:
 
         # 让无边框窗口出现在任务栏
         self.root.update_idletasks()
+        self._set_icon()
         self._setup_taskbar_icon()
 
         self.is_topmost = False
@@ -3207,17 +3212,34 @@ class MidiPlayerGUI:
 
     def _set_icon(self):
         icon_path = get_icon_path()
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('midi.28keys.player.2.0')
+        except:
+            pass
         if icon_path:
             try:
                 self.root.iconbitmap(default=icon_path)
                 self.root.iconbitmap(icon_path)
             except:
                 pass
-        try:
-            myappid = 'midi.28keys.player.2.0'
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-        except:
-            pass
+            try:
+                self.root.update_idletasks()
+                hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+                if hwnd:
+                    IMAGE_ICON = 1
+                    LR_LOADFROMFILE = 0x10
+                    LR_DEFAULTSIZE = 0x40
+                    WM_SETICON = 0x80
+                    hicon = ctypes.windll.user32.LoadImageW(
+                        None, icon_path, IMAGE_ICON, 0, 0,
+                        LR_LOADFROMFILE | LR_DEFAULTSIZE
+                    )
+                    if hicon:
+                        self._taskbar_hicon = hicon
+                        ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, 0, hicon)
+                        ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, 1, hicon)
+            except:
+                pass
 
     def _create_ui(self):
         """创建界面 - 自定义窗口框架 + 扁平布局"""

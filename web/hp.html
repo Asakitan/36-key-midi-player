@@ -580,9 +580,6 @@ function showCtxMenu(x, y) {
         hideCtxMenu();
         return;
     }
-    if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.set_ctx_menu_active(true);
-    }
     setTimeout(function() {
         ctxMenu.classList.add('show');
         var pad = 8;
@@ -597,6 +594,14 @@ function showCtxMenu(x, y) {
         posY = Math.min(Math.max(pad, posY), maxY);
         ctxMenu.style.left = posX + 'px';
         ctxMenu.style.top  = posY + 'px';
+        if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.set_ctx_menu_active(true, {
+                left: Math.round(posX),
+                top: Math.round(posY),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height)
+            });
+        }
     }, 50);
 }
 

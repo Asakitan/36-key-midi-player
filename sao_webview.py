@@ -35,6 +35,22 @@ def is_webview_available() -> bool:
         return False
 
 
+def _get_icon_path() -> Optional[str]:
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base, 'icon.ico')
+    return icon_path if os.path.exists(icon_path) else None
+
+
+def _set_process_app_id(app_id: str):
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
+
+
 # ════════════════════════════════════════════════
 #  Win32 透明窗口工具
 # ════════════════════════════════════════════════
@@ -212,10 +228,10 @@ class SAOWebAPI:
         except Exception:
             pass
 
-    def set_ctx_menu_active(self, active):
+    def set_ctx_menu_active(self, active, bounds=None):
         """控制 HP 窗口 click-through 区域 (右键菜单开关)"""
         self._g._ctx_menu_active = bool(active)
-        self._g._set_hp_region(expanded=bool(active))
+        self._g._set_hp_region(expanded=bool(active), menu_bounds=bounds)
 
     def get_state(self):
         """供 JS 查询当前状态 (JSON 格式)"""
@@ -306,6 +322,7 @@ class SAOWebViewGUI:
 
     def __init__(self):
         _ensure_webview()
+        _set_process_app_id('midi.28keys.player.webview')
 
         from player import MidiPlayer
         from character_profile import load_profile, calc_level
@@ -572,7 +589,9 @@ class SAOWebViewGUI:
     def _set_window_icon(self, title: str):
         """通过 Win32 为指定窗口设置任务栏/标题栏图标."""
         try:
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.ico')
+            icon_path = _get_icon_path()
+            if not icon_path:
+                return
             IMAGE_ICON = 1
             LR_LOADFROMFILE = 0x10
             LR_DEFAULTSIZE = 0x40
@@ -583,6 +602,9 @@ class SAOWebViewGUI:
             hicon = ctypes.windll.user32.LoadImageW(
                 None, icon_path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE)
             if hicon:
+                if not hasattr(self, '_window_hicons'):
+                    self._window_hicons = []
+                self._window_hicons.append(hicon)
                 ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, 0, hicon)  # ICON_SMALL
                 ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, 1, hicon)  # ICON_BIG
         except Exception as e:
@@ -601,7 +623,7 @@ class SAOWebViewGUI:
         except Exception as e:
             print(f"[SAO] click-through setup failed: {e}")
 
-    def _set_hp_region(self, expanded=False):
+    def _set_hp_region(self, expanded=False, menu_bounds=None):
         """设置 HP 窗口 Region — 限制点击/渲染区域."""
         if not self._hp_hwnd:
             return
@@ -609,8 +631,21 @@ class SAOWebViewGUI:
             gdi32 = ctypes.windll.gdi32
             user32 = ctypes.windll.user32
             if expanded:
-                # 右键菜单打开: 扩展到全窗口 (含菜单空间)
-                hrgn = gdi32.CreateRectRgn(0, 0, 430, 500)
+                # 右键菜单打开: 仅保留 HP 条 + 右键菜单所在区域, 避免暴露整块白底
+                hp_rgn = gdi32.CreateRectRgn(0, 0, 420, 68)
+                if menu_bounds:
+                    left = int(max(0, menu_bounds.get('left', 0)))
+                    top = int(max(0, menu_bounds.get('top', 0)))
+                    width = int(max(1, menu_bounds.get('width', 1)))
+                    height = int(max(1, menu_bounds.get('height', 1)))
+                    pad = 3
+                    right = min(430, left + width + pad)
+                    bottom = min(500, top + height + pad)
+                    menu_rgn = gdi32.CreateRectRgn(max(0, left - pad), max(0, top - pad), right, bottom)
+                    RGN_OR = 2
+                    gdi32.CombineRgn(hp_rgn, hp_rgn, menu_rgn, RGN_OR)
+                    gdi32.DeleteObject(menu_rgn)
+                hrgn = hp_rgn
             else:
                 # 默认: 只保留 HP 条 (body pad=8 + XTBox=40 + number=20 = 68px)
                 hrgn = gdi32.CreateRectRgn(0, 0, 420, 68)
@@ -1275,6 +1310,7 @@ class SAOWebViewGUI:
                 win.evaluate_js(f'Panel.init("{panel_type}", {json.dumps(state)})')
             except Exception:
                 pass
+            self._set_window_icon(f'SAO {panel_type}')
             # 面板窗口 0.95 透明度 (Win32 LWA_ALPHA)
             self._set_window_alpha(f'SAO {panel_type}', 0.95)
             # 启动面板浮动循环
