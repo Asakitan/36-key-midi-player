@@ -3648,7 +3648,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.4.18+3418\n\n"
+            "咲 Midi Player  SAO Edition\nv3.4.23+3423\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 
@@ -3798,11 +3798,19 @@ void main() {
     float openA = smoothstep(0.00, 0.22, progress);
     float openB = smoothstep(0.12, 0.56, progress);
     float settle = smoothstep(0.40, 1.00, progress);
+    // barrel distortion strongest at ignition, flattens as screen opens
+    float barrelK = mix(0.44, 0.0, smoothstep(0.0, 0.34, progress));
+    vec2 bv = uv - 0.5;
+    vec2 distUv = uv + bv * barrelK * dot(bv, bv);
+
     float halfH = mix(0.003, 0.50, openA);
     float halfW = mix(0.030, 0.62, openB);
-    float maskY = 1.0 - smoothstep(halfH, halfH + 0.030, abs(uv.y - 0.5));
-    float maskX = 1.0 - smoothstep(halfW, halfW + 0.045, abs(uv.x - 0.5));
+    float maskY = 1.0 - smoothstep(halfH, halfH + 0.030, abs(distUv.y - 0.5));
+    float maskX = 1.0 - smoothstep(halfW, halfW + 0.045, abs(distUv.x - 0.5));
     float screenMask = clamp(maskX * maskY, 0.0, 1.0);
+
+    // overexposure flash: floods full frame at the moment the screen fires on
+    float overexpose = smoothstep(0.0, 0.06, progress) * (1.0 - smoothstep(0.14, 0.40, progress));
 
     float ignition = band(uv.y, 0.5, mix(0.0016, 0.020, openA)) * (1.0 - smoothstep(0.18, 0.46, progress));
     float flare = exp(-r * mix(24.0, 6.5, openB)) * (0.45 + 0.55 * (1.0 - settle));
@@ -3815,6 +3823,9 @@ void main() {
     vec3 blue = vec3(0.08, 0.46, 1.0);
     vec3 white = vec3(1.0, 1.0, 1.0);
     vec3 color = vec3(0.0);
+    // full-frame overexposure bloom + cyan tint bleed at ignition
+    color += white * overexpose * 2.60;
+    color += vec3(0.70, 0.94, 1.0) * overexpose * exp(-r * 3.0) * 1.40;
     color += white * ignition * 1.6;
     color += mix(blue, cyan, 0.50) * flare * (0.65 + 0.35 * openB);
     color += cyan * screenMask * (0.18 + 0.24 * sweep + 0.18 * settle);
@@ -4149,6 +4160,17 @@ void main() {
                  + vec2(sin(uv.y * u_resolution.y * 0.090 + progress * 28.0),
                         cos(uv.x * u_resolution.x * 0.052 - progress * 21.0)) * refractBand * 0.0045;
 
+    // layered HUD slab displacement: horizontal bands shift left/right in alternating direction
+    // each activates after the pulse ring sweeps through its Y position
+    float s1 = band(uv.y, 0.24, 0.022) * smoothstep(0.10, 0.22, progress);
+    float s2 = band(uv.y, 0.43, 0.018) * smoothstep(0.16, 0.28, progress);
+    float s3 = band(uv.y, 0.66, 0.024) * smoothstep(0.20, 0.34, progress);
+    float s4 = band(uv.y, 0.81, 0.016) * smoothstep(0.26, 0.40, progress);
+    float slabFade = 1.0 - smoothstep(0.78, 0.96, progress);
+    distort.x += (s1 * 0.032 - s2 * 0.024 + s3 * 0.028 - s4 * 0.019) * slabFade;
+    distort.y += (s1 * 0.005 - s3 * 0.004) * slabFade;
+    float slabEdge = max(max(s1, s2), max(s3, s4)) * slabFade;
+
     vec2 rp = p + distort;
     float rr = length(rp);
     float rang = atan(rp.y, rp.x);
@@ -4227,6 +4249,7 @@ void main() {
     color += vec3(0.50, 0.94, 1.0) * edgeSweep;
     color += vec3(0.54, 0.96, 1.0) * circuitry * (0.48 + bluePulse * 0.60);
     color += vec3(0.92, 1.0, 1.0) * nodeCascade * 0.40;
+    color += vec3(0.60, 0.96, 1.0) * slabEdge * (0.34 + whitePulse * 0.24) * (1.0 - tvClose);
     color += vec3(0.80, 0.98, 1.0) * tear * (0.42 + exposure * 0.48);
     color += white * core * (0.24 + whitePulse * 0.42);
     color += vec3(grain) * (0.18 + tear * 0.22 + circuitry * 0.08);
