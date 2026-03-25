@@ -211,6 +211,18 @@ def _sao_panel_header(parent, title_icon, title_text, close_cmd):
     return hdr, close_lbl
 
 
+def _bind_panel_drag(hdr, close_lbl, start_fn, move_fn):
+    """递归绑定拖拽事件到标题栏的所有子组件 (排除关闭按钮)"""
+    def _do(w):
+        if w is close_lbl:
+            return
+        w.bind('<Button-1>', start_fn)
+        w.bind('<B1-Motion>', move_fn)
+        for ch in w.winfo_children():
+            _do(ch)
+    _do(hdr)
+
+
 def _sao_panel_body(parent):
     """创建 SAO 风格面板内容区 (带角标装饰)"""
     # 分隔线
@@ -2001,9 +2013,7 @@ class SAOPlayerGUI:
             self._piano_panel.geometry(f'+{nx}+{ny}')
             _pd['x'], _pd['y'] = e.x_root, e.y_root
             self.settings.set('piano_x', nx); self.settings.set('piano_y', ny)
-        for w in [hdr, hdr.winfo_children()[0] if hdr.winfo_children() else hdr]:
-            w.bind('<Button-1>', pdstart)
-            w.bind('<B1-Motion>', pdmove)
+        _bind_panel_drag(hdr, close_lbl, pdstart, pdmove)
 
         # 分隔线
         tk.Frame(inner, bg=_SAO_PANEL_ACCENT, height=1).pack(fill=tk.X)
@@ -2111,8 +2121,7 @@ class SAOPlayerGUI:
             self._status_panel.geometry(f'+{nx}+{ny}')
             _sd['x'], _sd['y'] = e.x_root, e.y_root
             self.settings.set('status_x', nx); self.settings.set('status_y', ny)
-        hdr.bind('<Button-1>', sdstart)
-        hdr.bind('<B1-Motion>', sdmove)
+        _bind_panel_drag(hdr, close_lbl, sdstart, sdmove)
 
         self._fade_panel_in(self._status_panel, target=0.92)
         self._attach_sao_panel_fx(self._status_panel, hdr, inner)
@@ -2202,9 +2211,7 @@ class SAOPlayerGUI:
             self._viz_panel.geometry(f'+{nx}+{ny}')
             _vd['x'], _vd['y'] = e.x_root, e.y_root
             self.settings.set('viz_x', nx); self.settings.set('viz_y', ny)
-        for w in [hdr]:
-            w.bind('<Button-1>', vdstart)
-            w.bind('<B1-Motion>', vdmove)
+        _bind_panel_drag(hdr, close_lbl, vdstart, vdmove)
 
         # 分隔线
         tk.Frame(inner, bg=_SAO_PANEL_ACCENT, height=1).pack(fill=tk.X)
@@ -2269,7 +2276,7 @@ class SAOPlayerGUI:
             self._control_panel.geometry(f'+{nx}+{ny}')
             _cd['x'], _cd['y'] = e.x_root, e.y_root
             self.settings.set('ctrl_x', nx); self.settings.set('ctrl_y', ny)
-        hdr.bind('<Button-1>', cdstart); hdr.bind('<B1-Motion>', cdmove)
+        _bind_panel_drag(hdr, close_lbl, cdstart, cdmove)
 
         body = _sao_panel_body(inner)
         body_pad = tk.Frame(body, bg=_SAO_PANEL_BODY_BG)
@@ -3768,7 +3775,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.5.0\n\n"
+            "咲 Midi Player  SAO Edition\nv3.5.1\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

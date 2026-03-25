@@ -751,7 +751,7 @@ class SAOWebViewGUI:
             self._setup_click_through()
             # WebView2 透明背景 — 持续重试
             self._apply_webview2_transparency()
-            self._reassert_hp_transparency(1.0, retries=10, delay=0.25)
+            self._reassert_hp_transparency(1.0, retries=15, delay=0.35)
             # 任务栏图标
             self._set_window_icon('♪ SAO HP')
             self._set_window_icon('SAO Menu')
@@ -1305,14 +1305,33 @@ class SAOWebViewGUI:
 
         def _init():
             time.sleep(1.0)
+            title = f'SAO {panel_type}'
+            # Apply .NET WebView2 DefaultBackgroundColor=Transparent
+            try:
+                gui_obj = getattr(win, 'gui', None)
+                form = getattr(gui_obj, 'BrowserForm', None) if gui_obj else None
+                if form:
+                    _setup_dotnet_transparency(form)
+            except Exception:
+                pass
             try:
                 state = self._get_panel_state()
                 win.evaluate_js(f'Panel.init("{panel_type}", {json.dumps(state)})')
             except Exception:
                 pass
-            self._set_window_icon(f'SAO {panel_type}')
+            self._set_window_icon(title)
             # 面板窗口 0.95 透明度 (Win32 LWA_ALPHA)
-            self._set_window_alpha(f'SAO {panel_type}', 0.95)
+            self._set_window_alpha(title, 0.95)
+            # Retry .NET transparency after WebView2 async init
+            time.sleep(0.5)
+            try:
+                gui_obj2 = getattr(win, 'gui', None)
+                form2 = getattr(gui_obj2, 'BrowserForm', None) if gui_obj2 else None
+                if form2:
+                    _setup_dotnet_transparency(form2)
+            except Exception:
+                pass
+            self._set_window_alpha(title, 0.95)
             # 启动面板浮动循环
             self._start_panel_float(panel_type)
         threading.Thread(target=_init, daemon=True).start()

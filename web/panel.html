@@ -47,9 +47,16 @@ html, body {
     user-select: none;
     -webkit-user-select: none;
     overflow: visible;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
     opacity: 0;
     transition: opacity 0.2s;
     /* 浮动由 Python window.move() 驱动, 不在 CSS 层做 transform */
+}
+html::-webkit-scrollbar, body::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
 }
 
 body.opening .panel {
@@ -493,16 +500,17 @@ function pianoNoteOn(midi_note, velocity, duration_ms) {
     if (!el) return;
     el.style.background = bright;
 
-    var hold_ms = Math.max(50, duration_ms * 0.75);
-    var fade_ms = Math.max(80, duration_ms * 0.25);
-    var STEPS = 8, interval = Math.max(16, Math.floor(fade_ms / STEPS)), step = 0;
+    /* Match entity SAOMiniPiano: 8 fade steps starting immediately, no hold phase */
+    var STEPS = 8;
+    var interval = Math.max(25, Math.floor(duration_ms / STEPS));
+    var step = 0;
     function fade() {
         step++;
         if (step > STEPS) { el.style.background = ''; delete _pianoActive[midi_note]; return; }
         el.style.background = _lerpColor(bright, normal, step / STEPS);
         _pianoActive[midi_note] = setTimeout(fade, interval);
     }
-    _pianoActive[midi_note] = setTimeout(fade, hold_ms);
+    _pianoActive[midi_note] = setTimeout(fade, interval);
 }
 
 function pianoReset() {
@@ -521,6 +529,8 @@ var _barPeaks = new Float32Array(NUM_BARS);
 var _hueOffset = 0, _beatBright = 0;
 var _vizRunning = false, _vizCanvas = null, _vizCtx = null;
 var BG = [255,255,255];
+var _vizBpmTimes = [];
+var _vizBpm = 0;
 
 var KEY_BAR = {
     'z':0,'1':1,'x':2,'2':3,'c':4,'v':5,'3':6,'b':7,'4':8,'n':9,'5':10,'m':11,
@@ -559,8 +569,6 @@ function _buildViz() {
     }, 60);
 }
 
-var _barHoldEnd = new Float64Array(NUM_BARS);  // hold deadline (ms timestamp)
-
 function vizTrigger(key, velocity, duration_ms) {
     var k = key.toLowerCase();
     if (k in KEY_BAR) {
@@ -568,25 +576,34 @@ function vizTrigger(key, velocity, duration_ms) {
         _barVals[idx] = Math.min(1, velocity);
         _barPeaks[idx] = Math.min(1, velocity);
         _beatBright = Math.min(1, _beatBright + 0.4);
-        var hold = (typeof duration_ms === 'number' && duration_ms > 0) ? duration_ms * 0.8 : 0;
-        _barHoldEnd[idx] = performance.now() + hold;
+        /* BPM estimation (matches entity MidiVisualizer) */
+        var now = performance.now() / 1000;
+        _vizBpmTimes.push(now);
+        while (_vizBpmTimes.length > 0 && now - _vizBpmTimes[0] > 4.0) _vizBpmTimes.shift();
+        if (_vizBpmTimes.length >= 3) {
+            var total = 0;
+            for (var j = 1; j < _vizBpmTimes.length; j++) total += _vizBpmTimes[j] - _vizBpmTimes[j-1];
+            var avg = total / (_vizBpmTimes.length - 1);
+            _vizBpm = avg > 0 ? 60 / avg : 0;
+        }
     }
 }
 
 function _vizAnimate() {
     if (!_vizRunning) return;
-    var now = performance.now();
+    /* No hold phase — immediate decay matching entity MidiVisualizer */
     for (var i = 0; i < NUM_BARS; i++) {
-        if (now < _barHoldEnd[i]) continue;  // still held
         _barVals[i] *= BAR_DECAY;
         if (_barVals[i] < 0.008) _barVals[i] = 0;
         _barPeaks[i] *= 0.97;
         if (_barPeaks[i] < _barVals[i]) _barPeaks[i] = _barVals[i];
     }
-    _hueOffset = (_hueOffset + 0.3) % 360;
+    /* Hue rotation speed matches entity: 0.25 + (bpm/180)*0.8 per 33ms tick */
+    var hueSpeed = 0.25 + (_vizBpm / 180) * 0.8;
+    _hueOffset = (_hueOffset + hueSpeed) % 360;
     if (_beatBright > 0) _beatBright = Math.max(0, _beatBright - 0.04);
     _drawBars();
-    requestAnimationFrame(_vizAnimate);
+    setTimeout(_vizAnimate, 33);  /* ~30fps matching entity UPDATE_INTERVAL */
 }
 
 function _drawBars() {
@@ -628,6 +645,7 @@ function _drawBars() {
 
 function vizReset() {
     _barVals.fill(0); _barPeaks.fill(0); _beatBright=0; _hueOffset=0;
+    _vizBpmTimes=[]; _vizBpm=0;
 }
 
 /* ═══ Init panel by type ═══ */
