@@ -30,7 +30,7 @@ from typing import Optional, Dict, List
 #  配置
 # ═══════════════════════════════════════════════
 
-SERVER_HOST = '47.82.157.220'
+SERVER_HOST = 
 SERVER_PORT = 9820
 SERVER_URL = f'http://{SERVER_HOST}:{SERVER_PORT}'
 _LAST_GOOD_SERVER_URL = None
