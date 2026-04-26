@@ -41,7 +41,8 @@ from config import (KEY_PRESS_DURATION, MIN_NOTE_INTERVAL, KEY_DURATION_MAX, KEY
                     VELOCITY_MIN, VELOCITY_SCALE, VELOCITY_DURATION_MIN, VELOCITY_DURATION_MAX,
                     MAX_SIMULTANEOUS_KEYS, TRACK_PRIORITY_MODE, MELODY_PRIORITY,
                     CHORD_PRESERVE_BASS, CHORD_PRESERVE_TOP,
-                    MIDI_TO_KEY_SHIFT, MODE_SWITCH_DELAY_MS, MODE_KEY_PRESS_MS, DEFAULT_MODE_SYSTEM)
+                    MIDI_TO_KEY_SHIFT, MODE_SWITCH_DELAY_MS, MODE_KEY_PRESS_MS, DEFAULT_MODE_SYSTEM,
+                    LEGATO_OVERLAP_ENABLED)
 
 
 # 人性化设置 - 模拟真人弹奏的微小不确定性
@@ -108,6 +109,8 @@ class KeyboardSimulator:
         self.use_keyboard = KEYBOARD_AVAILABLE
         self.controller = None
         self._active_keys = set()  # 当前按下的键
+        self._active_keys_order = []  # 按下顺序列表（用于淘汰最旧的键）
+        self._max_active_keys = MAX_SIMULTANEOUS_KEYS  # 最大同时按键数
         self._release_timers = []  # 延迟释放定时器
         self._key_press_gen = {}   # 每个键的按下代数，防止旧的释放线程杀死新的按下
         self._last_press_time = {}  # 每个键上次按下的时间戳，用于速率限制
@@ -117,6 +120,11 @@ class KeyboardSimulator:
         self._mode_last_toggle_time = 0.0  # 上次模式切换时间
         self._mode_cooldown_ms = MODE_SWITCH_DELAY_MS   # 模式切换最小间隔(ms)
         self._mode_max_toggles_before_reset = 40  # 累积N次切换后强制重置，防止状态漂移
+        
+        # === 物理延音踏板（空格键）===
+        self._sustain_pedal_held = False       # 空格键是否被按住
+        self._sustain_pedal_event = threading.Event()  # 用于通知等待的释放线程
+        self._sustain_pedal_enabled = False     # 是否启用物理延音踏板（由MidiPlayer控制）
         
         if not KEYBOARD_AVAILABLE and PYNPUT_AVAILABLE:
             self.controller = Controller()
@@ -135,6 +143,14 @@ class KeyboardSimulator:
             min_interval = random.uniform(PER_KEY_MIN_INTERVAL_LOW, PER_KEY_MIN_INTERVAL_HIGH)
             if elapsed_ms < min_interval:
                 return 0
+        
+        # === 最大同时按键数限制 ===
+        # 如果已达上限且当前键不在按下状态，先释放最旧的键
+        if key not in self._active_keys:
+            while len(self._active_keys) >= self._max_active_keys and self._active_keys_order:
+                oldest_key = self._active_keys_order.pop(0)
+                if oldest_key in self._active_keys:
+                    self._do_release(oldest_key)
         
         self._last_press_time[key] = now
 
@@ -158,6 +174,7 @@ class KeyboardSimulator:
                     keyboard.press(key)
                 elif self.controller:
                     self.controller.press(key)
+                self._active_keys_order.append(key)
             self._active_keys.add(key)
         except Exception as e:
             print(f"按键按下失败: {e}")
@@ -172,13 +189,33 @@ class KeyboardSimulator:
                 elif self.controller:
                     self.controller.release(key)
                 self._active_keys.discard(key)
+                # 同步清理顺序列表
+                if key in self._active_keys_order:
+                    self._active_keys_order.remove(key)
         except Exception as e:
             print(f"按键释放失败: {e}")
     
+    def set_sustain_pedal(self, held: bool):
+        """设置物理延音踏板状态（空格键按住/释放）"""
+        self._sustain_pedal_held = held
+        if not held:
+            # 踏板释放 → 通知所有等待的释放线程继续
+            self._sustain_pedal_event.set()
+        else:
+            # 踏板按下 → 重置事件，以便下次wait能阻塞
+            self._sustain_pedal_event.clear()
+    
+    def set_sustain_pedal_enabled(self, enabled: bool):
+        """启用/禁用物理延音踏板功能"""
+        self._sustain_pedal_enabled = enabled
+    
     def _schedule_release(self, keys_with_gen: list, delay: float):
-        """安排延迟释放按键，带代数检查防止误释放"""
+        """安排延迟释放按键，带代数检查防止误释放，支持延音踏板保持"""
         def release_keys():
             time.sleep(delay)
+            # 延音踏板保持：如果空格键被按住，等待直到释放后再松键
+            while self._sustain_pedal_enabled and self._sustain_pedal_held:
+                self._sustain_pedal_event.wait(timeout=0.5)  # 定期检查，防止死锁
             for key, gen in keys_with_gen:
                 # 只有当按下代数匹配时才释放，防止旧的计时器杀死新的按下
                 if self._key_press_gen.get(key, 0) == gen:
@@ -268,6 +305,7 @@ class KeyboardSimulator:
         """释放所有当前按下的键"""
         for key in list(self._active_keys):
             self._do_release(key)
+        self._active_keys_order.clear()  # 清理顺序列表
         self._last_press_time.clear()  # 重置速率限制状态
         # 清理所有定时器线程
         self._cleanup_timers()
@@ -518,13 +556,20 @@ class MidiPlayer:
         self._sustain_event_index = 0       # 当前踏板事件索引
         self._sustain_active_now = False    # 当前时间点踏板是否踩下（用于时长加成）
         
+        # === 连音重叠开关（延音到下个音符，可通过GUI按钮切换）===
+        self._legato_overlap_enabled = LEGATO_OVERLAP_ENABLED
+        
+        # === 物理延音踏板（空格键）===
+        self._space_listener = None          # pynput键盘监听器
+        self._update_space_pedal_state()
+        
         # 加载熟练度数据
         self._load_proficiency_data()
         
     # ==================== 熟练度系统 ====================
     
     def _load_proficiency_data(self):
-        """从settings.json加载熟练度数据和C调直转设置"""
+        """从settings.json加载熟练度数据、C调直转设置和连音重叠设置"""
         import json
         from config import CONFIG_FILE
         try:
@@ -533,9 +578,12 @@ class MidiPlayer:
                 self._song_play_counts = data.get('song_play_counts', {})
                 # 加载C调直转模式设置
                 self._direct_c_mode = data.get('direct_c_mode', False)
+                # 加载连音重叠设置
+                self._legato_overlap_enabled = data.get('legato_overlap', LEGATO_OVERLAP_ENABLED)
         except Exception:
             self._song_play_counts = {}
             self._direct_c_mode = False
+            self._legato_overlap_enabled = LEGATO_OVERLAP_ENABLED
     
     def _save_proficiency_data(self):
         """保存熟练度数据到settings.json"""
@@ -571,6 +619,86 @@ class MidiPlayer:
             print(f"[C调直转] 设置已保存: {'开启' if self._direct_c_mode else '关闭'}")
         except Exception as e:
             print(f"[C调直转] 保存设置失败: {e}")
+    
+    def toggle_legato_overlap(self) -> bool:
+        """切换连音重叠（延音到下个音符）开关，返回切换后的状态"""
+        self._legato_overlap_enabled = not self._legato_overlap_enabled
+        self._save_legato_overlap()
+        self._update_space_pedal_state()
+        return self._legato_overlap_enabled
+    
+    def set_legato_overlap(self, enabled: bool, save: bool = True):
+        """设置连音重叠开关"""
+        self._legato_overlap_enabled = enabled
+        self._update_space_pedal_state()
+        if save:
+            self._save_legato_overlap()
+    
+    def get_legato_overlap(self) -> bool:
+        """获取当前连音重叠状态"""
+        return self._legato_overlap_enabled
+    
+    def _save_legato_overlap(self):
+        """保存连音重叠设置到settings.json"""
+        import json
+        from config import CONFIG_FILE
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+        data['legato_overlap'] = self._legato_overlap_enabled
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            print(f"[连音重叠] 设置已保存: {'开启' if self._legato_overlap_enabled else '关闭'}")
+        except Exception as e:
+            print(f"[连音重叠] 保存设置失败: {e}")
+    
+    # ==================== 物理延音踏板（空格键） ====================
+    
+    def _update_space_pedal_state(self):
+        """根据连音重叠状态决定是否启用空格延音踏板"""
+        # 连音重叠关闭时，启用空格键作为物理延音踏板
+        self.simulator.set_sustain_pedal_enabled(not self._legato_overlap_enabled)
+    
+    def _start_space_listener(self):
+        """启动空格键监听器（用pynput监听物理按键）"""
+        if self._space_listener is not None:
+            return  # 已在运行
+        if not PYNPUT_AVAILABLE:
+            return
+        
+        simulator = self.simulator
+        
+        def on_press(key):
+            try:
+                # pynput Key.space
+                if key == Key.space:
+                    simulator.set_sustain_pedal(True)
+            except:
+                pass
+        
+        def on_release(key):
+            try:
+                if key == Key.space:
+                    simulator.set_sustain_pedal(False)
+            except:
+                pass
+        
+        from pynput import keyboard as pynput_kb
+        self._space_listener = pynput_kb.Listener(
+            on_press=on_press, on_release=on_release, daemon=True)
+        self._space_listener.start()
+    
+    def _stop_space_listener(self):
+        """停止空格键监听器"""
+        if self._space_listener is not None:
+            try:
+                self._space_listener.stop()
+            except:
+                pass
+            self._space_listener = None
     
     def _calculate_song_hash(self, filepath: str) -> str:
         """计算曲目的唯一标识（基于文件名+音符数+时长）"""
@@ -1710,6 +1838,10 @@ class MidiPlayer:
         self.state.is_paused = False
         self.state.current_time = start_from
         
+        # 启动空格延音踏板监听（连音重叠关闭时才启用）
+        self._update_space_pedal_state()
+        self._start_space_listener()
+        
         # 根据熟练度自动调整速度：不熟练减速30%，熟练后恢复
         if self._proficiency_enabled:
             # 速度 = 0.85 + 0.3 * 熟练度（0%熟练=0.85倍速，100%熟练=1.15倍速）
@@ -1755,6 +1887,10 @@ class MidiPlayer:
         self.simulator.release_all()
         # 可靠重置模式状态，强制回到普通模式
         self.simulator.reset_mode()
+        
+        # 停止空格延音踏板监听
+        self._stop_space_listener()
+        self.simulator.set_sustain_pedal(False)
         
         # 通知GUI重置状态指示器
         if self.on_shift_change:
@@ -3195,7 +3331,8 @@ class MidiPlayer:
         
         # === 7. 连音衔接（增强版：更长更自然的衔接） ===
         # 核心：让音符之间无缝过渡，像人声歌唱一样连贯
-        if next_event_time is not None:
+        # 可通过 _legato_overlap_enabled 开关关闭（关闭时按键时长 = 音符时长，不延伸到下个音符）
+        if next_event_time is not None and self._legato_overlap_enabled:
             gap = next_event_time - current_time
             overlap_ms = dynamic_overlap
             

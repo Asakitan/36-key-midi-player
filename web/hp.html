@@ -64,7 +64,11 @@ html::-webkit-scrollbar, body::-webkit-scrollbar {
 }
 
 body {
-    padding: 0 10px 0 10px;
+    padding: 24px 0 0 18px;
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+    overflow: visible;
 }
 
 /* ═══════════════════════════════════════
@@ -330,35 +334,49 @@ body {
 .context-menu {
     display: none;
     position: fixed;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(8px);
+    background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(239,244,247,0.92));
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(104, 228, 255, 0.22);
+    border-left-color: rgba(243, 175, 18, 0.34);
     border-radius: 4px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    box-shadow:
+        0 14px 34px rgba(0, 0, 0, 0.30),
+        0 0 0 1px rgba(255, 255, 255, 0.56) inset,
+        0 0 22px rgba(104, 228, 255, 0.10);
     font-family: var(--font-ui);
     font-size: 12px;
     color: #333;
     z-index: 1000;
     min-width: 140px;
-    padding: 3px 0;
+    padding: 4px 0;
     -webkit-app-region: no-drag;
 }
 .context-menu.show { display: block; }
 .context-menu .cm-item {
-    padding: 4px 12px;
+    position: relative;
+    padding: 5px 12px 5px 10px;
     cursor: pointer;
     display: flex;
     align-items: center;
     gap: 6px;
     white-space: nowrap;
+    border-left: 2px solid transparent;
+    transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
 }
 .context-menu .cm-item:hover {
-    background: rgba(243, 175, 18, 0.8);
+    background: linear-gradient(90deg, rgba(243, 175, 18, 0.92), rgba(222, 166, 32, 0.78));
+    border-left-color: rgba(104, 228, 255, 0.88);
     color: #fff;
+    transform: translateX(1px);
+}
+.context-menu .cm-item:active {
+    transform: translateX(1px) scale(0.99);
+    background: rgba(211, 144, 22, 0.92);
 }
 .context-menu .cm-sep {
     height: 1px;
-    background: #e0e0e0;
-    margin: 2px 6px;
+    background: linear-gradient(90deg, transparent, rgba(104, 228, 255, 0.30), rgba(243, 175, 18, 0.25), transparent);
+    margin: 3px 7px;
 }
 .context-menu .cm-icon {
     position: relative;
@@ -421,7 +439,7 @@ body {
     position: fixed;
     left: -10px;
     top: -8px;
-    width: 430px;
+    width: 450px;
     height: 280px;
     z-index: 999;
     pointer-events: none;
@@ -550,6 +568,95 @@ function snd(name) {
 /* ═══ Context Menu helpers ═══ */
 var ctxMenu = document.getElementById('ctx-menu');
 var _exitPending = false;
+var _hitRegionTimer = null;
+var _hitRegionBootTimer = null;
+var _hitRegionBootTries = 0;
+var _HP_DISPLAY_PAD = 38;
+var _HP_CLICK_PAD = 26;
+
+function _isVisibleForHit(el) {
+    if (!el) return false;
+    if (el === ctxMenu && !ctxMenu.classList.contains('show')) return false;
+    var st = window.getComputedStyle(el);
+    if (!st || st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity || 1) <= 0.01) {
+        return false;
+    }
+    var rect = el.getBoundingClientRect();
+    return rect.width >= 2 && rect.height >= 2;
+}
+
+function _hitRect(el, pad) {
+    pad = pad || 0;
+    var r = el.getBoundingClientRect();
+    var left = Math.max(0, Math.floor(r.left - pad));
+    var top = Math.max(0, Math.floor(r.top - pad));
+    var right = Math.min(window.innerWidth, Math.ceil(r.right + pad));
+    var bottom = Math.min(window.innerHeight, Math.ceil(r.bottom + pad));
+    return {
+        left: left,
+        top: top,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top)
+    };
+}
+
+function collectHitRegions() {
+    var hp = document.getElementById('hp');
+    var display = [];
+    var click = [];
+    if (_isVisibleForHit(hp)) {
+        display.push(_hitRect(hp, _HP_DISPLAY_PAD));
+        click.push(_hitRect(hp, _HP_CLICK_PAD));
+    }
+    if (_isVisibleForHit(ctxMenu)) {
+        var menuRect = _hitRect(ctxMenu, 4);
+        display.push(menuRect);
+        click.push(menuRect);
+    }
+    return { display_regions: display, click_regions: click };
+}
+
+function _reportHitRegionsNow() {
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.set_hit_regions) {
+            window.pywebview.api.set_hit_regions(collectHitRegions());
+        }
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.notify_hp_hit_regions_ready) {
+            window.pywebview.api.notify_hp_hit_regions_ready();
+        }
+    } catch(e) {}
+}
+
+function scheduleHitRegionReport() {
+    if (_hitRegionTimer) clearTimeout(_hitRegionTimer);
+    _hitRegionTimer = setTimeout(function() {
+        _hitRegionTimer = null;
+        if (window.requestAnimationFrame) {
+            window.requestAnimationFrame(_reportHitRegionsNow);
+        } else {
+            _reportHitRegionsNow();
+        }
+    }, 16);
+}
+
+function scheduleHitRegionBootstrap() {
+    scheduleHitRegionReport();
+    setTimeout(scheduleHitRegionReport, 80);
+    setTimeout(scheduleHitRegionReport, 220);
+}
+
+function startHitRegionBootRetry() {
+    if (_hitRegionBootTimer) clearInterval(_hitRegionBootTimer);
+    _hitRegionBootTries = 0;
+    _hitRegionBootTimer = setInterval(function() {
+        _hitRegionBootTries += 1;
+        scheduleHitRegionReport();
+        if (_hitRegionBootTries >= 24) {
+            clearInterval(_hitRegionBootTimer);
+            _hitRegionBootTimer = null;
+        }
+    }, 250);
+}
 
 function retriggerEntryBlur() {
     var hp = document.getElementById('hp');
@@ -609,14 +716,17 @@ function showCtxMenu(x, y) {
                 height: Math.round(rect.height)
             });
         }
+        scheduleHitRegionReport();
     }, 50);
 }
 
 function hideCtxMenu() {
+    var wasShown = ctxMenu.classList.contains('show');
     ctxMenu.classList.remove('show');
-    if (window.pywebview && window.pywebview.api) {
+    if (wasShown && window.pywebview && window.pywebview.api) {
         window.pywebview.api.set_ctx_menu_active(false);
     }
+    scheduleHitRegionReport();
 }
 
 /* ═══ Drag & Click (manual JS — replaces CSS app-region:drag) ═══
@@ -684,18 +794,26 @@ document.addEventListener('click', function(e) {
 ctxMenu.querySelectorAll('.cm-item').forEach(function(item) {
     item.addEventListener('click', function(e) {
         e.stopPropagation();
-        hideCtxMenu();
-        snd('click');
         var action = this.getAttribute('data-action');
         if (action === 'exit') {
             exitApplication();
             return;
         }
+        hideCtxMenu();
+        snd('click');
         if (window.pywebview && window.pywebview.api) {
             window.pywebview.api.context_action(action);
         }
     });
 });
+
+window.addEventListener('resize', scheduleHitRegionBootstrap);
+document.addEventListener('DOMContentLoaded', scheduleHitRegionBootstrap);
+document.addEventListener('animationend', scheduleHitRegionReport, true);
+document.addEventListener('animationiteration', scheduleHitRegionReport, true);
+document.addEventListener('transitionend', scheduleHitRegionReport, true);
+scheduleHitRegionBootstrap();
+startHitRegionBootRetry();
 
 /* ═══ Level Up Animation ═══ */
 var _lvTimer = null;

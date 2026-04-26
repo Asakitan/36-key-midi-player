@@ -1886,6 +1886,22 @@ class ControlPanel(tk.Frame):
                                            font=('Microsoft YaHei UI', 9, 'bold'))
         self.detected_key_label.pack(side=tk.RIGHT)
 
+        # === 第5.55行：连音重叠开关 ===
+        row5_5a = tk.Frame(self, bg=ModernColors.BG_CARD)
+        row5_5a.pack(fill=tk.X, padx=12, pady=2)
+        self.legato_var = tk.BooleanVar(value=self.settings.get('legato_overlap', False))
+        self.legato_check = tk.Checkbutton(row5_5a, text="连音重叠", variable=self.legato_var,
+                                           bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_PRIMARY,
+                                           selectcolor=ModernColors.BG_INPUT,
+                                           activebackground=ModernColors.BG_CARD,
+                                           font=('Microsoft YaHei UI', 10, 'bold'),
+                                           command=self._on_legato_toggle)
+        self.legato_check.pack(side=tk.LEFT)
+        self.legato_info_label = tk.Label(row5_5a, text="(开启后按键会延音到下个音符，关闭则严格按时长释放)",
+                                          bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_SECONDARY,
+                                          font=('Microsoft YaHei UI', 9))
+        self.legato_info_label.pack(side=tk.LEFT, padx=10)
+
         # === 第5.6行：模式系统选择 ===
         row5_6 = tk.Frame(self, bg=ModernColors.BG_CARD)
         row5_6.pack(fill=tk.X, padx=12, pady=2)
@@ -2267,6 +2283,12 @@ class ControlPanel(tk.Frame):
                 f"传统移调方式已暂停\n低音部分将用和弦键替代\n微调功能仍然可用")
         else:
             self._update_octave_offset_label()
+
+    def _on_legato_toggle(self):
+        """连音重叠开关切换回调"""
+        val = self.legato_var.get()
+        self.player.set_legato_overlap(val)
+        self.settings.set('legato_overlap', val)
 
     def _on_mode_system_change(self):
         """模式系统切换回调"""

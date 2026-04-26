@@ -717,37 +717,73 @@ html, body {
     transform: translateY(-30px);
     pointer-events: none;
     transition: opacity 0.25s ease, transform 0.25s ease, filter 0.3s ease;
+    filter: blur(12px) drop-shadow(0 12px 24px rgba(0,0,0,0.20));
 }
 .child-menu.show {
     opacity: 1;
-    filter: blur(0px);
+    filter: blur(0px) drop-shadow(0 12px 24px rgba(0,0,0,0.20));
     transform: translateY(0);
     pointer-events: auto;
 }
 
 .child-menu li {
+    position: relative;
     height: 40px;
     margin-bottom: 3px;
     width: 180px;
-    background: rgba(255, 255, 255, .85);
+    background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(238,242,245,.84));
     display: flex;
     align-items: center;
     font-size: 15px;
     text-align: left;
     cursor: pointer;
     padding-left: 12px;
-    transition: background 0.15s ease, color 0.15s ease;
+    border-left: 2px solid rgba(104, 228, 255, 0.0);
+    box-shadow:
+        0 0 0 1px rgba(255,255,255,0.45) inset,
+        0 1px 0 rgba(0,0,0,0.06);
+    overflow: hidden;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease,
+                transform 0.15s ease, box-shadow 0.15s ease;
 }
 .child-menu li:last-child { margin-bottom: 0; }
 .child-menu li.sep {
     height: 1px; padding: 0; margin: 4px 8px;
-    background: rgba(255,255,255,0.15);
+    background: linear-gradient(90deg, transparent, rgba(104,228,255,0.28), rgba(243,175,18,0.20), transparent);
+    border: 0;
+    box-shadow: none;
     pointer-events: none;
 }
+.child-menu li.sep::after { display: none; }
 
+.child-menu li::after {
+    content: '';
+    position: absolute;
+    right: 8px;
+    top: 7px;
+    width: 7px;
+    height: 7px;
+    border-top: 1px solid rgba(104, 228, 255, 0.28);
+    border-right: 1px solid rgba(104, 228, 255, 0.28);
+    opacity: 0.0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+}
 .child-menu li:hover {
-    background: rgb(222, 166, 32);
+    background: linear-gradient(90deg, rgb(222, 166, 32), rgba(243, 175, 18, 0.82));
+    border-left-color: rgba(104, 228, 255, 0.92);
     color: rgb(251, 245, 231);
+    transform: translateX(2px);
+    box-shadow:
+        0 0 0 1px rgba(255,255,255,0.22) inset,
+        0 8px 18px rgba(0,0,0,0.18);
+}
+.child-menu li:hover::after {
+    opacity: 1;
+}
+.child-menu li:active {
+    transform: translateX(2px) scale(0.99);
+    background: rgba(205, 141, 24, 0.92);
 }
 
 .child-menu li span {
@@ -756,11 +792,15 @@ html, body {
     text-overflow: ellipsis;
     overflow: hidden;
     white-space: nowrap;
+    position: relative;
+    z-index: 1;
 }
 
 .child-menu li i {
     font-style: normal;
     margin-right: 8px;
+    position: relative;
+    z-index: 1;
 }
 
 .menu-glyph {
@@ -812,6 +852,8 @@ html, body {
 .mi-cmap::before { left: 4px; top: 4px; width: 8px; height: 8px; border: 2px solid currentColor; transform: rotate(45deg); }
 .mi-cmap::after { right: 3px; top: 6px; width: 5px; height: 2px; background: currentColor; box-shadow: -2px 4px 0 currentColor, -2px -4px 0 currentColor; }
 .mi-gld::before { left: 3px; top: 10px; width: 16px; height: 2px; background: currentColor; transform: skewX(-40deg); box-shadow: 0 -5px 0 rgba(138,223,255,.65), 0 -10px 0 rgba(138,223,255,.35); }
+.mi-legato::before { left: 2px; top: 6px; width: 8px; height: 8px; border: 2px solid currentColor; border-right: none; border-radius: 8px 0 0 8px; }
+.mi-legato::after { right: 2px; top: 6px; width: 8px; height: 8px; border: 2px solid currentColor; border-left: none; border-radius: 0 8px 8px 0; }
 .mi-keyplus::before, .mi-keyminus::before { left: 4px; top: 7px; width: 14px; height: 2px; background: currentColor; }
 .mi-keyplus::after { left: 10px; top: 1px; width: 2px; height: 14px; background: currentColor; }
 .mi-ctrl::before { left: 4px; top: 3px; width: 14px; height: 2px; background: currentColor; box-shadow: 0 4px 0 currentColor, 0 8px 0 currentColor; }
@@ -841,6 +883,8 @@ html, body {
     white-space: nowrap;
     font-family: var(--font-ui);
     letter-spacing: 0;
+    position: relative;
+    z-index: 1;
 }
 .child-menu li:hover .shortcut {
     color: rgba(255, 255, 255, 0.6);
@@ -849,18 +893,22 @@ html, body {
 /* ═══ Status indicator in child items ═══ */
 .child-menu li .badge {
     font-size: 10px;
-    padding: 1px 5px;
+    padding: 1px 6px;
     border-radius: 8px;
     font-family: var(--font-ui);
     margin-right: 8px;
+    border: 1px solid rgba(255,255,255,0.45);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+    position: relative;
+    z-index: 1;
 }
 .badge.on {
-    background: rgba(154, 211, 52, 0.7);
+    background: linear-gradient(180deg, rgba(154, 211, 52, 0.88), rgba(103, 166, 36, 0.76));
     color: #fff;
 }
 .badge.off {
-    background: rgba(200, 200, 200, 0.5);
-    color: #999;
+    background: linear-gradient(180deg, rgba(225, 228, 232, 0.72), rgba(190, 194, 200, 0.56));
+    color: #7c848d;
 }
 
 /* ═══ File Picker Dialog ═══ */
@@ -1413,6 +1461,7 @@ html, body {
                 <li data-action="toggle_melody"><i class="menu-glyph mi-mel"></i><span>主旋律</span><span class="badge on" id="badge-melody">ON</span></li>
                 <li data-action="toggle_bass"><i class="menu-glyph mi-bass"></i><span>伴奏</span><span class="badge on" id="badge-bass">ON</span></li>
                 <li data-action="toggle_directc"><i class="menu-glyph mi-cmap"></i><span>C调直转</span><span class="badge off" id="badge-directc">OFF</span></li>
+                <li data-action="toggle_legato"><i class="menu-glyph mi-legato"></i><span>连音重叠</span><span class="badge off" id="badge-legato">OFF</span></li>
                 <li data-action="toggle_glissando"><i class="menu-glyph mi-gld"></i><span>结尾滑奏</span><span class="badge off" id="badge-glissando">OFF</span></li>
                 <li data-action="transpose_up"><i class="menu-glyph mi-keyplus"></i><span>升调 (+1)</span></li>
                 <li data-action="transpose_down"><i class="menu-glyph mi-keyminus"></i><span>降调 (-1)</span></li>

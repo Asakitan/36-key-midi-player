@@ -505,7 +505,7 @@ class MidiParser:
             time_groups.append((group_start, current_group))
         
         # === 第二步：智能筛选每个时间窗口的音符 ===
-        MAX_SIMULTANEOUS = 6  # 每个时刻最多保留6个音符
+        MAX_SIMULTANEOUS = 2  # 每个时刻最多保留2个音符
         MIN_REPEAT_GAP = 0.04  # 同音重复最小间隔40ms
         
         kept_notes = []
@@ -655,7 +655,7 @@ class MidiParser:
         # 统计"杂乱"段落占比
         WINDOW = 0.5  # 500ms分析窗口
         DENSITY_THRESHOLD = 14  # 每秒14个音符以上视为密集
-        SIMULTANEOUS_THRESHOLD = 8  # 同时8个音符以上视为过密
+        SIMULTANEOUS_THRESHOLD = 2  # 同时2个音符以上视为过密
         
         dense_windows = 0
         total_windows = 0

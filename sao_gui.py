@@ -163,18 +163,15 @@ def _apply_window_icon(win):
 
 
 def _apply_panel_style(panel):
-    """为浮动 Toplevel 面板添加 DWM 圆角 + 系统阴影 — 增强浮动质感"""
+    """为浮动 Toplevel 面板添加 DWM 圆角 — 增强浮动质感"""
     try:
         panel.update_idletasks()
         hwnd = int(_user32.GetParent(ctypes.c_void_p(panel.winfo_id())))
         # DWM 圆角 (Win11+)
         val = ctypes.c_int(2)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val), 4)
-        # 系统阴影 (CS_DROPSHADOW)
-        GCL_STYLE = -26
-        CS_DROPSHADOW = 0x00020000
-        cls = ctypes.windll.user32.GetClassLongW(hwnd, GCL_STYLE)
-        ctypes.windll.user32.SetClassLongW(hwnd, GCL_STYLE, cls | CS_DROPSHADOW)
+        # 不设置 CS_DROPSHADOW: 它会修改 Tk 的窗口类样式，污染同进程
+        # Toplevel/透明 overlay，并导致异形边缘出现错位阴影或穿透线。
     except Exception:
         pass
 
@@ -1092,6 +1089,7 @@ class SAOPlayerGUI:
         self._bass_density = 0.6
         self._glissando = False
         self._direct_c = False
+        self._legato_overlap = self.settings.get('legato_overlap', False)
         self._sustain_active = False
         self._shift_mode = 'normal'     # 当前演奏模式: normal/shift/ctrl/lt/gt
         self._proficiency_enabled = False
@@ -1798,6 +1796,7 @@ class SAOPlayerGUI:
                 {'icon': '▼', 'label': f'移调 -1  (当前 {self._transpose:+d})', 'command': self._transpose_down},
                 {'icon': '↺', 'label': '重置移调 / 自动检测', 'command': self._auto_transpose},
                 {'icon': 'C', 'label': 'C调直转' + (' ✓' if self._direct_c else ''), 'command': self._toggle_direct_c},
+                {'icon': '⇢', 'label': '连音重叠' + (' ✓' if self._legato_overlap else ''), 'command': self._toggle_legato_overlap},
                 {'icon': melody_state, 'label': '旋律', 'command': self._toggle_melody},
                 {'icon': bass_state, 'label': '伴奏', 'command': self._toggle_bass},
                 {'icon': '♩', 'label': f'伴奏密度  ({self._bass_density:.0%})', 'command': self._cycle_bass_density},
@@ -1955,8 +1954,12 @@ class SAOPlayerGUI:
         """如果菜单打开, 刷新子菜单和面板"""
         if self._sao_menu.visible:
             children = self._build_menu_children()
-            for name, items in children.items():
-                self._sao_menu.refresh_child_menu(name, items)
+            refresh_all = getattr(self._sao_menu, 'refresh_child_menus', None)
+            if callable(refresh_all):
+                refresh_all(children, force=True)
+            else:
+                for name, items in children.items():
+                    self._sao_menu.refresh_child_menu(name, items)
         self._update_float_status()
         self._update_control_panel()
 
@@ -2381,10 +2384,14 @@ class SAOPlayerGUI:
         dc_lbl = pill(row_opt1, 'C调直转 ✓' if self._direct_c else 'C调直转',
                       self._direct_c, self._toggle_direct_c)
         dc_lbl.pack(side=tk.LEFT, padx=(0, 6))
+        lo_lbl = pill(row_opt1, '连音重叠 ✓' if self._legato_overlap else '连音重叠',
+                      self._legato_overlap, self._toggle_legato_overlap)
+        lo_lbl.pack(side=tk.LEFT, padx=(0, 6))
         pf_lbl = pill(row_opt1, '熟练度 ✓' if self._proficiency_enabled else '熟练度',
                       self._proficiency_enabled, self._toggle_proficiency)
         pf_lbl.pack(side=tk.LEFT)
         self._control_panel._dc_lbl = dc_lbl
+        self._control_panel._lo_lbl = lo_lbl
         self._control_panel._pf_lbl = pf_lbl
 
         # ── 选项行 2 ──
@@ -2438,6 +2445,11 @@ class SAOPlayerGUI:
                 text='C调直转 ✓' if self._direct_c else 'C调直转',
                 bg='#f3af12' if self._direct_c else '#1a2030',
                 fg='#ffffff' if self._direct_c else '#8a9aaa')
+        if hasattr(p, '_lo_lbl'):
+            p._lo_lbl.configure(
+                text='连音重叠 ✓' if self._legato_overlap else '连音重叠',
+                bg='#f3af12' if self._legato_overlap else '#1a2030',
+                fg='#ffffff' if self._legato_overlap else '#8a9aaa')
         if hasattr(p, '_pf_lbl'):
             p._pf_lbl.configure(
                 text='熟练度 ✓' if self._proficiency_enabled else '熟练度',
@@ -3390,6 +3402,12 @@ class SAOPlayerGUI:
             self.player.set_transpose(0)
             if self._player_panel:
                 self._player_panel.update_transpose(0)
+        self._refresh_menu_if_open()
+
+    def _toggle_legato_overlap(self):
+        """切换连音重叠（延音到下个音符）"""
+        self._legato_overlap = not self._legato_overlap
+        self.player.set_legato_overlap(self._legato_overlap)
         self._refresh_menu_if_open()
 
     def _toggle_melody(self):

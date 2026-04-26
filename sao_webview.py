@@ -18,6 +18,7 @@ from typing import Optional
 
 # ── 延迟导入 pywebview ──
 webview = None
+_DOTNET_TRANSPARENCY_DONE = set()
 
 
 def _ensure_webview():
@@ -56,6 +57,7 @@ def _set_process_app_id(app_id: str):
 # ════════════════════════════════════════════════
 _GWL_EXSTYLE = -20
 _WS_EX_LAYERED = 0x00080000
+_WS_EX_TRANSPARENT = 0x00000020
 _LWA_COLORKEY = 0x00000001
 _LWA_ALPHA = 0x00000002
 _COLORREF_KEY = 0x00010001  # RGB(1,0,1) → COLORREF 0x00BBGGRR
@@ -77,25 +79,80 @@ def _setup_dotnet_transparency(form):
 
     TransparencyKey 让颜色 rgb(1,0,1) 的区域桌面穿透;
     DefaultBackgroundColor=Transparent 让 WebView2 不遮盖 Form 背景.
+    注意: 必须在 GUI 线程调用，后台线程请走 _invoke_dotnet_transparency。
     """
     try:
-        import clr  # pythonnet — pywebview EdgeChromium 已加载
-        clr.AddReference('System.Drawing')
-        Color = __import__('System.Drawing', fromlist=['Color']).Color
+        try:
+            import clr  # pythonnet — pywebview EdgeChromium 已加载
+            clr.AddReference('System.Drawing')
+        except Exception:
+            pass
+        from System.Drawing import Color as DColor  # type: ignore
 
-        key = Color.FromArgb(255, 1, 0, 1)
+        key = DColor.FromArgb(255, 1, 0, 1)
         form.BackColor = key
         form.TransparencyKey = key
 
-        # WebView2 控件 — 找到并设置透明背景
-        for i in range(form.Controls.Count):
-            ctrl = form.Controls[i]
-            if hasattr(ctrl, 'DefaultBackgroundColor'):
-                ctrl.DefaultBackgroundColor = Color.Transparent
-                break
+        def _walk_controls(parent):
+            try:
+                for i in range(parent.Controls.Count):
+                    ctrl = parent.Controls[i]
+                    if hasattr(ctrl, 'DefaultBackgroundColor'):
+                        ctrl.DefaultBackgroundColor = DColor.Transparent
+                    _walk_controls(ctrl)
+            except Exception:
+                pass
+
+        _walk_controls(form)
+        try:
+            form_key = int(form.Handle)
+        except Exception:
+            form_key = id(form)
+        _DOTNET_TRANSPARENCY_DONE.add(form_key)
         return True
     except Exception as e:
         print(f"[SAO] .NET transparency: {e}")
+        return False
+
+
+def _invoke_dotnet_transparency(win_obj, _retries_left=60):
+    """线程安全地把 WinForms/WebView2 背景设置为透明色键."""
+    try:
+        form = getattr(win_obj, 'native', None)
+        if form is None:
+            gui = getattr(win_obj, 'gui', None)
+            form = getattr(gui, 'BrowserForm', None) if gui else None
+        if form is None:
+            if _retries_left > 0:
+                t = threading.Timer(
+                    0.5,
+                    lambda: _invoke_dotnet_transparency(win_obj, _retries_left - 1))
+                t.daemon = True
+                t.start()
+            return False
+        try:
+            if not form.IsHandleCreated:
+                if _retries_left > 0:
+                    t = threading.Timer(
+                        0.2,
+                        lambda: _invoke_dotnet_transparency(win_obj, _retries_left - 1))
+                    t.daemon = True
+                    t.start()
+                return False
+        except Exception:
+            pass
+        try:
+            from System import Action  # type: ignore
+            action = Action(lambda: _setup_dotnet_transparency(form))
+            if getattr(form, 'InvokeRequired', False):
+                form.BeginInvoke(action)
+            else:
+                _setup_dotnet_transparency(form)
+        except Exception:
+            _setup_dotnet_transparency(form)
+        return True
+    except Exception as e:
+        print(f"[SAO] invoke dotnet transparency: {e}")
         return False
 
 
@@ -231,7 +288,66 @@ class SAOWebAPI:
     def set_ctx_menu_active(self, active, bounds=None):
         """控制 HP 窗口 click-through 区域 (右键菜单开关)"""
         self._g._ctx_menu_active = bool(active)
-        self._g._set_hp_region(expanded=bool(active), menu_bounds=bounds)
+        self._g._ctx_menu_bounds = bounds if active and isinstance(bounds, dict) else None
+        self._g._set_hp_region(expanded=bool(active), menu_bounds=self._g._ctx_menu_bounds)
+
+    def set_hit_regions(self, regions):
+        """接收 HP 页面上报的 display/click regions."""
+        if isinstance(regions, str):
+            try:
+                regions = json.loads(regions)
+            except Exception:
+                regions = {}
+
+        def _sanitize(rects):
+            if not isinstance(rects, list):
+                return []
+            sane = []
+            for rect in rects:
+                if not isinstance(rect, dict):
+                    continue
+                try:
+                    left = float(rect.get('left', 0))
+                    top = float(rect.get('top', 0))
+                    width = float(rect.get('width', 0))
+                    height = float(rect.get('height', 0))
+                except Exception:
+                    continue
+                if width < 2 or height < 2:
+                    continue
+                sane.append({
+                    'left': left,
+                    'top': top,
+                    'width': width,
+                    'height': height,
+                })
+            return sane
+
+        got_payload = isinstance(regions, dict)
+        if got_payload:
+            display_regions = _sanitize(regions.get('display_regions', []))
+            click_regions = _sanitize(regions.get('click_regions', []))
+        else:
+            display_regions = _sanitize(regions if isinstance(regions, list) else [])
+            click_regions = list(display_regions)
+
+        self._g._hp_display_regions = display_regions
+        self._g._hp_click_regions = click_regions
+        self._g._hp_hit_regions_ready = True
+        self._g._hp_last_hit_region_ts = time.time()
+        self._g._set_hp_region(
+            expanded=self._g._ctx_menu_active,
+            menu_bounds=self._g._ctx_menu_bounds)
+        self._g._refresh_hp_passthrough_now()
+
+    def notify_hp_hit_regions_ready(self):
+        self._g._hp_js_hit_regions_ready = True
+        self._g._hp_hit_regions_ready = True
+        self._g._hp_last_hit_region_ts = time.time()
+        self._g._set_hp_region(
+            expanded=self._g._ctx_menu_active,
+            menu_bounds=self._g._ctx_menu_bounds)
+        self._g._refresh_hp_passthrough_now()
 
     def get_state(self):
         """供 JS 查询当前状态 (JSON 格式)"""
@@ -315,7 +431,7 @@ class SAOWebViewGUI:
     """基于 pywebview 的 SAO-UI MIDI 播放器.
 
     窗口:
-      hp_win  — 悬浮 HP 栏 (430×500, 色键透明, 上部 60px 可见)
+      hp_win  — 悬浮 HP 栏 (450×500, 色键透明, 上部可见)
       menu_win — 全屏 SAO 菜单 (初始隐藏)
     LinkStart 使用 SAOLinkStart (tkinter / ModernGL) 在 webview 启动前运行.
     """
@@ -364,6 +480,7 @@ class SAOWebViewGUI:
         self._melody_on = True
         self._bass_on = True
         self._direct_c = False
+        self._legato_overlap = self.settings.get('legato_overlap', False)
         self._glissando = False
         self._folder_loop_active = False
         self._folder_loop_files = []
@@ -385,6 +502,19 @@ class SAOWebViewGUI:
         # 窗口 click-through
         self._hp_hwnd = 0
         self._ctx_menu_active = False
+        self._ctx_menu_bounds = None
+        self._hp_display_regions = []
+        self._hp_click_regions = []
+        self._hp_hit_regions_ready = False
+        self._hp_js_hit_regions_ready = False
+        self._hp_last_hit_region_ts = 0.0
+        self._hp_mouse_passthrough_started = False
+        self._hp_mouse_passthrough = None
+        self._dpi_scale = 1.0
+        self._win_w_phys = 450
+        self._win_h_phys = 500
+        self._hp_viewport_offset_x = 0
+        self._hp_viewport_offset_y = 0
         self._fisheye_active = False
         self._fisheye_gen = 0  # 鱼眼循环代数 (防止多线程重复)
         self._fisheye_prev_frame = None
@@ -393,6 +523,7 @@ class SAOWebViewGUI:
         self._panel_origins = {}          # panel_type -> (base_x, base_y)
         self._hp_visible = False
         self._exit_animating = False
+        self._exit_lock = threading.Lock()
 
         # 延音/键位模式 状态
         self._sustain_active = False
@@ -485,7 +616,7 @@ class SAOWebViewGUI:
         try:
             _sw = ctypes.windll.user32.GetSystemMetrics(0)
             _sh = ctypes.windll.user32.GetSystemMetrics(1)
-            cx, cy = (_sw - 430) // 2, (_sh - 500) // 2
+            cx, cy = (_sw - 450) // 2, (_sh - 500) // 2
         except Exception:
             cx, cy = 500, 300
         self._hp_target_x = fx
@@ -494,7 +625,7 @@ class SAOWebViewGUI:
         # HP 悬浮窗 — transparent=True 由 pywebview 原生处理透明
         self.hp_win = webview.create_window(
             '♪ SAO HP', hp_url,
-            width=430, height=500,
+            width=450, height=500,
             x=cx, y=cy,
             frameless=True,
             easy_drag=False,           # 自行处理拖拽 (CSS app-region)
@@ -560,10 +691,7 @@ class SAOWebViewGUI:
                 pass
             # 方案 2: 通过 pywebview 内部 Form 设置 WebView2 DefaultBackgroundColor
             try:
-                gui = getattr(win_obj, 'gui', None)
-                form = getattr(gui, 'BrowserForm', None) if gui else None
-                if form:
-                    _setup_dotnet_transparency(form)
+                _invoke_dotnet_transparency(win_obj)
             except Exception:
                 pass
 
@@ -577,6 +705,7 @@ class SAOWebViewGUI:
                 self._apply_webview2_transparency()
                 self._set_window_alpha('♪ SAO HP', alpha)
                 self._setup_click_through()
+                self._request_hp_hit_regions()
                 self._ensure_hp_on_top()
             except Exception:
                 pass
@@ -610,45 +739,277 @@ class SAOWebViewGUI:
         except Exception as e:
             print(f'[SAO] set icon: {e}')
 
+    def _get_monitor_dpi_for_target(self, hwnd: int = 0) -> int:
+        user32 = ctypes.windll.user32
+        try:
+            dpi = int(user32.GetDpiForWindow(hwnd)) if hwnd else 0
+            if dpi > 0:
+                return dpi
+        except Exception:
+            pass
+        try:
+            monitor = user32.MonitorFromWindow(hwnd, 2) if hwnd else 0
+            if monitor:
+                xdpi = ctypes.c_uint()
+                ydpi = ctypes.c_uint()
+                if ctypes.windll.shcore.GetDpiForMonitor(
+                        monitor, 0, ctypes.byref(xdpi), ctypes.byref(ydpi)) == 0:
+                    dpi = int(xdpi.value or 0)
+                    if dpi > 0:
+                        return dpi
+        except Exception:
+            pass
+        try:
+            dpi = int(user32.GetDpiForSystem() or 0)
+            if dpi > 0:
+                return dpi
+        except Exception:
+            pass
+        return 96
+
+    def _refresh_webview_dpi_scale(self, hwnd: int = 0) -> float:
+        dpi = max(96, int(self._get_monitor_dpi_for_target(hwnd=hwnd) or 96))
+        self._dpi_scale = max(1.0, dpi / 96.0)
+        return self._dpi_scale
+
+    def _request_hp_hit_regions(self):
+        self._eval_hp(
+            'if (window.scheduleHitRegionReport) { '
+            'window.scheduleHitRegionReport(); '
+            '} else if (window.collectHitRegions && window.pywebview && window.pywebview.api) { '
+            'window.pywebview.api.set_hit_regions(window.collectHitRegions()); }')
+
+    def _default_hp_display_regions(self):
+        return [{'left': 0, 'top': 0, 'width': 450, 'height': 104}]
+
+    def _default_hp_hot_regions(self):
+        return list(self._default_hp_display_regions())
+
     # ─── 点击穿透 ───
     def _setup_click_through(self):
-        """限制 HP 窗口可交互区域 — 只保留 HP 条, 透明区域鼠标穿透."""
+        """HP 热区外穿透，热区内恢复点击。"""
         try:
             user32 = ctypes.windll.user32
             hwnd = user32.FindWindowW(None, '♪ SAO HP')
             if not hwnd:
+                threading.Timer(0.15, self._setup_click_through).start()
                 return
             self._hp_hwnd = hwnd
+            self._refresh_webview_dpi_scale(hwnd=hwnd)
+            try:
+                class _RECT(ctypes.Structure):
+                    _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                                ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+                rc = _RECT()
+                if user32.GetWindowRect(hwnd, ctypes.byref(rc)):
+                    w = int(rc.right - rc.left)
+                    h = int(rc.bottom - rc.top)
+                    if w > 10 and h > 10:
+                        self._win_w_phys = w
+                        self._win_h_phys = h
+            except Exception:
+                pass
             self._set_hp_region(False)
+            self._set_hp_mouse_passthrough(True)
+            self._start_hp_mouse_passthrough_poller()
+            self._refresh_hp_passthrough_now()
         except Exception as e:
             print(f"[SAO] click-through setup failed: {e}")
 
+    def _ensure_hp_clickable(self):
+        if not self._hp_hwnd:
+            return
+        if getattr(self, '_hp_mouse_passthrough_started', False):
+            return
+        try:
+            user32 = ctypes.windll.user32
+            ex = user32.GetWindowLongW(self._hp_hwnd, _GWL_EXSTYLE)
+            if ex & _WS_EX_TRANSPARENT:
+                user32.SetWindowLongW(
+                    self._hp_hwnd, _GWL_EXSTYLE,
+                    (ex & ~_WS_EX_TRANSPARENT) | _WS_EX_LAYERED)
+        except Exception:
+            pass
+
+    def _set_hp_mouse_passthrough(self, enabled: bool):
+        if not self._hp_hwnd:
+            return
+        enabled = bool(enabled)
+        if enabled == getattr(self, '_hp_mouse_passthrough', None):
+            return
+        try:
+            user32 = ctypes.windll.user32
+            ex = user32.GetWindowLongW(self._hp_hwnd, _GWL_EXSTYLE)
+            if enabled:
+                ex |= _WS_EX_TRANSPARENT
+            else:
+                ex &= ~_WS_EX_TRANSPARENT
+            user32.SetWindowLongW(self._hp_hwnd, _GWL_EXSTYLE, ex | _WS_EX_LAYERED)
+            self._hp_mouse_passthrough = enabled
+        except Exception:
+            pass
+
+    def _refresh_hp_passthrough_now(self):
+        """立即按当前鼠标位置刷新 HP 穿透状态，避免首击落空。"""
+        try:
+            if not self._hp_hwnd:
+                return
+            if (not self._hp_js_hit_regions_ready
+                    and not self._hp_hit_regions_ready
+                    and not self._hp_click_regions):
+                self._set_hp_mouse_passthrough(False)
+                return
+            self._set_hp_mouse_passthrough(not self._cursor_over_hp_hot_region())
+        except Exception:
+            pass
+
+    def _cursor_over_hp_hot_region(self) -> bool:
+        if not self._hp_hwnd:
+            return False
+        try:
+            class _POINT(ctypes.Structure):
+                _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
+
+            class _RECT(ctypes.Structure):
+                _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                            ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+
+            user32 = ctypes.windll.user32
+            pt = _POINT()
+            rc = _RECT()
+            if not user32.GetCursorPos(ctypes.byref(pt)):
+                return False
+            if not user32.GetWindowRect(self._hp_hwnd, ctypes.byref(rc)):
+                return False
+            rel_x = int(pt.x - rc.left - int(self._hp_viewport_offset_x or 0))
+            rel_y = int(pt.y - rc.top - int(self._hp_viewport_offset_y or 0))
+            if rel_x < 0 or rel_y < 0 or rel_x > (rc.right - rc.left) or rel_y > (rc.bottom - rc.top):
+                return False
+            dpi_s = float(self._dpi_scale or 1.0)
+            if self._ctx_menu_active and isinstance(self._ctx_menu_bounds, dict):
+                try:
+                    left = int(float(self._ctx_menu_bounds.get('left', 0)) * dpi_s)
+                    top = int(float(self._ctx_menu_bounds.get('top', 0)) * dpi_s)
+                    width = int(float(self._ctx_menu_bounds.get('width', 0)) * dpi_s)
+                    height = int(float(self._ctx_menu_bounds.get('height', 0)) * dpi_s)
+                    pad = int(18 * dpi_s)
+                    if (left - pad) <= rel_x <= (left + width + pad) and (top - pad) <= rel_y <= (top + height + pad):
+                        return True
+                except Exception:
+                    pass
+            regions = self._hp_click_regions or []
+            if not regions:
+                if self._hp_js_hit_regions_ready or self._hp_hit_regions_ready:
+                    return False
+                regions = self._default_hp_hot_regions()
+            for rect in regions:
+                if not isinstance(rect, dict):
+                    continue
+                try:
+                    left = int(float(rect.get('left', 0)) * dpi_s)
+                    top = int(float(rect.get('top', 0)) * dpi_s)
+                    width = int(float(rect.get('width', 0)) * dpi_s)
+                    height = int(float(rect.get('height', 0)) * dpi_s)
+                except Exception:
+                    continue
+                if width >= 2 and height >= 2 and left <= rel_x <= left + width and top <= rel_y <= top + height:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _start_hp_mouse_passthrough_poller(self):
+        if self._hp_mouse_passthrough_started:
+            return
+        self._hp_mouse_passthrough_started = True
+
+        def _loop():
+            while True:
+                time.sleep(0.02)
+                try:
+                    if not self._hp_hwnd:
+                        continue
+                    if (not self._hp_js_hit_regions_ready
+                            and not self._hp_hit_regions_ready
+                            and not self._hp_click_regions):
+                        self._set_hp_mouse_passthrough(False)
+                        continue
+                    self._set_hp_mouse_passthrough(not self._cursor_over_hp_hot_region())
+                except Exception:
+                    pass
+
+        threading.Thread(target=_loop, daemon=True, name='hp_mouse_passthrough').start()
+
     def _set_hp_region(self, expanded=False, menu_bounds=None):
-        """设置 HP 窗口 Region — 限制点击/渲染区域."""
+        """限制 HP 窗口渲染区域；鼠标穿透由 poller 负责。"""
         if not self._hp_hwnd:
             return
         try:
             gdi32 = ctypes.windll.gdi32
             user32 = ctypes.windll.user32
-            if expanded:
-                # 右键菜单打开: 仅保留 HP 条 + 右键菜单所在区域, 避免暴露整块白底
-                hp_rgn = gdi32.CreateRectRgn(0, 0, 420, 68)
-                if menu_bounds:
-                    left = int(max(0, menu_bounds.get('left', 0)))
-                    top = int(max(0, menu_bounds.get('top', 0)))
-                    width = int(max(1, menu_bounds.get('width', 1)))
-                    height = int(max(1, menu_bounds.get('height', 1)))
-                    pad = 3
-                    right = min(430, left + width + pad)
-                    bottom = min(500, top + height + pad)
-                    menu_rgn = gdi32.CreateRectRgn(max(0, left - pad), max(0, top - pad), right, bottom)
-                    RGN_OR = 2
-                    gdi32.CombineRgn(hp_rgn, hp_rgn, menu_rgn, RGN_OR)
-                    gdi32.DeleteObject(menu_rgn)
-                hrgn = hp_rgn
-            else:
-                # 默认: 只保留 HP 条 (body pad=8 + XTBox=40 + number=20 = 68px)
-                hrgn = gdi32.CreateRectRgn(0, 0, 420, 68)
+            win_w = int(getattr(self, '_win_w_phys', 450) or 450)
+            win_h = int(getattr(self, '_win_h_phys', 500) or 500)
+            dpi_s = float(getattr(self, '_dpi_scale', 1.0) or 1.0)
+            js_ready = bool(self._hp_hit_regions_ready)
+            has_display = bool(self._hp_display_regions)
+            if not js_ready and not has_display and not expanded:
+                user32.SetWindowRgn(self._hp_hwnd, 0, True)
+                return
+
+            off_x = int(getattr(self, '_hp_viewport_offset_x', 0) or 0)
+            off_y = int(getattr(self, '_hp_viewport_offset_y', 0) or 0)
+            regions = self._hp_display_regions or []
+            if not regions and not js_ready:
+                regions = self._default_hp_display_regions()
+
+            rects = []
+            for rect in regions:
+                if not isinstance(rect, dict):
+                    continue
+                try:
+                    left = int(float(rect.get('left', 0)) * dpi_s) + off_x
+                    top = int(float(rect.get('top', 0)) * dpi_s) + off_y
+                    width = int(float(rect.get('width', 0)) * dpi_s)
+                    height = int(float(rect.get('height', 0)) * dpi_s)
+                except Exception:
+                    continue
+                right = min(win_w, left + width)
+                bottom = min(win_h, top + height)
+                left = max(0, left)
+                top = max(0, top)
+                if right - left >= 2 and bottom - top >= 2:
+                    rects.append((left, top, right, bottom))
+
+            if menu_bounds and isinstance(menu_bounds, dict):
+                try:
+                    left = int(float(menu_bounds.get('left', 0)) * dpi_s) + off_x
+                    top = int(float(menu_bounds.get('top', 0)) * dpi_s) + off_y
+                    width = int(float(menu_bounds.get('width', 0)) * dpi_s)
+                    height = int(float(menu_bounds.get('height', 0)) * dpi_s)
+                    pad = int(18 * dpi_s)
+                    right = min(win_w, left + width + pad)
+                    bottom = min(win_h, top + height + pad)
+                    left = max(0, left - pad)
+                    top = max(0, top - pad)
+                    if right - left >= 2 and bottom - top >= 2:
+                        rects.append((left, top, right, bottom))
+                except Exception:
+                    pass
+
+            if not rects:
+                if js_ready:
+                    empty = gdi32.CreateRectRgn(0, 0, 0, 0)
+                    user32.SetWindowRgn(self._hp_hwnd, empty, True)
+                else:
+                    user32.SetWindowRgn(self._hp_hwnd, 0, True)
+                return
+
+            hrgn = gdi32.CreateRectRgn(0, 0, 0, 0)
+            RGN_OR = 2
+            for left, top, right, bottom in rects:
+                rect_rgn = gdi32.CreateRectRgn(left, top, right, bottom)
+                gdi32.CombineRgn(hrgn, hrgn, rect_rgn, RGN_OR)
+                gdi32.DeleteObject(rect_rgn)
             user32.SetWindowRgn(self._hp_hwnd, hrgn, True)
         except Exception:
             pass
@@ -706,7 +1067,7 @@ class SAOWebViewGUI:
                 try:
                     _sw = ctypes.windll.user32.GetSystemMetrics(0)
                     _sh = ctypes.windll.user32.GetSystemMetrics(1)
-                    sx, sy = (_sw - 430) // 2, (_sh - 500) // 2
+                    sx, sy = (_sw - 450) // 2, (_sh - 500) // 2
                 except Exception:
                     sx, sy = 500, 300
             tx, ty = self._hp_target_x, self._hp_target_y
@@ -749,6 +1110,9 @@ class SAOWebViewGUI:
             # 设置 click-through (延迟确保窗口已完全创建)
             time.sleep(0.3)
             self._setup_click_through()
+            self._request_hp_hit_regions()
+            for delay in (0.12, 0.32, 0.6, 1.2):
+                threading.Timer(delay, self._request_hp_hit_regions).start()
             # WebView2 透明背景 — 持续重试
             self._apply_webview2_transparency()
             self._reassert_hp_transparency(1.0, retries=15, delay=0.35)
@@ -1001,9 +1365,10 @@ class SAOWebViewGUI:
             pass
 
     def _transition_with_animation(self, next_ui: Optional[str] = None):
-        if self._exit_animating:
-            return
-        self._exit_animating = True
+        with self._exit_lock:
+            if self._exit_animating:
+                return
+            self._exit_animating = True
         if next_ui:
             self._pending_switch = next_ui
         self._folder_loop_active = False
@@ -1467,6 +1832,7 @@ class SAOWebViewGUI:
             'toggle_melody': self._toggle_melody,
             'toggle_bass': self._toggle_bass,
             'toggle_directc': self._toggle_direct_c,
+            'toggle_legato': self._toggle_legato_overlap,
             'toggle_glissando': self._toggle_glissando,
             'transpose_up': self._transpose_up,
             'transpose_down': self._transpose_down,
@@ -1595,6 +1961,14 @@ class SAOWebViewGUI:
         self.player.set_direct_c_mode(self._direct_c)
         self._eval_menu(f'SAO.updateBadge("directc", {"true" if self._direct_c else "false"})')
         self._eval_menu(f'SAO.showToast("C调直转: {"ON" if self._direct_c else "OFF"}")')
+        self._sync_all_panels()
+
+    def _toggle_legato_overlap(self):
+        """切换连音重叠（延音到下个音符）"""
+        self._legato_overlap = not self._legato_overlap
+        self.player.set_legato_overlap(self._legato_overlap)
+        self._eval_menu(f'SAO.updateBadge("legato", {"true" if self._legato_overlap else "false"})')
+        self._eval_menu(f'SAO.showToast("连音重叠: {"ON" if self._legato_overlap else "OFF"}")')
         self._sync_all_panels()
 
     def _toggle_glissando(self):

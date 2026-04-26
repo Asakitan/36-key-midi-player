@@ -174,7 +174,8 @@ VELOCITY_DURATION_MAX = 0.15  # 最强力度对应的按键时长
 
 # 智能轨道优化设置
 # 当同时发声的音符太多时，智能简化和弦（保留骨架音）
-MAX_SIMULTANEOUS_KEYS = 8    # 最大同时按键数（6个足够表达大多数和弦）
+MAX_SIMULTANEOUS_KEYS = 2    # 最大同时按键数（限制为2键）
+LEGATO_OVERLAP_ENABLED = False  # 连音重叠（延音到下个音符），可通过GUI按钮切换
 TRACK_PRIORITY_MODE = True   # 启用智能优先级模式
 # 和弦简化策略：保留根音、五度音、高音旋律
 MELODY_PRIORITY = True       # 启用旋律优先（高音区为主旋律）
@@ -182,7 +183,7 @@ CHORD_PRESERVE_BASS = True   # 保留低音根音（和弦基础）
 CHORD_PRESERVE_TOP = True    # 保留高音旋律（最重要）
 
 # GUI设置
-WINDOW_TITLE = "咲 Midiplayer v3.5.1 60/88键位"
+WINDOW_TITLE = "咲 Midiplayer v3.5.2 60/88键位"
 WINDOW_SIZE = "900x980"
 BUTTON_WIDTH = 60
 BUTTON_HEIGHT = 60

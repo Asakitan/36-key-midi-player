@@ -1,4 +1,4 @@
-# 咲 Midiplayer v3.5.1 - 60/88 键 MIDI 自动演奏器
+# 咲 Midiplayer v3.5.2 - 60/88 键 MIDI 自动演奏器
 
 将标准 MIDI 文件转换为键盘操作，用于在游戏星痕共鸣中自动演奏。
 
@@ -61,6 +61,7 @@
 
 ```bash
 pip install -r requirements.txt
+python setup_cython.py build_ext --inplace  # 可选: LinkStart Canvas 回退加速
 python main.py
 ```
 
