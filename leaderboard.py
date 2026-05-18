@@ -5,7 +5,7 @@
 设计:
   • 数据加密: AES-256-CBC + HMAC-SHA256 签名 (防篡改)
   • 密钥派生: PBKDF2(shared_secret, salt) — 客户端/服务端共享
-  • 通信: HTTPS POST → 47.82.157.220:9820
+  • 通信: 默认连接 doi.sakisense.top:15496, 本地自建回退到 9998
   • 最小化流量: 仅在用户主动打开排行榜时拉取, 播放结束后仅上传自身数据
   • 本地缓存: 上次拉取的排行榜 JSON (减少重复请求)
 
@@ -30,8 +30,9 @@ from typing import Optional, Dict, List
 #  配置
 # ═══════════════════════════════════════════════
 
-SERVER_HOST = 
-SERVER_PORT = 9820
+SERVER_HOST = 'doi.sakisense.top'
+SERVER_PORT = 15496
+LOCAL_SERVER_PORT = 9998
 SERVER_URL = f'http://{SERVER_HOST}:{SERVER_PORT}'
 _LAST_GOOD_SERVER_URL = None
 
@@ -76,8 +77,8 @@ def _candidate_server_urls() -> List[str]:
         _normalize_server_url(SERVER_URL),
         _normalize_server_url(f'https://{SERVER_HOST}:{SERVER_PORT}'),
         _normalize_server_url(f'https://{SERVER_HOST}'),
-        _normalize_server_url(f'http://localhost:{SERVER_PORT}'),
-        _normalize_server_url(f'http://127.0.0.1:{SERVER_PORT}'),
+        _normalize_server_url(f'http://localhost:{LOCAL_SERVER_PORT}'),
+        _normalize_server_url(f'http://127.0.0.1:{LOCAL_SERVER_PORT}'),
     ])
 
     out: List[str] = []

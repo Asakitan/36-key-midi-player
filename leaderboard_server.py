@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-排行榜服务端 — 部署在 47.82.157.220:9820
+排行榜服务端 — 默认本地部署在 127.0.0.1:9998
 
 功能:
   • POST /api/upload      — 接收加密的玩家统计数据
@@ -16,7 +16,7 @@
 
 或使用 gunicorn:
   pip install flask gunicorn
-  gunicorn -b 0.0.0.0:9820 -w 2 leaderboard_server:app
+  gunicorn -b 0.0.0.0:9998 -w 2 leaderboard_server:app
 """
 
 import os
@@ -44,7 +44,7 @@ except ImportError:
 #  配置
 # ═══════════════════════════════════════════════
 
-PORT = 9820
+PORT = 9998
 _BASE_DIR = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
              else os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(_BASE_DIR, 'lb_data')
