@@ -87,6 +87,21 @@ main_hiddenimports = [
     'render.gpu_overlay_window',
     'overlay_scheduler',
     'overlay_subpixel',
+    # 新版 GPU SAO 菜单 (Entity tkinter) — sao_menu/gui_modules/render/utils 子系统
+    'sao_menu',
+    'sao_menu.animator', 'sao_menu.colors', 'sao_menu.utils',
+    'sao_menu.circle_button', 'sao_menu.menu_bar', 'sao_menu.popup_menu',
+    'sao_menu.left_info', 'sao_menu.child_bar',
+    'gui_modules',
+    'gui_modules.sao_menu_hud', 'gui_modules.sao_gui_menu_hud',
+    'gui_modules.sao_menu_bar_gpu', 'gui_modules.sao_left_info_gpu',
+    'gui_modules.sao_child_bar_gpu', 'gui_modules.entity_gpu_policy',
+    'render.overlay_scheduler', 'render.overlay_subpixel',
+    'render.overlay_render_worker', 'render.render_capture_sync',
+    'render.gpu_renderer',
+    'utils', 'utils.perf_probe', 'utils.sao_sound',
+    # Cython 加速模块 (UI 度量/像素合成)
+    '_sao_cy_uihelpers', '_sao_cy_pixels',
     # 标准库
     'json',
     'ctypes',
