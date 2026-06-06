@@ -6,8 +6,16 @@ PyInstaller 打包配置文件
 
 import sys
 import os
+from PyInstaller.utils.hooks import collect_dynamic_libs
 
 block_cipher = None
+
+# glfw 包自带 glfw3.dll / msvcr120.dll, 但 PyInstaller 无 glfw hook,
+# hiddenimports 只收 .py 不收原生库 -> 必须手动收集, 否则冻结后
+# glfw.init() 找不到 DLL, LinkStart GPU 直出窗口创建失败.
+# glfw 的 _get_frozen_library_search_paths() 会在打包后的 glfw 包目录里查找,
+# collect_dynamic_libs 默认就把 DLL 放到 'glfw' 目录, 正好匹配.
+glfw_binaries = collect_dynamic_libs('glfw')
 
 # 获取当前目录
 spec_dir = os.path.dirname(os.path.abspath(SPEC))
@@ -43,6 +51,9 @@ main_hiddenimports = [
     'moderngl',
     'moderngl.mgl',
     'glfw',
+    # moderngl 的 WGL 后端是惰性导入的 .pyd, PyInstaller 静态分析会漏
+    'glcontext',
+    'glcontext.wgl',
     # WebView
     'webview',
     'webview.platforms.edgechromium',
@@ -113,7 +124,7 @@ server_hiddenimports = [
 a = Analysis(
     ['main.py'],
     pathex=[spec_dir],
-    binaries=[],
+    binaries=glfw_binaries,
     datas=[
         ('icon.ico', '.'),
         ('web', 'web'),
