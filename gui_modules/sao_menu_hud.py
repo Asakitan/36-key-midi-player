@@ -76,6 +76,32 @@ except Exception:
 _FONT_SAO = os.path.join(_FONTS_DIR, 'SAOUI.ttf')
 _FONT_CJK = os.path.join(_FONTS_DIR, 'ZhuZiAYuanJWD.ttf')
 
+# Sentinel codepoint no real font maps; used to detect .notdef (tofu) glyphs.
+_GLYPH_MISS_SENTINEL = '\U000F0000'
+
+
+def _font_covers(font, text: str) -> bool:
+    """True if `font` has a real glyph for every visible char in `text`.
+
+    A missing glyph renders as the font's .notdef box, whose bbox is identical
+    for any unmapped codepoint. We compare each char's bbox against a sentinel
+    char no font maps — equal bbox ⇒ that char is .notdef ⇒ not covered.
+    Robust without fontTools; cheap and cached at the call site.
+    """
+    try:
+        miss = font.getbbox(_GLYPH_MISS_SENTINEL)
+    except Exception:
+        return True
+    try:
+        for ch in text:
+            if not ch.strip():
+                continue
+            if font.getbbox(ch) == miss:
+                return False
+        return True
+    except Exception:
+        return True
+
 
 def _hex_to_rgb_tuple(color: str, fallback: Tuple[int, int, int] = (1, 1, 1)) -> Tuple[int, int, int]:
     if not isinstance(color, str):
@@ -705,7 +731,7 @@ class MenuCircleButtonRenderer:
 
         if not self._draw_builtin_icon(draw, icon_text, canvas, icon_rgb + (255,), scale):
             font_size = max(9, int(size * 0.42 * scale))
-            font = self._icon_font(font_size)
+            font = self._icon_font(font_size, icon_text)
             bbox = self._text_bbox(draw, icon_text, font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
@@ -846,19 +872,27 @@ class MenuCircleButtonRenderer:
             return True
         return False
 
-    def _icon_font(self, size: int):
-        for font_path in (_FONT_SAO, 'seguisym.ttf', 'segoeui.ttf', 'arial.ttf'):
+    def _icon_font(self, size: int, icon_text: str = ''):
+        # SAOUI first (so real SAO glyphs win), but fall through to a symbol
+        # font when SAOUI lacks the glyph — otherwise unicode symbols like
+        # '☰' / '▶' render as .notdef tofu boxes. seguisym (Segoe UI Symbol)
+        # covers the geometric/technical symbols used by the MIDI menu.
+        chain = (_FONT_SAO, 'seguisym.ttf', 'seguiemj.ttf', 'segoeui.ttf', 'arial.ttf')
+        fallback = None
+        for font_path in chain:
             key = (font_path, size)
-            cached = self._font_cache.get(key)
-            if cached is not None:
-                return cached
-            try:
-                font = ImageFont.truetype(font_path, size=size)
+            font = self._font_cache.get(key)
+            if font is None:
+                try:
+                    font = ImageFont.truetype(font_path, size=size)
+                except Exception:
+                    continue
                 self._font_cache[key] = font
+            if fallback is None:
+                fallback = font
+            if not icon_text or _font_covers(font, icon_text):
                 return font
-            except Exception:
-                continue
-        return ImageFont.load_default()
+        return fallback or ImageFont.load_default()
 
     @staticmethod
     def _text_bbox(draw: ImageDraw.ImageDraw, text: str, font) -> Tuple[int, int, int, int]:

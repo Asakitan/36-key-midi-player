@@ -909,6 +909,16 @@ class GpuOverlayWindow:
                 pass
 
         self._ctx = _moderngl.create_context()  # type: ignore[union-attr]
+        # Defer GL object deletion to a context-owned queue. Consumers (menu
+        # HUD / fisheye painters) call presenter.release() from the Tk MAIN
+        # thread, but this context lives on the pump thread — an immediate
+        # glDelete* there hits a non-current context and access-violates.
+        # With 'context_gc', release() only enqueues; the actual glDelete runs
+        # via ctx.gc() / ctx.release() on the pump thread (see _destroy_on_pump).
+        try:
+            self._ctx.gc_mode = 'context_gc'  # type: ignore[union-attr]
+        except Exception:
+            pass
         self._ctx.enable(_moderngl.BLEND)  # type: ignore[union-attr]
         # Render targets must output PREMULTIPLIED alpha for DWM.
         self._ctx.blend_func = (
@@ -979,6 +989,12 @@ class GpuOverlayWindow:
             except Exception:
                 pass
             if self._ctx is not None:
+                # Flush deferred (context_gc) GL deletions now that the context
+                # is current on the pump thread, then release the context.
+                try:
+                    self._ctx.gc()  # type: ignore[union-attr]
+                except Exception:
+                    pass
                 try:
                     self._ctx.release()
                 except Exception:
@@ -1480,14 +1496,15 @@ class BgraPresenter:
         self._dirty = False
 
     def release(self) -> None:
+        # IMPORTANT: consumers (menu HUD / fisheye painters) call this from the
+        # Tk MAIN thread, but our GL objects live on the pump thread's context.
+        # An explicit obj.release() here issues glDelete* on a non-current
+        # context and access-violates. So we only DROP the Python refs; the
+        # underlying GL resources are reclaimed when the owning context is
+        # released on the pump thread (GpuOverlayWindow._destroy_on_pump), and
+        # gc_mode='context_gc' keeps any later __del__ from touching GL.
         for obj_name in ('_tex', '_vao', '_vbo', '_prog'):
-            obj = getattr(self, obj_name, None)
-            if obj is None:
-                continue
-            try:
-                obj.release()
-            except Exception:
-                pass
-            setattr(self, obj_name, None)
+            if getattr(self, obj_name, None) is not None:
+                setattr(self, obj_name, None)
         self._frame_bytes = None
 
