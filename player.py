@@ -8,7 +8,6 @@ import threading
 import random
 from typing import List, Callable, Optional
 from dataclasses import dataclass
-from collections import deque
 
 try:
     import keyboard
@@ -41,7 +40,7 @@ from keyboard_mapper import KeyboardMapper
 from config import (KEY_PRESS_DURATION, MIN_NOTE_INTERVAL, KEY_DURATION_MAX, KEY_DURATION_MIN,
                     VELOCITY_MIN, VELOCITY_SCALE, VELOCITY_DURATION_MIN, VELOCITY_DURATION_MAX,
                     MAX_SIMULTANEOUS_KEYS, MAX_STAGGERED_KEYS_PER_EVENT,
-                    MAX_NOTE_PRESSES_PER_SECOND, MIN_NOTE_PRESS_INTERVAL_MS,
+                    MIN_NOTE_PRESS_INTERVAL_MS,
                     TRACK_PRIORITY_MODE, MELODY_PRIORITY,
                     CHORD_PRESERVE_BASS, CHORD_PRESERVE_TOP,
                     MIDI_TO_KEY_SHIFT, MODE_SWITCH_DELAY_MS, MODE_KEY_PRESS_MS, DEFAULT_MODE_SYSTEM,
@@ -52,9 +51,9 @@ from config import (KEY_PRESS_DURATION, MIN_NOTE_INTERVAL, KEY_DURATION_MAX, KEY
 HUMANIZE_ENABLED = True          # 启用人性化
 HUMANIZE_TIMING_MS = 30          # 时间偏移范围(毫秒)，±30ms模拟人手的不精确
 HUMANIZE_DURATION_RATIO = 0.12   # 时长变化比例(12%)，变化幅度更自然
-HUMANIZE_ARPEGGIO_MS = 6         # 错开短按的微小随机抖动
-NOTE_STAGGER_MS = 28             # 同一时刻多个音符串行错开，保证上一键至少按满20ms
-AUTO_STAGGER_PEDAL_HOLD_MS = 140 # 非MIDI踏板区遇到错开音群时，临时保持Space踏板
+HUMANIZE_ARPEGGIO_MS = 6         # 同批多键按下时的微小随机抖动
+NOTE_STAGGER_MS = 2              # 同批多键的微小间隔，避免游戏/应用吞键
+AUTO_STAGGER_PEDAL_HOLD_MS = 140 # 非MIDI踏板区遇到音群时，临时保持Space踏板
 
 # === 延音/连音模拟 ===
 # 音符键只短按；延音踏板由 MIDI CC64 驱动 Space 按下/释放。
@@ -114,8 +113,7 @@ class KeyboardSimulator:
         self._key_press_gen = {}   # 每个键的按下代数，防止旧的释放线程杀死新的按下
         self._last_press_time = {}  # 每个键上次按下的时间戳，用于速率限制
         self._active_key_down_time = {}  # 当前按下键的按下时间，保证最短按键时间
-        self._global_note_press_times = deque()  # 全局音符按下时间窗口
-        self._last_global_note_press_time = 0.0
+        self._last_global_note_press_time = 0.0  # 上一批音符按下时间
         self._global_note_rate_lock = threading.Lock()
         self._timer_cleanup_counter = 0  # 定时器清理计数
         self._current_mode = 'normal'  # 当前演奏模式: 'normal', 'shift', 'ctrl'
@@ -133,33 +131,23 @@ class KeyboardSimulator:
         if not KEYBOARD_AVAILABLE and PYNPUT_AVAILABLE:
             self.controller = Controller()
 
-    def _wait_for_global_note_slot(self):
-        """全局限速：滚动1秒最多5个音符，且相邻音符间隔不小于配置值。"""
-        limit = max(1, int(MAX_NOTE_PRESSES_PER_SECOND))
+    def _wait_for_note_press_batch(self):
+        """全局批次限速：相邻两批音符按下间隔不小于配置值。"""
         min_gap = max(0.0, MIN_NOTE_PRESS_INTERVAL_MS / 1000.0)
         while True:
             with self._global_note_rate_lock:
                 now = time.monotonic()
-                while self._global_note_press_times and now - self._global_note_press_times[0] >= 1.0:
-                    self._global_note_press_times.popleft()
-
                 gap_wait = 0.0
                 if self._last_global_note_press_time > 0.0:
                     gap_wait = self._last_global_note_press_time + min_gap - now
 
-                rate_wait = 0.0
-                if len(self._global_note_press_times) >= limit:
-                    rate_wait = 1.0 - (now - self._global_note_press_times[0])
-
-                if gap_wait <= 0.0 and rate_wait <= 0.0:
-                    self._global_note_press_times.append(now)
+                if gap_wait <= 0.0:
                     self._last_global_note_press_time = now
                     return now
 
-                wait_time = max(gap_wait, rate_wait)
-            time.sleep(max(0.001, wait_time))
+            time.sleep(max(0.001, gap_wait))
     
-    def _do_press(self, key: str):
+    def _do_press(self, key: str, reserve_batch: bool = True):
         """实际按下按键，返回按下代数（用于释放时验证）"""
         now = time.monotonic()
         last = self._last_press_time.get(key, 0.0)
@@ -200,13 +188,13 @@ class KeyboardSimulator:
                 elif self.controller:
                     self.controller.release(key)
                 time.sleep(SAME_KEY_RELEASE_GAP_MS / 1000.0)
-                now = self._wait_for_global_note_slot()
+                now = self._wait_for_note_press_batch() if reserve_batch else time.monotonic()
                 if self.use_keyboard and KEYBOARD_AVAILABLE:
                     keyboard.press(key)
                 elif self.controller:
                     self.controller.press(key)
             else:
-                now = self._wait_for_global_note_slot()
+                now = self._wait_for_note_press_batch() if reserve_batch else time.monotonic()
                 if self.use_keyboard and KEYBOARD_AVAILABLE:
                     keyboard.press(key)
                 elif self.controller:
@@ -303,7 +291,7 @@ class KeyboardSimulator:
     def press_key(self, key: str, duration: float = KEY_PRESS_DURATION):
         """模拟单个按键（阻塞模式）"""
         try:
-            self._wait_for_global_note_slot()
+            self._wait_for_note_press_batch()
             if self.use_keyboard and KEYBOARD_AVAILABLE:
                 keyboard.press(key)
                 time.sleep(duration)
@@ -315,21 +303,23 @@ class KeyboardSimulator:
         except Exception as e:
             print(f"按键模拟失败: {e}")
     
-    def press_key_async(self, key: str, duration: float = KEY_PRESS_DURATION):
+    def press_key_async(self, key: str, duration: float = KEY_PRESS_DURATION, reserve_batch: bool = True):
         """模拟单个按键（非阻塞模式，按键在后台延迟释放）"""
-        gen = self._do_press(key)
+        gen = self._do_press(key, reserve_batch=reserve_batch)
         if gen == 0:  # 速率限制丢弃
-            return
+            return 0
         self._schedule_release([(key, gen)], duration)
+        return gen
     
     def press_keys_async(self, keys: List[str], duration: float = KEY_PRESS_DURATION):
         """同时按下多个键（非阻塞模式）"""
         if not keys:
             return
+        self._wait_for_note_press_batch()
         keys_with_gen = []
         # 按键之间加入微小延迟(2ms)，避免游戏/应用吞键
         for i, key in enumerate(keys):
-            gen = self._do_press(key)
+            gen = self._do_press(key, reserve_batch=False)
             if gen == 0:  # 速率限制丢弃
                 continue
             keys_with_gen.append((key, gen))
@@ -343,10 +333,10 @@ class KeyboardSimulator:
             return
             
         try:
+            self._wait_for_note_press_batch()
             if self.use_keyboard and KEYBOARD_AVAILABLE:
                 # 按键之间加入微小延迟(2ms)，避免被吞
                 for i, key in enumerate(keys):
-                    self._wait_for_global_note_slot()
                     keyboard.press(key)
                     if i < len(keys) - 1:
                         time.sleep(0.002)
@@ -355,7 +345,6 @@ class KeyboardSimulator:
                     keyboard.release(key)
             elif self.controller:
                 for i, key in enumerate(keys):
-                    self._wait_for_global_note_slot()
                     self.controller.press(key)
                     if i < len(keys) - 1:
                         time.sleep(0.002)
@@ -373,7 +362,6 @@ class KeyboardSimulator:
         self._active_key_down_time.clear()
         self._last_press_time.clear()  # 重置速率限制状态
         with self._global_note_rate_lock:
-            self._global_note_press_times.clear()
             self._last_global_note_press_time = 0.0
         self.set_sustain_pedal(False)
         self.set_space_pedal(False)
@@ -3900,10 +3888,7 @@ class MidiPlayer:
             sorted_items = list(keys_to_press.items())
         
         # === 执行按键 ===
-        if len(sorted_items) > 1:
-            self._hold_auto_stagger_pedal(
-                AUTO_STAGGER_PEDAL_HOLD_MS + MIN_NOTE_PRESS_INTERVAL_MS * len(sorted_items)
-            )
+        batch_reserved = False
         for idx, (key, (duration, is_chord, note_info, vel, midi_note, priority)) in enumerate(sorted_items):
             # 应用熟练度效果
             final_key, final_duration = self._apply_proficiency_effect(key, duration, is_chord)
@@ -3915,13 +3900,13 @@ class MidiPlayer:
             else:
                 humanized_duration = final_duration
             
-            # 串行错开：尽量保持同时按住的音符键只有一个，踏板负责粘住音群
+            # 同批音符最多6个，几乎同时按下；350ms限制只应用到下一批按下
             if idx > 0:
                 jitter_ms = random.uniform(0, HUMANIZE_ARPEGGIO_MS) if HUMANIZE_ENABLED else 0.0
                 time.sleep((NOTE_STAGGER_MS + jitter_ms) / 1000.0)
             
             # 不熟练时可能有额外的犹豫延迟
-            if self._proficiency_enabled and self._current_proficiency < 0.8:
+            if self._proficiency_enabled and self._current_proficiency < 0.8 and (idx == 0 or len(sorted_items) == 1):
                 hesitation_chance = (1.0 - self._current_proficiency) * 0.08  # 最多8%几率犹豫
                 if random.random() < hesitation_chance:
                     # 不熟练时最大200ms犹豫，熟练后逐渐减少
@@ -3929,8 +3914,18 @@ class MidiPlayer:
                     min_hesitation = 0.02 * (1.0 - self._current_proficiency)  # 最小20ms
                     hesitation_time = random.uniform(min_hesitation, max_hesitation)
                     time.sleep(hesitation_time)
+
+            if not batch_reserved:
+                self.simulator._wait_for_note_press_batch()
+                batch_reserved = True
+                if len(sorted_items) > 1:
+                    self._hold_auto_stagger_pedal(
+                        AUTO_STAGGER_PEDAL_HOLD_MS + MIN_NOTE_PRESS_INTERVAL_MS
+                    )
             
-            self.simulator.press_key_async(final_key, humanized_duration)
+            self.simulator.press_key_async(
+                final_key, humanized_duration, reserve_batch=False
+            )
             
             if self.on_note_play and note_info:
                 self.on_note_play(final_key, note_info, is_chord, humanized_duration)

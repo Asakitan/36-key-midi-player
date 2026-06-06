@@ -174,10 +174,9 @@ VELOCITY_DURATION_MAX = 0.15  # 最强力度对应的按键时长
 
 # 智能轨道优化设置
 # 当同时发声的音符太多时，智能简化和弦（保留骨架音）
-MAX_SIMULTANEOUS_KEYS = 1    # 最大同时按住的音符键数（Space踏板不计入）
-MAX_STAGGERED_KEYS_PER_EVENT = 5  # 同一时刻音群最多保留几个音，随后错开短按
-MAX_NOTE_PRESSES_PER_SECOND = 5  # 全局音符键按下速率上限（Space/模式键不计入）
-MIN_NOTE_PRESS_INTERVAL_MS = 350  # 全局相邻音符键按下最小间隔（Space/模式键不计入）
+MAX_SIMULTANEOUS_KEYS = 6    # 最大同时按住的音符键数（Space踏板不计入）
+MAX_STAGGERED_KEYS_PER_EVENT = 6  # 同一批同时按下的音群最多保留几个音
+MIN_NOTE_PRESS_INTERVAL_MS = 350  # 全局相邻音符批次按下最小间隔（Space/模式键不计入）
 LEGATO_OVERLAP_ENABLED = False  # 连音重叠（短按范围内延到下个音符），可通过GUI按钮切换
 LONG_SUSTAIN_PEDAL_ENABLED = True  # 长按型延音踏板：MIDI CC64 用 Space 按下/释放模拟
 TRACK_PRIORITY_MODE = True   # 启用智能优先级模式
