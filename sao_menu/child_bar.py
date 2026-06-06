@@ -275,7 +275,10 @@ class SAOChildBar(tk.Frame):
         # Reset anim-driven painter inputs; new items will populate.
         self._anim_line_w = None
         self._anim_arrow_w = None
-        self._cached_screen_xy = None
+        # Keep _cached_screen_xy across rebuilds as last-known-good: the render
+        # path reads the origin fresh each frame and only falls back to this when
+        # a freshly-packed frame briefly reports (0,0). Wiping it here would flash
+        # the submenu to the top-left for one frame on a category switch.
         old_w = max(0, self.winfo_width(), self.winfo_reqwidth()) if self.winfo_exists() else 0
         old_h = max(0, self.winfo_height(), self.winfo_reqheight()) if self.winfo_exists() else 0
         if old_w > 1 or old_h > 1:
@@ -774,23 +777,25 @@ class SAOChildBar(tk.Frame):
             wrap = self._content_wrap
             if wrap is None or not wrap.winfo_exists():
                 return
-            cached = self._cached_screen_xy
-            if cached is None:
-                try:
-                    rx, ry = wrap.winfo_rootx(), wrap.winfo_rooty()
-                except Exception:
-                    return
-                # winfo_rootx/rooty return (0,0) until Tk has actually laid the
-                # frame out. The child bar appears on a category click (later
-                # than the menu bar/left-info), so its first render can hit that
-                # window and cache (0,0) — which pins the GPU sub-window to the
-                # top-left screen corner. Only CACHE once positioned; until then
-                # use the live value and keep re-reading so it snaps into place.
-                if rx > 0 or ry > 0:
-                    self._cached_screen_xy = (rx, ry)
+            # Read the wrapper's screen origin FRESH every frame. The child bar
+            # MOVES when you switch categories (it re-aligns to the clicked
+            # circle) and during the open/size animation, so a cached origin goes
+            # stale: 1st click positions fine, 2nd click renders at the previous
+            # spot. The GPU window only re-geometries on an actual change (see the
+            # geom != _last_geom guard), so reading every frame is cheap.
+            # _cached_screen_xy is kept ONLY as last-known-good to avoid a 1-frame
+            # flash to (0,0) before Tk lays a freshly-created frame out.
+            try:
+                rx, ry = wrap.winfo_rootx(), wrap.winfo_rooty()
+            except Exception:
+                return
+            if rx > 0 or ry > 0:
+                self._cached_screen_xy = (rx, ry)
                 sx, sy = rx, ry
+            elif self._cached_screen_xy is not None:
+                sx, sy = self._cached_screen_xy
             else:
-                sx, sy = cached
+                sx, sy = rx, ry
             line_w = 1
             line_h = 1
             arrow_w = 1

@@ -501,12 +501,26 @@ class ChildBarGpuPainter:
 
         # 1) Drain previous result and present.
         fb = self._render_worker.take_result(allow_during_capture=True)
-        if fb is not None and self._gpu_window is not None and self._presenter is not None:
-            try:
-                geom = (fb.x, fb.y, fb.width, fb.height)
-                if geom != self._last_geom:
+        if fb is not None:
+            self._last_fb_size = (fb.width, fb.height)
+        # Keep the window at the CURRENT live origin (screen_x/screen_y) EVERY
+        # tick — independent of whether a new bitmap arrived. The child bar
+        # re-aligns to the clicked circle on a category switch; gating the move
+        # on `fb is not None` froze the submenu at the previous category's spot
+        # (or top-left from an early frame) whenever the async worker had nothing
+        # ready during the switch animation. Size tracks the last rendered buffer
+        # (the bitmap is position-independent).
+        win_w, win_h = getattr(self, '_last_fb_size', None) or (out_w, out_h)
+        if self._gpu_window is not None:
+            geom = (screen_x, screen_y, win_w, win_h)
+            if geom != self._last_geom:
+                try:
                     self._gpu_window.set_geometry(*geom)
                     self._last_geom = geom
+                except Exception:
+                    pass
+        if fb is not None and self._gpu_window is not None and self._presenter is not None:
+            try:
                 self._presenter.set_frame(fb.bgra_bytes, fb.width, fb.height)
                 self._gpu_window.request_redraw()
             except Exception:
