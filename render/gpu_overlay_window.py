@@ -106,7 +106,11 @@ class _PUMP_MSG(ctypes.Structure):
 
 _PM_REMOVE = 0x0001
 try:
-    _u32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    # NOTE: use a PRIVATE WinDLL instance (not the shared ctypes.windll.user32
+    # cache). Setting argtypes/restype on the cached instance mutates the same
+    # function objects other libraries use — notably pynput's win32 message
+    # loop, which then crashes with "expected LP__PUMP_MSG instead of MSG".
+    _u32 = ctypes.WinDLL('user32')  # type: ignore[attr-defined]
     _PeekMessageW = _u32.PeekMessageW
     _PeekMessageW.argtypes = [ctypes.POINTER(_PUMP_MSG), wintypes.HWND,
                               wintypes.UINT, wintypes.UINT, wintypes.UINT]
