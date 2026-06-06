@@ -41,7 +41,7 @@ from keyboard_mapper import KeyboardMapper
 from config import (KEY_PRESS_DURATION, MIN_NOTE_INTERVAL, KEY_DURATION_MAX, KEY_DURATION_MIN,
                     VELOCITY_MIN, VELOCITY_SCALE, VELOCITY_DURATION_MIN, VELOCITY_DURATION_MAX,
                     MAX_SIMULTANEOUS_KEYS, MAX_STAGGERED_KEYS_PER_EVENT,
-                    MAX_NOTE_PRESSES_PER_SECOND,
+                    MAX_NOTE_PRESSES_PER_SECOND, MIN_NOTE_PRESS_INTERVAL_MS,
                     TRACK_PRIORITY_MODE, MELODY_PRIORITY,
                     CHORD_PRESERVE_BASS, CHORD_PRESERVE_TOP,
                     MIDI_TO_KEY_SHIFT, MODE_SWITCH_DELAY_MS, MODE_KEY_PRESS_MS, DEFAULT_MODE_SYSTEM,
@@ -115,6 +115,7 @@ class KeyboardSimulator:
         self._last_press_time = {}  # 每个键上次按下的时间戳，用于速率限制
         self._active_key_down_time = {}  # 当前按下键的按下时间，保证最短按键时间
         self._global_note_press_times = deque()  # 全局音符按下时间窗口
+        self._last_global_note_press_time = 0.0
         self._global_note_rate_lock = threading.Lock()
         self._timer_cleanup_counter = 0  # 定时器清理计数
         self._current_mode = 'normal'  # 当前演奏模式: 'normal', 'shift', 'ctrl'
@@ -133,17 +134,29 @@ class KeyboardSimulator:
             self.controller = Controller()
 
     def _wait_for_global_note_slot(self):
-        """全局限速：滚动1秒内最多按下 MAX_NOTE_PRESSES_PER_SECOND 个音符键。"""
+        """全局限速：滚动1秒最多5个音符，且相邻音符间隔不小于配置值。"""
         limit = max(1, int(MAX_NOTE_PRESSES_PER_SECOND))
+        min_gap = max(0.0, MIN_NOTE_PRESS_INTERVAL_MS / 1000.0)
         while True:
             with self._global_note_rate_lock:
                 now = time.monotonic()
                 while self._global_note_press_times and now - self._global_note_press_times[0] >= 1.0:
                     self._global_note_press_times.popleft()
-                if len(self._global_note_press_times) < limit:
+
+                gap_wait = 0.0
+                if self._last_global_note_press_time > 0.0:
+                    gap_wait = self._last_global_note_press_time + min_gap - now
+
+                rate_wait = 0.0
+                if len(self._global_note_press_times) >= limit:
+                    rate_wait = 1.0 - (now - self._global_note_press_times[0])
+
+                if gap_wait <= 0.0 and rate_wait <= 0.0:
                     self._global_note_press_times.append(now)
+                    self._last_global_note_press_time = now
                     return now
-                wait_time = 1.0 - (now - self._global_note_press_times[0])
+
+                wait_time = max(gap_wait, rate_wait)
             time.sleep(max(0.001, wait_time))
     
     def _do_press(self, key: str):
@@ -361,6 +374,7 @@ class KeyboardSimulator:
         self._last_press_time.clear()  # 重置速率限制状态
         with self._global_note_rate_lock:
             self._global_note_press_times.clear()
+            self._last_global_note_press_time = 0.0
         self.set_sustain_pedal(False)
         self.set_space_pedal(False)
         # 清理所有定时器线程
@@ -3888,7 +3902,7 @@ class MidiPlayer:
         # === 执行按键 ===
         if len(sorted_items) > 1:
             self._hold_auto_stagger_pedal(
-                AUTO_STAGGER_PEDAL_HOLD_MS + NOTE_STAGGER_MS * (len(sorted_items) - 1)
+                AUTO_STAGGER_PEDAL_HOLD_MS + MIN_NOTE_PRESS_INTERVAL_MS * len(sorted_items)
             )
         for idx, (key, (duration, is_chord, note_info, vel, midi_note, priority)) in enumerate(sorted_items):
             # 应用熟练度效果
