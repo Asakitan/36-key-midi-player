@@ -51,8 +51,6 @@ from config import (KEY_PRESS_DURATION, MIN_NOTE_INTERVAL, KEY_DURATION_MAX, KEY
 HUMANIZE_ENABLED = True          # 启用人性化
 HUMANIZE_TIMING_MS = 30          # 时间偏移范围(毫秒)，±30ms模拟人手的不精确
 HUMANIZE_DURATION_RATIO = 0.12   # 时长变化比例(12%)，变化幅度更自然
-HUMANIZE_ARPEGGIO_MS = 6         # 同批多键按下时的微小随机抖动
-NOTE_STAGGER_MS = 2              # 同批多键的微小间隔，避免游戏/应用吞键
 AUTO_STAGGER_PEDAL_HOLD_MS = 140 # 非MIDI踏板区遇到音群时，临时保持Space踏板
 
 # === 延音/连音模拟 ===
@@ -317,14 +315,12 @@ class KeyboardSimulator:
             return
         self._wait_for_note_press_batch()
         keys_with_gen = []
-        # 按键之间加入微小延迟(2ms)，避免游戏/应用吞键
-        for i, key in enumerate(keys):
+        # 同批音符不做人为分隔，尽量同时压下
+        for key in keys:
             gen = self._do_press(key, reserve_batch=False)
             if gen == 0:  # 速率限制丢弃
                 continue
             keys_with_gen.append((key, gen))
-            if i < len(keys) - 1:
-                time.sleep(0.002)  # 2ms间隔
         self._schedule_release(keys_with_gen, duration)
             
     def press_keys(self, keys: List[str], duration: float = KEY_PRESS_DURATION):
@@ -335,19 +331,15 @@ class KeyboardSimulator:
         try:
             self._wait_for_note_press_batch()
             if self.use_keyboard and KEYBOARD_AVAILABLE:
-                # 按键之间加入微小延迟(2ms)，避免被吞
-                for i, key in enumerate(keys):
+                # 同批音符不做人为分隔，尽量同时压下
+                for key in keys:
                     keyboard.press(key)
-                    if i < len(keys) - 1:
-                        time.sleep(0.002)
                 time.sleep(duration)
                 for key in keys:
                     keyboard.release(key)
             elif self.controller:
-                for i, key in enumerate(keys):
+                for key in keys:
                     self.controller.press(key)
-                    if i < len(keys) - 1:
-                        time.sleep(0.002)
                 time.sleep(duration)
                 for key in keys:
                     self.controller.release(key)
@@ -3900,10 +3892,7 @@ class MidiPlayer:
             else:
                 humanized_duration = final_duration
             
-            # 同批音符最多6个，几乎同时按下；配置的间隔限制只应用到下一批按下
-            if idx > 0:
-                jitter_ms = random.uniform(0, HUMANIZE_ARPEGGIO_MS) if HUMANIZE_ENABLED else 0.0
-                time.sleep((NOTE_STAGGER_MS + jitter_ms) / 1000.0)
+            # 同批音符最多6个，不做人为分隔；配置的间隔限制只应用到下一批按下
             
             # 不熟练时可能有额外的犹豫延迟
             if self._proficiency_enabled and self._current_proficiency < 0.8 and (idx == 0 or len(sorted_items) == 1):
