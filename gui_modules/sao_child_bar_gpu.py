@@ -412,7 +412,8 @@ def _compose_child_bar(snap: _ChildBarSnapshot, total_w: int, total_h: int) -> I
 class ChildBarGpuPainter:
     """Owns one GpuOverlayWindow + AsyncFrameWorker for the child bar."""
 
-    def __init__(self, root: tk.Misc):
+    def __init__(self, root: tk.Misc, click_cb=None, hover_cb=None,
+                 leave_cb=None):
         self._root = root
         self._render_worker = AsyncFrameWorker(prefer_isolation=True)
         self._gpu_window: Optional[Any] = None
@@ -421,6 +422,16 @@ class ChildBarGpuPainter:
         self._last_sig: Optional[tuple] = None
         self._last_geom: Optional[Tuple[int, int, int, int]] = None
         self._lock = threading.Lock()
+        # Interactive input: the child bar can't rely on click-through + the Tk
+        # overlay catching passed-through clicks (in this app's window z-order
+        # those clicks miss the Tk rows entirely → submenu items never fire).
+        # When given callbacks we make the GPU window interactive and dispatch
+        # row click/hover ourselves via window-local hit-testing.
+        self._click_cb = click_cb
+        self._hover_cb = hover_cb
+        self._leave_cb = leave_cb
+        self._row_count = 0
+        self._hover_idx: Optional[int] = None
 
     def _ensure_window(self, w: int, h: int, x: int, y: int) -> bool:
         if self._gpu_window is not None:
@@ -429,20 +440,74 @@ class ChildBarGpuPainter:
         try:
             pump = _gow.get_glfw_pump(self._root)
             self._presenter = _gow.BgraPresenter()
+            interactive = any(cb is not None for cb in
+                              (self._click_cb, self._hover_cb, self._leave_cb))
             self._gpu_window = _gow.GpuOverlayWindow(
                 pump,
                 w=max(1, int(w)), h=max(1, int(h)),
                 x=int(x), y=int(y),
                 render_fn=self._presenter.render,
-                click_through=True,
+                click_through=not interactive,
                 title='sao_child_bar_gpu',
             )
+            if interactive:
+                self._gpu_window.set_input_callbacks(
+                    cursor_pos_fn=self._handle_cursor_pos,
+                    cursor_leave_fn=self._handle_cursor_leave,
+                    mouse_button_fn=self._handle_mouse_button,
+                )
             self._gpu_window.show()
             return True
         except Exception as exc:
             self._presenter = None
             self._gpu_window = None
             raise RuntimeError('ChildBarGpuPainter requires GPU window support') from exc
+
+    # ── window-local hit-testing (rows are drawn at y = idx*ROW_STRIDE) ──
+    def _row_at(self, x: float, y: float) -> Optional[int]:
+        if self._row_count <= 0 or y < 0:
+            return None
+        idx = int(y // ROW_STRIDE)
+        if idx < 0 or idx >= self._row_count:
+            return None
+        if (y - idx * ROW_STRIDE) > ROW_H:   # in the gap between rows
+            return None
+        return idx
+
+    def _handle_mouse_button(self, button: int, action: int,
+                             _mods: int, x: float, y: float) -> None:
+        if button != 0 or action != 1:   # left button press only
+            return
+        idx = self._row_at(x, y)
+        if idx is not None and self._click_cb is not None:
+            try:
+                self._click_cb(idx)
+            except Exception:
+                pass
+
+    def _handle_cursor_pos(self, x: float, y: float) -> None:
+        idx = self._row_at(x, y)
+        if idx is None:
+            self._handle_cursor_leave()
+            return
+        if idx == self._hover_idx:
+            return
+        self._hover_idx = idx
+        if self._hover_cb is not None:
+            try:
+                self._hover_cb(idx)
+            except Exception:
+                pass
+
+    def _handle_cursor_leave(self) -> None:
+        if self._hover_idx is None:
+            return
+        self._hover_idx = None
+        if self._leave_cb is not None:
+            try:
+                self._leave_cb()
+            except Exception:
+                pass
 
     def destroy(self) -> None:
         if self._destroyed:
@@ -486,9 +551,11 @@ class ChildBarGpuPainter:
         if self._destroyed:
             return
         if not snap.rows:
+            self._row_count = 0
             self.clear()
             return
 
+        self._row_count = len(snap.rows)   # for window-local click/hover hit-test
         max_row_w = max(r.row_w for r in snap.rows)
         out_w = max(1, LIST_X + max_row_w)
         rows_h = len(snap.rows) * ROW_STRIDE - 3

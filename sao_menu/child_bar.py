@@ -65,6 +65,7 @@ class SAOChildBar(tk.Frame):
         self._anim = Animator(self)
         self._gpu_painter: Optional[Any] = None
         self._gpu_managed: bool = False
+        self._gpu_hover_idx: Optional[int] = None  # row hovered via GPU dispatch
         self._gpu_colors: Optional[Any] = None
         self._gpu_chroma_bg: str = '#010101'
         self._gpu_fade_t: float = 0.0
@@ -682,6 +683,11 @@ class SAOChildBar(tk.Frame):
         outer._apply_fade_visual = _apply_fade_visual
         outer._row_start_w = 88
         outer._hover_state = _hover_state
+        # For GPU interactive dispatch (click_through windows don't deliver to
+        # the Tk rows in this app): fire/hover this row by index.
+        outer._command = item.get('command')
+        outer._enter_fn = enter
+        outer._leave_fn = leave
         outer._icon_text = item.get('icon', '') or ''
         outer._label_text = item.get('label', '') or ''
         outer._anim_row_w = outer._row_start_w
@@ -697,7 +703,12 @@ class SAOChildBar(tk.Frame):
         gpu_child_bar_enabled()
         try:
             top = self.winfo_toplevel()
-            self._gpu_painter = ChildBarGpuPainter(top)
+            self._gpu_painter = ChildBarGpuPainter(
+                top,
+                click_cb=self._gpu_fire_row,
+                hover_cb=self._gpu_hover_row,
+                leave_cb=self._gpu_leave_rows,
+            )
             if _ChildBarColors is not None:
                 self._gpu_colors = _ChildBarColors(
                     SAOColors.CHILD_BG, SAOColors.CHILD_HOVER,
@@ -761,6 +772,51 @@ class SAOChildBar(tk.Frame):
                     self._arrow_cv.itemconfigure(item_id, **{channel: chroma})
                 except Exception:
                     pass
+
+    # ── GPU interactive dispatch (called from ChildBarGpuPainter) ──
+    def _gpu_fire_row(self, idx: int) -> None:
+        """Run row `idx`'s command. The child bar's GPU window captures the
+        click directly now (the old click-through + Tk-overlay path didn't
+        reach the rows in this app's window z-order, so submenu items were
+        dead / clicks fell through)."""
+        try:
+            if not (0 <= idx < len(self._items)):
+                return
+            cmd = getattr(self._items[idx], '_command', None)
+            if not cmd:
+                return
+            try:
+                from utils.sao_sound import play_sound as _ps
+                _ps('click', volume=0.5)
+            except Exception:
+                pass
+            self.after_idle(cmd)
+        except Exception:
+            pass
+
+    def _gpu_hover_row(self, idx: int) -> None:
+        try:
+            if idx == self._gpu_hover_idx:
+                return
+            self._gpu_leave_rows()
+            if 0 <= idx < len(self._items):
+                fn = getattr(self._items[idx], '_enter_fn', None)
+                if fn:
+                    fn(None)
+                self._gpu_hover_idx = idx
+        except Exception:
+            pass
+
+    def _gpu_leave_rows(self) -> None:
+        try:
+            idx = self._gpu_hover_idx
+            self._gpu_hover_idx = None
+            if idx is not None and 0 <= idx < len(self._items):
+                fn = getattr(self._items[idx], '_leave_fn', None)
+                if fn:
+                    fn(None)
+        except Exception:
+            pass
 
     def _dispatch_gpu_paint(self):
         if not self._gpu_managed or self._gpu_painter is None:

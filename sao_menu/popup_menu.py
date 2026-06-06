@@ -793,7 +793,14 @@ class SAOPopUpMenu:
                 self.close()
 
         try:
-            self._overlay.after(1, _check)
+            # Delay the focus check so Windows has time to set the new
+            # foreground window: clicking an interactive menu GPU window (menu
+            # bar / child bar) fires <FocusOut> on the Tk overlay BEFORE that
+            # window becomes foreground. Checking at after(1) raced ahead of the
+            # OS and closed the menu on the first clicks (it only "stabilized"
+            # once a window was already foreground). 80ms lets _foreground_in_
+            # own_process() see our own GPU window and keep the menu open.
+            self._overlay.after(80, _check)
         except Exception:
             self.close()
 
