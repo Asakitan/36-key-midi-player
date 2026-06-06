@@ -44,6 +44,8 @@
     --font-sao: 'saoLatin', 'sao', 'Segoe UI', sans-serif;
     --font-round: 'saoLatin', 'sao', 'yuanJWDCJK', 'yuanJWD', 'Microsoft YaHei UI', sans-serif;
     --font-ui: 'saoLatin', 'sao', 'yuanJWDCJK', 'yuanJWD', 'Segoe UI', sans-serif;
+    --sao-cyan: #5eb8ca;          /* MenuHudSpriteRenderer._CYAN (94,184,202) */
+    --sao-gold: #f3af12;          /* SAOColors.ACTIVE_BORDER / _GOLD (243,175,18) */
 }
 
 /* ═══════════════════════════════════════
@@ -176,6 +178,50 @@ html, body {
 .menu-hud-right-near { right: 9vw; bottom: 18vh; animation: menu-hud-right-near 5.6s ease-in-out infinite; }
 
 /* ═══ Breathing animation for position ═══ */
+/* ─── Entity-style anchored HUD frame (mirrors MenuHudSpriteRenderer) ───
+   Corner brackets (cyan TL/BL, gold TR/BR), vertical rails offset a few px,
+   a vertical scan line, and corner dots. Anchored around the circle-button
+   column (.item_box, 54×340), replacing the old free-floating ambient lanes. */
+.menu-frame {
+    position: absolute;
+    left: -6px;
+    top: -6px;
+    width: 66px;
+    height: 352px;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.9;
+}
+.menu-frame .frame-corner { position: absolute; width: 16px; height: 16px; }
+.menu-frame .frame-corner.tl { left: 0; top: 0; border-left: 1px solid var(--sao-cyan); border-top: 1px solid var(--sao-cyan); }
+.menu-frame .frame-corner.bl { left: 0; bottom: 0; border-left: 1px solid var(--sao-cyan); border-bottom: 1px solid var(--sao-cyan); }
+.menu-frame .frame-corner.tr { right: 0; top: 0; border-right: 1px solid var(--sao-gold); border-top: 1px solid var(--sao-gold); }
+.menu-frame .frame-corner.br { right: 0; bottom: 0; border-right: 1px solid var(--sao-gold); border-bottom: 1px solid var(--sao-gold); }
+.menu-frame .frame-corner.tl,
+.menu-frame .frame-corner.bl { box-shadow: -1px 0 4px rgba(104, 228, 255, 0.22); }
+.menu-frame .frame-rail { position: absolute; top: 16px; bottom: 16px; width: 1px; }
+.menu-frame .frame-rail.l { left: -4px; background: var(--sao-cyan); }
+.menu-frame .frame-rail.r { right: -4px; background: var(--sao-gold); }
+.menu-frame .frame-dot { position: absolute; width: 3px; height: 3px; border-radius: 50%; }
+.menu-frame .frame-dot.l { left: -5px; top: 20px; background: var(--sao-cyan); box-shadow: 0 0 5px rgba(94, 184, 202, 0.6); }
+.menu-frame .frame-dot.r { right: -5px; bottom: 20px; background: var(--sao-gold); box-shadow: 0 0 5px rgba(243, 175, 18, 0.5); }
+.menu-frame .frame-scan {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--sao-cyan);
+    box-shadow: 0 -3px 0 rgba(58, 106, 120, 0.7), 0 -6px 0 rgba(42, 80, 96, 0.6);
+    opacity: 0.7;
+    animation: menu-frame-scan 6.5s linear infinite;
+}
+@keyframes menu-frame-scan {
+    0%   { top: 6px;   opacity: 0; }
+    8%   { opacity: 0.7; }
+    92%  { opacity: 0.7; }
+    100% { top: 344px; opacity: 0; }
+}
+
 .position {
     position: absolute;
     opacity: 1;
@@ -1365,14 +1411,23 @@ html, body {
 <!-- ═══ Fullscreen overlay ═══ -->
 <div class="info" id="popup-overlay">
 
-    <div class="menu-hud" aria-hidden="true">
-        <div class="menu-hud-lane menu-hud-left-far"><span class="menu-hud-label">SYS CORE</span></div>
-        <div class="menu-hud-lane gold menu-hud-left-near"><span class="menu-hud-label">GAIN ROUTE</span></div>
-        <div class="menu-hud-lane menu-hud-right-far"><span class="menu-hud-label">NERVE GEAR</span></div>
-        <div class="menu-hud-lane gold menu-hud-right-near"><span class="menu-hud-label">LINK RATE</span></div>
-    </div>
+    <!-- Old free-floating ambient lanes replaced by the content-anchored .menu-frame -->
+    <div class="menu-hud" aria-hidden="true"></div>
 
     <div class="position" id="menu-position">
+
+        <!-- Entity-style anchored HUD frame (corner brackets + rails + scan + dots) -->
+        <div class="menu-frame" aria-hidden="true">
+            <span class="frame-corner tl"></span>
+            <span class="frame-corner tr"></span>
+            <span class="frame-corner bl"></span>
+            <span class="frame-corner br"></span>
+            <span class="frame-rail l"></span>
+            <span class="frame-rail r"></span>
+            <span class="frame-dot l"></span>
+            <span class="frame-dot r"></span>
+            <span class="frame-scan"></span>
+        </div>
 
         <!-- LeftInfo Panel -->
         <div class="leftInfo" id="left-info">
