@@ -3900,7 +3900,7 @@ class MidiPlayer:
             else:
                 humanized_duration = final_duration
             
-            # 同批音符最多6个，几乎同时按下；350ms限制只应用到下一批按下
+            # 同批音符最多6个，几乎同时按下；配置的间隔限制只应用到下一批按下
             if idx > 0:
                 jitter_ms = random.uniform(0, HUMANIZE_ARPEGGIO_MS) if HUMANIZE_ENABLED else 0.0
                 time.sleep((NOTE_STAGGER_MS + jitter_ms) / 1000.0)

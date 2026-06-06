@@ -121,7 +121,7 @@ Windows 下需以**管理员身份**运行，才能模拟键盘输入。
 | `SUSTAIN_OVERLAP_MS` | 35 | 连音重叠时长 (ms)，最终仍限制在150ms内 |
 | `MAX_SIMULTANEOUS_KEYS` | 6 | 最大同时按住的音符键数 |
 | `MAX_STAGGERED_KEYS_PER_EVENT` | 6 | 同一批音群最多保留几个音并同时按下 |
-| `MIN_NOTE_PRESS_INTERVAL_MS` | 350 | 全局相邻音符批次按下最小间隔 (ms) |
+| `MIN_NOTE_PRESS_INTERVAL_MS` | 450 | 全局相邻音符批次按下最小间隔 (ms) |
 | `PIANO_RUBATO_LONG_STRETCH` | 1.22 | 长音符弹性拉伸系数 |
 | `HUMANIZE_TIMING_MS` | 30 | 时机随机偏移范围 (ms) |
 
@@ -134,7 +134,7 @@ Windows 下需以**管理员身份**运行，才能模拟键盘输入。
 - MIDI 踏板数据默认会转换为游戏内 `Space` 踏板的按下/释放；可在设置中关闭“Space长按踏板”
 - 音符键始终按 20-150ms 短按输出；“连音重叠”只在这个范围内做小幅衔接
 - 同一时刻多个音会作为同一批按下，同批最多 6 个音符键
-- 全局强制限制相邻两批音符按下间隔至少 350ms；`Space` 踏板和模式切换键不计入
+- 全局强制限制相邻两批音符按下间隔至少 450ms；`Space` 踏板和模式切换键不计入
 - WebView UI 需要系统可用的 WebView2 / Edge Chromium 环境
 
 ## 打包为 EXE
