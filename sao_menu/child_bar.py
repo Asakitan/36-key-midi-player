@@ -777,11 +777,20 @@ class SAOChildBar(tk.Frame):
             cached = self._cached_screen_xy
             if cached is None:
                 try:
-                    cached = (wrap.winfo_rootx(), wrap.winfo_rooty())
+                    rx, ry = wrap.winfo_rootx(), wrap.winfo_rooty()
                 except Exception:
                     return
-                self._cached_screen_xy = cached
-            sx, sy = cached
+                # winfo_rootx/rooty return (0,0) until Tk has actually laid the
+                # frame out. The child bar appears on a category click (later
+                # than the menu bar/left-info), so its first render can hit that
+                # window and cache (0,0) — which pins the GPU sub-window to the
+                # top-left screen corner. Only CACHE once positioned; until then
+                # use the live value and keep re-reading so it snaps into place.
+                if rx > 0 or ry > 0:
+                    self._cached_screen_xy = (rx, ry)
+                sx, sy = rx, ry
+            else:
+                sx, sy = cached
             line_w = 1
             line_h = 1
             arrow_w = 1
