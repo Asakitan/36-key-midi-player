@@ -119,7 +119,9 @@ Windows 下需以**管理员身份**运行，才能模拟键盘输入。
 | `LONG_SUSTAIN_PEDAL_ENABLED` | True | MIDI CC64 踏板用 Space 按下/释放模拟 |
 | `SUSTAIN_SCALE` | 0.72 | 音符短按基础缩放 |
 | `SUSTAIN_OVERLAP_MS` | 35 | 连音重叠时长 (ms)，最终仍限制在150ms内 |
-| `MAX_SIMULTANEOUS_KEYS` | 5 | 最大同时按键数 |
+| `MAX_SIMULTANEOUS_KEYS` | 1 | 最大同时按住的音符键数 |
+| `MAX_STAGGERED_KEYS_PER_EVENT` | 5 | 同一时刻音群最多保留几个音并错开短按 |
+| `MAX_NOTE_PRESSES_PER_SECOND` | 5 | 全局每秒最多按下几个音符键 |
 | `PIANO_RUBATO_LONG_STRETCH` | 1.22 | 长音符弹性拉伸系数 |
 | `HUMANIZE_TIMING_MS` | 30 | 时机随机偏移范围 (ms) |
 
@@ -131,6 +133,8 @@ Windows 下需以**管理员身份**运行，才能模拟键盘输入。
 - 极高/极低音符会根据当前模式自动折叠或重映射到可用范围
 - MIDI 踏板数据默认会转换为游戏内 `Space` 踏板的按下/释放；可在设置中关闭“Space长按踏板”
 - 音符键始终按 20-150ms 短按输出；“连音重叠”只在这个范围内做小幅衔接
+- 同一时刻多个音会按音高错开短按，尽量保持任意时刻只有一个音符键被按住
+- 全局强制限制音符键按下速率为每秒最多 5 个，`Space` 踏板和模式切换键不计入
 - WebView UI 需要系统可用的 WebView2 / Edge Chromium 环境
 
 ## 打包为 EXE
