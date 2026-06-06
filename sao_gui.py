@@ -28,7 +28,7 @@ from config import (
     KEYBOARD_LAYOUT, NOTE_NAMES, BLACK_KEY_LAYOUT, BLACK_KEY_NAMES,
     NOTE_NAMES_EXTENDED, BLACK_KEY_NAMES_EXTENDED,
     DEFAULT_HOTKEYS, CONFIG_FILE,
-    KEY_TO_MIDI
+    KEY_TO_MIDI, LEGATO_OVERLAP_ENABLED
 )
 from sao_theme import (
     SAOColors, SAOButton, SAOProgressBar, SAOTitleBar, SAODialog,
@@ -1089,7 +1089,7 @@ class SAOPlayerGUI:
         self._bass_density = 0.6
         self._glissando = False
         self._direct_c = False
-        self._legato_overlap = self.settings.get('legato_overlap', False)
+        self._legato_overlap = self.settings.get('legato_overlap', LEGATO_OVERLAP_ENABLED)
         self._long_sustain_pedal = self.settings.get('long_sustain_pedal', True)
         self.player.set_long_sustain_pedal(self._long_sustain_pedal, save=False)
         self.player.set_legato_overlap(self._legato_overlap, save=False)

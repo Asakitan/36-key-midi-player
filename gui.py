@@ -22,7 +22,7 @@ from config import (
     WINDOW_TITLE, WINDOW_SIZE,
     KEYBOARD_LAYOUT, NOTE_NAMES, BLACK_KEY_LAYOUT, BLACK_KEY_NAMES,
     NOTE_NAMES_EXTENDED, BLACK_KEY_NAMES_EXTENDED,
-    DEFAULT_HOTKEYS, CONFIG_FILE
+    DEFAULT_HOTKEYS, CONFIG_FILE, LEGATO_OVERLAP_ENABLED
 )
 try:
     from sao_theme import (
@@ -1897,7 +1897,7 @@ class ControlPanel(tk.Frame):
                                                  font=('Microsoft YaHei UI', 10, 'bold'),
                                                  command=self._on_long_sustain_toggle)
         self.long_sustain_check.pack(side=tk.LEFT)
-        self.legato_var = tk.BooleanVar(value=self.settings.get('legato_overlap', False))
+        self.legato_var = tk.BooleanVar(value=self.settings.get('legato_overlap', LEGATO_OVERLAP_ENABLED))
         self.legato_check = tk.Checkbutton(row5_5a, text="连音重叠", variable=self.legato_var,
                                            bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_PRIMARY,
                                            selectcolor=ModernColors.BG_INPUT,
@@ -1905,7 +1905,7 @@ class ControlPanel(tk.Frame):
                                            font=('Microsoft YaHei UI', 10, 'bold'),
                                            command=self._on_legato_toggle)
         self.legato_check.pack(side=tk.LEFT, padx=(12, 0))
-        self.legato_info_label = tk.Label(row5_5a, text="(音符键20-150ms；踏板按MIDI CC64按下/释放Space)",
+        self.legato_info_label = tk.Label(row5_5a, text="(按键时长随MIDI音符/踏板延长；不再限制为150ms)",
                                           bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_SECONDARY,
                                           font=('Microsoft YaHei UI', 9))
         self.legato_info_label.pack(side=tk.LEFT, padx=10)

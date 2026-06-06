@@ -16,6 +16,8 @@ import ctypes
 import numpy as np
 from typing import Optional
 
+from config import LEGATO_OVERLAP_ENABLED
+
 # ── 延迟导入 pywebview ──
 webview = None
 _DOTNET_TRANSPARENCY_DONE = set()
@@ -480,7 +482,7 @@ class SAOWebViewGUI:
         self._melody_on = True
         self._bass_on = True
         self._direct_c = False
-        self._legato_overlap = self.settings.get('legato_overlap', False)
+        self._legato_overlap = self.settings.get('legato_overlap', LEGATO_OVERLAP_ENABLED)
         self._long_sustain_pedal = self.settings.get('long_sustain_pedal', True)
         self.player.set_long_sustain_pedal(self._long_sustain_pedal, save=False)
         self.player.set_legato_overlap(self._legato_overlap, save=False)
