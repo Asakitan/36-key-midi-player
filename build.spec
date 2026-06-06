@@ -42,6 +42,7 @@ main_hiddenimports = [
     # OpenGL
     'moderngl',
     'moderngl.mgl',
+    'glfw',
     # WebView
     'webview',
     'webview.platforms.edgechromium',
@@ -69,6 +70,12 @@ main_hiddenimports = [
     'player',
     'config',
     'gui',
+    # LinkStart 启动动画 (GLFW/ModernGL 直出窗口)
+    'link_start',
+    'render',
+    'render.gpu_overlay_window',
+    'overlay_scheduler',
+    'overlay_subpixel',
     # 标准库
     'json',
     'ctypes',

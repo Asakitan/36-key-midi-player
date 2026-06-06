@@ -213,3 +213,30 @@ def _get_config_dir():
         return os.path.dirname(__file__)
 
 CONFIG_FILE = os.path.join(_get_config_dir(), 'settings.json')
+
+
+def _resource_dir(*parts):
+    """解析只读资源目录 (字体/音效等), 兼容开发环境与 PyInstaller 打包。
+
+    依次尝试: onefile 解包目录 (_MEIPASS) → exe 同级目录 → 脚本目录,
+    返回第一个真实存在的路径; 都不存在时回退到脚本相对路径。
+    """
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        meipass = getattr(sys, '_MEIPASS', None)
+        if meipass:
+            candidates.append(os.path.join(meipass, *parts))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), *parts))
+    candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), *parts))
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return candidates[-1]
+
+
+# 只读资源目录 (供 LinkStart 等模块加载字体)
+ASSETS_DIR = _resource_dir('assets')
+FONTS_DIR = _resource_dir('assets', 'fonts')
+
+# LinkStart 启动动画使用 GLFW/ModernGL 直出窗口 (render.gpu_overlay_window)
+USE_GPU_OVERLAY = True
