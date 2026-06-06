@@ -735,9 +735,15 @@ class MenuCircleButtonRenderer:
             bbox = self._text_bbox(draw, icon_text, font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-            text_x = int((canvas - text_w) * 0.5)
-            text_y = int((canvas - text_h) * 0.5 - scale * 0.35)
-            draw.text((text_x, text_y), icon_text, font=font, fill=icon_rgb + (255,))
+            # Center the glyph INK in the canvas. draw.text places the glyph
+            # origin at the given point, but the ink starts at (bbox[0],bbox[1])
+            # from that origin (left/top side bearing). Subtract the bbox origin
+            # so symbols from fonts with large bearings (e.g. Segoe UI Symbol
+            # '☰'/'▶') sit dead-center instead of low/right.
+            text_x = (canvas - text_w) * 0.5 - bbox[0]
+            text_y = (canvas - text_h) * 0.5 - bbox[1]
+            draw.text((int(round(text_x)), int(round(text_y))),
+                      icon_text, font=font, fill=icon_rgb + (255,))
 
         resized = image.resize((size, size), Image.LANCZOS)
         # Clamp only the very low-alpha fringe so the icon stays smooth while

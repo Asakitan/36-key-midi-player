@@ -22,6 +22,37 @@ from sao_menu.menu_bar import SAOMenuBar
 from sao_menu.left_info import SAOLeftInfo
 from sao_menu.child_bar import SAOChildBar
 
+# Win32: is the OS foreground window owned by THIS process? The interactive menu
+# bar / child bar are GLFW overlay windows with WS_EX_NOACTIVATE cleared, so
+# clicking them steals OS focus from the Tk overlay → <FocusOut> → the menu would
+# close the instant you click a category. We treat focus moving to one of our OWN
+# windows as "still inside the menu" and keep it open. (Private WinDLL instance so
+# we never mutate the shared windll.user32 argtypes — see the pynput pollution fix.)
+try:
+    import ctypes as _ctypes
+    import os as _os
+    _U32_FG = _ctypes.WinDLL('user32')
+    _U32_FG.GetForegroundWindow.restype = _ctypes.c_void_p
+    _U32_FG.GetWindowThreadProcessId.argtypes = [
+        _ctypes.c_void_p, _ctypes.POINTER(_ctypes.c_ulong)]
+    _U32_FG.GetWindowThreadProcessId.restype = _ctypes.c_ulong
+    _OWN_PID = _os.getpid()
+
+    def _foreground_in_own_process() -> bool:
+        try:
+            hwnd = _U32_FG.GetForegroundWindow()
+            if not hwnd:
+                return False
+            pid = _ctypes.c_ulong(0)
+            _U32_FG.GetWindowThreadProcessId(_ctypes.c_void_p(hwnd),
+                                             _ctypes.byref(pid))
+            return pid.value == _OWN_PID
+        except Exception:
+            return False
+except Exception:
+    def _foreground_in_own_process() -> bool:
+        return False
+
 # ──────────────────── 弹出菜单容器 (PopUpMenu) ────────────────────
 class SAOPopUpMenu:
     """
@@ -724,6 +755,15 @@ class SAOPopUpMenu:
             if not self._visible or not self._overlay or not self._overlay.winfo_exists():
                 return
             now = time.time()
+            # Focus moved to one of our own GPU overlay windows (clicking a menu
+            # category) — keep the menu open. Keep polling so we still close once
+            # the user switches to a different application.
+            if _foreground_in_own_process():
+                try:
+                    self._overlay.after(180, _check)
+                except Exception:
+                    pass
+                return
             try:
                 focus = self._overlay.focus_displayof()
                 if focus is None or str(focus) == 'None':
