@@ -854,6 +854,8 @@ html, body {
 .mi-gld::before { left: 3px; top: 10px; width: 16px; height: 2px; background: currentColor; transform: skewX(-40deg); box-shadow: 0 -5px 0 rgba(138,223,255,.65), 0 -10px 0 rgba(138,223,255,.35); }
 .mi-legato::before { left: 2px; top: 6px; width: 8px; height: 8px; border: 2px solid currentColor; border-right: none; border-radius: 8px 0 0 8px; }
 .mi-legato::after { right: 2px; top: 6px; width: 8px; height: 8px; border: 2px solid currentColor; border-left: none; border-radius: 0 8px 8px 0; }
+.mi-pedal::before { left: 3px; top: 8px; width: 16px; height: 6px; border: 2px solid currentColor; border-radius: 2px; transform: skewX(-18deg); }
+.mi-pedal::after { left: 6px; top: 3px; width: 9px; height: 2px; background: currentColor; transform: rotate(-18deg); }
 .mi-keyplus::before, .mi-keyminus::before { left: 4px; top: 7px; width: 14px; height: 2px; background: currentColor; }
 .mi-keyplus::after { left: 10px; top: 1px; width: 2px; height: 14px; background: currentColor; }
 .mi-ctrl::before { left: 4px; top: 3px; width: 14px; height: 2px; background: currentColor; box-shadow: 0 4px 0 currentColor, 0 8px 0 currentColor; }
@@ -1461,6 +1463,7 @@ html, body {
                 <li data-action="toggle_melody"><i class="menu-glyph mi-mel"></i><span>主旋律</span><span class="badge on" id="badge-melody">ON</span></li>
                 <li data-action="toggle_bass"><i class="menu-glyph mi-bass"></i><span>伴奏</span><span class="badge on" id="badge-bass">ON</span></li>
                 <li data-action="toggle_directc"><i class="menu-glyph mi-cmap"></i><span>C调直转</span><span class="badge off" id="badge-directc">OFF</span></li>
+                <li data-action="toggle_long_sustain"><i class="menu-glyph mi-pedal"></i><span>Space长按踏板</span><span class="badge on" id="badge-longsustain">ON</span></li>
                 <li data-action="toggle_legato"><i class="menu-glyph mi-legato"></i><span>连音重叠</span><span class="badge off" id="badge-legato">OFF</span></li>
                 <li data-action="toggle_glissando"><i class="menu-glyph mi-gld"></i><span>结尾滑奏</span><span class="badge off" id="badge-glissando">OFF</span></li>
                 <li data-action="transpose_up"><i class="menu-glyph mi-keyplus"></i><span>升调 (+1)</span></li>

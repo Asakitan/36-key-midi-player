@@ -1090,6 +1090,9 @@ class SAOPlayerGUI:
         self._glissando = False
         self._direct_c = False
         self._legato_overlap = self.settings.get('legato_overlap', False)
+        self._long_sustain_pedal = self.settings.get('long_sustain_pedal', True)
+        self.player.set_long_sustain_pedal(self._long_sustain_pedal, save=False)
+        self.player.set_legato_overlap(self._legato_overlap, save=False)
         self._sustain_active = False
         self._shift_mode = 'normal'     # 当前演奏模式: normal/shift/ctrl/lt/gt
         self._proficiency_enabled = False
@@ -1796,6 +1799,7 @@ class SAOPlayerGUI:
                 {'icon': '▼', 'label': f'移调 -1  (当前 {self._transpose:+d})', 'command': self._transpose_down},
                 {'icon': '↺', 'label': '重置移调 / 自动检测', 'command': self._auto_transpose},
                 {'icon': 'C', 'label': 'C调直转' + (' ✓' if self._direct_c else ''), 'command': self._toggle_direct_c},
+                {'icon': '␠', 'label': 'Space长按踏板' + (' ✓' if self._long_sustain_pedal else ''), 'command': self._toggle_long_sustain_pedal},
                 {'icon': '⇢', 'label': '连音重叠' + (' ✓' if self._legato_overlap else ''), 'command': self._toggle_legato_overlap},
                 {'icon': melody_state, 'label': '旋律', 'command': self._toggle_melody},
                 {'icon': bass_state, 'label': '伴奏', 'command': self._toggle_bass},
@@ -2384,6 +2388,9 @@ class SAOPlayerGUI:
         dc_lbl = pill(row_opt1, 'C调直转 ✓' if self._direct_c else 'C调直转',
                       self._direct_c, self._toggle_direct_c)
         dc_lbl.pack(side=tk.LEFT, padx=(0, 6))
+        sp_lbl = pill(row_opt1, 'Space踏板 ✓' if self._long_sustain_pedal else 'Space踏板',
+                      self._long_sustain_pedal, self._toggle_long_sustain_pedal)
+        sp_lbl.pack(side=tk.LEFT, padx=(0, 6))
         lo_lbl = pill(row_opt1, '连音重叠 ✓' if self._legato_overlap else '连音重叠',
                       self._legato_overlap, self._toggle_legato_overlap)
         lo_lbl.pack(side=tk.LEFT, padx=(0, 6))
@@ -2391,6 +2398,7 @@ class SAOPlayerGUI:
                       self._proficiency_enabled, self._toggle_proficiency)
         pf_lbl.pack(side=tk.LEFT)
         self._control_panel._dc_lbl = dc_lbl
+        self._control_panel._sp_lbl = sp_lbl
         self._control_panel._lo_lbl = lo_lbl
         self._control_panel._pf_lbl = pf_lbl
 
@@ -2445,6 +2453,11 @@ class SAOPlayerGUI:
                 text='C调直转 ✓' if self._direct_c else 'C调直转',
                 bg='#f3af12' if self._direct_c else '#1a2030',
                 fg='#ffffff' if self._direct_c else '#8a9aaa')
+        if hasattr(p, '_sp_lbl'):
+            p._sp_lbl.configure(
+                text='Space踏板 ✓' if self._long_sustain_pedal else 'Space踏板',
+                bg='#f3af12' if self._long_sustain_pedal else '#1a2030',
+                fg='#ffffff' if self._long_sustain_pedal else '#8a9aaa')
         if hasattr(p, '_lo_lbl'):
             p._lo_lbl.configure(
                 text='连音重叠 ✓' if self._legato_overlap else '连音重叠',
@@ -3408,7 +3421,17 @@ class SAOPlayerGUI:
         """切换连音重叠（延音到下个音符）"""
         self._legato_overlap = not self._legato_overlap
         self.player.set_legato_overlap(self._legato_overlap)
+        self.settings.set('legato_overlap', self._legato_overlap)
         self._refresh_menu_if_open()
+        self._update_control_panel()
+
+    def _toggle_long_sustain_pedal(self):
+        """切换长按型延音踏板（MIDI CC64 → Space按下/释放）"""
+        self._long_sustain_pedal = not self._long_sustain_pedal
+        self.player.set_long_sustain_pedal(self._long_sustain_pedal)
+        self.settings.set('long_sustain_pedal', self._long_sustain_pedal)
+        self._refresh_menu_if_open()
+        self._update_control_panel()
 
     def _toggle_melody(self):
         self._melody_on = not self._melody_on
@@ -3589,9 +3612,9 @@ class SAOPlayerGUI:
             if self._destroyed:
                 return
             if hold_duration is not None:
-                dur = int(min(2000, max(100, hold_duration * 1000)))
+                dur = int(min(150, max(20, hold_duration * 1000)))
             else:
-                dur = int(min(2000, max(100, note.duration * 1000)))
+                dur = int(min(150, max(20, note.duration * 1000)))
             vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8
             midi_note = note.note
             if self._mini_piano:
@@ -3793,7 +3816,7 @@ class SAOPlayerGUI:
             self._sao_menu.close()
         self.root.after(600, lambda: SAODialog.showinfo(
             self._float, "关于",
-            "咲 Midi Player  SAO Edition\nv3.5.1\n\n"
+            "咲 Midi Player  SAO Edition\nv3.5.3\n\n"
             "Alt+A 打开 SAO 菜单\n"
             "右键悬浮按钮查看更多选项"))
 

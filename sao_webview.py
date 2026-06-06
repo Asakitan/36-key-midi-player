@@ -481,6 +481,9 @@ class SAOWebViewGUI:
         self._bass_on = True
         self._direct_c = False
         self._legato_overlap = self.settings.get('legato_overlap', False)
+        self._long_sustain_pedal = self.settings.get('long_sustain_pedal', True)
+        self.player.set_long_sustain_pedal(self._long_sustain_pedal, save=False)
+        self.player.set_legato_overlap(self._legato_overlap, save=False)
         self._glissando = False
         self._folder_loop_active = False
         self._folder_loop_files = []
@@ -541,9 +544,9 @@ class SAOWebViewGUI:
         """Player 触发音符 → 推送到 piano / viz 面板 (non-blocking)."""
         try:
             if hold_duration is not None:
-                dur = int(min(2000, max(100, hold_duration * 1000)))
+                dur = int(min(150, max(20, hold_duration * 1000)))
             else:
-                dur = int(min(2000, max(100, note.duration * 1000)))
+                dur = int(min(150, max(20, note.duration * 1000)))
             vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8
             midi_note = note.note
             safe_key = self._safe_js(key)
@@ -1741,6 +1744,7 @@ class SAOWebViewGUI:
             'melody': self._melody_on,
             'bass': self._bass_on,
             'directc': self._direct_c,
+            'long_sustain': self._long_sustain_pedal,
             'glissando': self._glissando,
             'sustain': self._sustain_active,
             'play_state': '播放中' if self._playing else ('已暂停' if self._paused else '就绪'),
@@ -1790,7 +1794,9 @@ class SAOWebViewGUI:
         }
         self._eval_menu(f'SAO.updateInfo({json.dumps(info, ensure_ascii=False)})')
         for k, v in [('melody', self._melody_on), ('bass', self._bass_on),
-                      ('directc', self._direct_c), ('glissando', self._glissando)]:
+                      ('directc', self._direct_c), ('legato', self._legato_overlap),
+                      ('longsustain', self._long_sustain_pedal),
+                      ('glissando', self._glissando)]:
             self._eval_menu(f'SAO.updateBadge("{k}", {"true" if v else "false"})')
         self._sync_all_panels()
 
@@ -1832,6 +1838,7 @@ class SAOWebViewGUI:
             'toggle_melody': self._toggle_melody,
             'toggle_bass': self._toggle_bass,
             'toggle_directc': self._toggle_direct_c,
+            'toggle_long_sustain': self._toggle_long_sustain_pedal,
             'toggle_legato': self._toggle_legato_overlap,
             'toggle_glissando': self._toggle_glissando,
             'transpose_up': self._transpose_up,
@@ -1967,8 +1974,18 @@ class SAOWebViewGUI:
         """切换连音重叠（延音到下个音符）"""
         self._legato_overlap = not self._legato_overlap
         self.player.set_legato_overlap(self._legato_overlap)
+        self.settings.set('legato_overlap', self._legato_overlap)
         self._eval_menu(f'SAO.updateBadge("legato", {"true" if self._legato_overlap else "false"})')
         self._eval_menu(f'SAO.showToast("连音重叠: {"ON" if self._legato_overlap else "OFF"}")')
+        self._sync_all_panels()
+
+    def _toggle_long_sustain_pedal(self):
+        """切换长按型延音踏板（MIDI CC64 → Space按下/释放）"""
+        self._long_sustain_pedal = not self._long_sustain_pedal
+        self.player.set_long_sustain_pedal(self._long_sustain_pedal)
+        self.settings.set('long_sustain_pedal', self._long_sustain_pedal)
+        self._eval_menu(f'SAO.updateBadge("longsustain", {"true" if self._long_sustain_pedal else "false"})')
+        self._eval_menu(f'SAO.showToast("Space长按踏板: {"ON" if self._long_sustain_pedal else "OFF"}")')
         self._sync_all_panels()
 
     def _toggle_glissando(self):

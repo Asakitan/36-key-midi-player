@@ -42,7 +42,7 @@ from config import (KEY_PRESS_DURATION, MIN_NOTE_INTERVAL, KEY_DURATION_MAX, KEY
                     MAX_SIMULTANEOUS_KEYS, TRACK_PRIORITY_MODE, MELODY_PRIORITY,
                     CHORD_PRESERVE_BASS, CHORD_PRESERVE_TOP,
                     MIDI_TO_KEY_SHIFT, MODE_SWITCH_DELAY_MS, MODE_KEY_PRESS_MS, DEFAULT_MODE_SYSTEM,
-                    LEGATO_OVERLAP_ENABLED)
+                    LEGATO_OVERLAP_ENABLED, LONG_SUSTAIN_PEDAL_ENABLED)
 
 
 # 人性化设置 - 模拟真人弹奏的微小不确定性
@@ -51,19 +51,13 @@ HUMANIZE_TIMING_MS = 30          # 时间偏移范围(毫秒)，±30ms模拟人�
 HUMANIZE_DURATION_RATIO = 0.12   # 时长变化比例(12%)，变化幅度更自然
 HUMANIZE_ARPEGGIO_MS = 15        # 琶音延迟(毫秒)，和弦从低到高微微展开，像真人
 
-# === 延音模拟 - 用按键时长做延音，不使用游戏踏板键 ===
-# 核心原则：按键时长 = MIDI音符时长 × 缩放，让游戏内置延音自然工作
-# 当MIDI踏板踩下时，额外延长按键时长来模拟延音效果
-SUSTAIN_ENABLED = True           # 启用延音模式（尊重MIDI音符原始时长）
-SUSTAIN_SCALE = 1.45             # 延音缩放系数（基础延长45%，让音符更饱满丰润）
-SUSTAIN_MIN_MS = 220             # 最短按键时长(ms)，确保游戏识别且音色饱满
-SUSTAIN_MAX_S = 12.0             # 最长按键时长(秒)，允许超长延音自然衰减
-SUSTAIN_OVERLAP_MS = 280         # 连音重叠(ms)，充分重叠使音符衔接如歌无断裂
-
-# === MIDI踏板数据 → 按键时长加成 ===
-# 不再按空格键切换游戏踏板（容易卡住），改为读取MIDI踏板数据延长按键
-SUSTAIN_PEDAL_BOOST = 2.10       # 踏板踩下时按键时长额外乘以此系数（更饱满的延音共鸣）
-SUSTAIN_PEDAL_MIN_MS = 500       # 踏板踩下时最短按键时长(ms)，让短音符也有延音感
+# === 延音/连音模拟 ===
+# 音符键只短按；延音踏板由 MIDI CC64 驱动 Space 按下/释放。
+SUSTAIN_ENABLED = True
+SUSTAIN_SCALE = 0.72             # 基础短按缩放，长音不会直接变成长按
+SUSTAIN_MIN_MS = int(KEY_DURATION_MIN * 1000)   # 20ms
+SUSTAIN_MAX_S = KEY_DURATION_MAX                # 150ms
+SUSTAIN_OVERLAP_MS = 35          # legato 只做短范围重叠，最终仍夹紧到150ms
 
 # === 同键防吞音设置 ===
 SAME_KEY_RELEASE_GAP_MS = 35     # 同一个键连续按时，释放后等待的间隔(毫秒)，确保游戏识别
@@ -125,6 +119,7 @@ class KeyboardSimulator:
         self._sustain_pedal_held = False       # 空格键是否被按住
         self._sustain_pedal_event = threading.Event()  # 用于通知等待的释放线程
         self._sustain_pedal_enabled = False     # 是否启用物理延音踏板（由MidiPlayer控制）
+        self._space_pedal_down = False          # 程序输出的 Space 踏板状态
         
         if not KEYBOARD_AVAILABLE and PYNPUT_AVAILABLE:
             self.controller = Controller()
@@ -208,6 +203,27 @@ class KeyboardSimulator:
     def set_sustain_pedal_enabled(self, enabled: bool):
         """启用/禁用物理延音踏板功能"""
         self._sustain_pedal_enabled = enabled
+        if not enabled:
+            self.set_sustain_pedal(False)
+
+    def set_space_pedal(self, held: bool):
+        """按下/释放游戏内 Space 延音踏板，不计入普通按键上限。"""
+        if held == self._space_pedal_down:
+            return
+        try:
+            if self.use_keyboard and KEYBOARD_AVAILABLE:
+                if held:
+                    keyboard.press('space')
+                else:
+                    keyboard.release('space')
+            elif self.controller:
+                if held:
+                    self.controller.press(Key.space)
+                else:
+                    self.controller.release(Key.space)
+            self._space_pedal_down = held
+        except Exception as e:
+            print(f"Space延音踏板{'按下' if held else '释放'}失败: {e}")
     
     def _schedule_release(self, keys_with_gen: list, delay: float):
         """安排延迟释放按键，带代数检查防止误释放，支持延音踏板保持"""
@@ -307,6 +323,8 @@ class KeyboardSimulator:
             self._do_release(key)
         self._active_keys_order.clear()  # 清理顺序列表
         self._last_press_time.clear()  # 重置速率限制状态
+        self.set_sustain_pedal(False)
+        self.set_space_pedal(False)
         # 清理所有定时器线程
         self._cleanup_timers()
     
@@ -469,7 +487,7 @@ class KeyboardSimulator:
                     self.ensure_mode('normal')
         self._mode_toggle_count = 0
     
-    # 延音踏板已移除（不再按空格键），改用按键时长模拟延音
+    # Space 延音踏板由 MidiPlayer 根据 MIDI CC64 按下/释放
 
 
 class MidiPlayer:
@@ -538,7 +556,7 @@ class MidiPlayer:
         self.on_progress: Optional[Callable[[float, float], None]] = None
         self.on_playback_end: Optional[Callable[[], None]] = None
         self.on_shift_change: Optional[Callable[[str], None]] = None    # 演奏模式变化回调 ('normal'/'shift'/'ctrl'/'lt'/'gt')
-        self.on_sustain_change: Optional[Callable[[bool], None]] = None  # 延音状态变化回调（显示当前是否在踏板加成区）
+        self.on_sustain_change: Optional[Callable[[bool], None]] = None  # 延音状态变化回调（MIDI踏板/Space状态）
         
         # 模式系统: 'classic' (L Shift/L Ctrl) 或 'extended' (</>)
         self._mode_system = DEFAULT_MODE_SYSTEM
@@ -551,13 +569,16 @@ class MidiPlayer:
         # 文件类型标识
         self._is_js_file = False
         
-        # === MIDI踏板数据（用于按键时长加成，不按空格键）===
+        # === MIDI踏板数据（长按踏板开启时输出 Space）===
         self._sustain_pedal_events = []     # MIDI踏板事件列表
         self._sustain_event_index = 0       # 当前踏板事件索引
-        self._sustain_active_now = False    # 当前时间点踏板是否踩下（用于时长加成）
+        self._sustain_active_now = False    # 当前时间点踏板是否踩下
         
         # === 连音重叠开关（延音到下个音符，可通过GUI按钮切换）===
         self._legato_overlap_enabled = LEGATO_OVERLAP_ENABLED
+
+        # === 长按型延音踏板（MIDI CC64 → Space 按下/释放）===
+        self._long_sustain_pedal_enabled = LONG_SUSTAIN_PEDAL_ENABLED
         
         # === 物理延音踏板（空格键）===
         self._space_listener = None          # pynput键盘监听器
@@ -578,12 +599,15 @@ class MidiPlayer:
                 self._song_play_counts = data.get('song_play_counts', {})
                 # 加载C调直转模式设置
                 self._direct_c_mode = data.get('direct_c_mode', False)
-                # 加载连音重叠设置
+                # 加载连音重叠/长按踏板设置
                 self._legato_overlap_enabled = data.get('legato_overlap', LEGATO_OVERLAP_ENABLED)
+                self._long_sustain_pedal_enabled = data.get(
+                    'long_sustain_pedal', LONG_SUSTAIN_PEDAL_ENABLED)
         except Exception:
             self._song_play_counts = {}
             self._direct_c_mode = False
             self._legato_overlap_enabled = LEGATO_OVERLAP_ENABLED
+            self._long_sustain_pedal_enabled = LONG_SUSTAIN_PEDAL_ENABLED
     
     def _save_proficiency_data(self):
         """保存熟练度数据到settings.json"""
@@ -654,13 +678,55 @@ class MidiPlayer:
             print(f"[连音重叠] 设置已保存: {'开启' if self._legato_overlap_enabled else '关闭'}")
         except Exception as e:
             print(f"[连音重叠] 保存设置失败: {e}")
+
+    def set_long_sustain_pedal(self, enabled: bool, save: bool = True):
+        """设置长按型延音踏板：MIDI CC64 控制 Space 按下/释放。"""
+        self._long_sustain_pedal_enabled = bool(enabled)
+        if self._long_sustain_pedal_enabled and self.state.is_playing and self._sustain_active_now:
+            self.simulator.set_space_pedal(True)
+        else:
+            self.simulator.set_space_pedal(False)
+        if save:
+            self._save_long_sustain_pedal()
+
+    def get_long_sustain_pedal(self) -> bool:
+        """获取长按型延音踏板状态"""
+        return self._long_sustain_pedal_enabled
+
+    def toggle_long_sustain_pedal(self) -> bool:
+        """切换长按型延音踏板，返回切换后的状态"""
+        self.set_long_sustain_pedal(not self._long_sustain_pedal_enabled)
+        return self._long_sustain_pedal_enabled
+
+    def _save_long_sustain_pedal(self):
+        """保存长按型延音踏板设置到settings.json"""
+        import json
+        from config import CONFIG_FILE
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+        data['long_sustain_pedal'] = self._long_sustain_pedal_enabled
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            print(f"[长按踏板] 设置已保存: {'开启' if self._long_sustain_pedal_enabled else '关闭'}")
+        except Exception as e:
+            print(f"[长按踏板] 保存设置失败: {e}")
     
     # ==================== 物理延音踏板（空格键） ====================
     
     def _update_space_pedal_state(self):
-        """根据连音重叠状态决定是否启用空格延音踏板"""
-        # 连音重叠关闭时，启用空格键作为物理延音踏板
-        self.simulator.set_sustain_pedal_enabled(not self._legato_overlap_enabled)
+        """关闭旧的物理Space监听式延音，保持音符键短按上限。"""
+        self.simulator.set_sustain_pedal_enabled(False)
+
+    def _apply_sustain_pedal_output(self, is_on: bool):
+        """根据当前设置把 MIDI 踏板状态输出到 Space。"""
+        if self._long_sustain_pedal_enabled:
+            self.simulator.set_space_pedal(is_on)
+        else:
+            self.simulator.set_space_pedal(False)
     
     def _start_space_listener(self):
         """启动空格键监听器（用pynput监听物理按键）"""
@@ -851,12 +917,13 @@ class MidiPlayer:
             # 分析低音独奏段落和低音整合
             self._analyze_bass_solo_sections()
             self._select_bass_for_integration()
-            # 加载MIDI踏板数据（用于按键时长加成，不按空格键）
+            # 加载MIDI踏板数据（长按型踏板开启时用于 Space 按下/释放）
             self._sustain_pedal_events = getattr(self.parser, 'sustain_events', [])
             self._sustain_event_index = 0
             self._sustain_active_now = False
             if self._sustain_pedal_events:
-                print(f"[延音] 已加载 {len(self._sustain_pedal_events)} 个踏板事件，将用于按键时长加成")
+                mode = "Space长按踏板" if self._long_sustain_pedal_enabled else "状态指示"
+                print(f"[延音] 已加载 {len(self._sustain_pedal_events)} 个踏板事件，将用于{mode}")
             # 计算曲目hash并更新熟练度
             self._current_song_hash = self._calculate_song_hash(filepath)
             self._update_proficiency()
@@ -1838,9 +1905,9 @@ class MidiPlayer:
         self.state.is_paused = False
         self.state.current_time = start_from
         
-        # 启动空格延音踏板监听（连音重叠关闭时才启用）
+        # 播放开始时关闭旧监听式延音，并释放上一次可能残留的 Space 踏板
         self._update_space_pedal_state()
-        self._start_space_listener()
+        self.simulator.set_space_pedal(False)
         
         # 根据熟练度自动调整速度：不熟练减速30%，熟练后恢复
         if self._proficiency_enabled:
@@ -1865,10 +1932,12 @@ class MidiPlayer:
     def pause(self):
         """暂停播放"""
         self.state.is_paused = True
+        self.simulator.set_space_pedal(False)
         
     def resume(self):
         """恢复播放"""
         self.state.is_paused = False
+        self._apply_sustain_pedal_output(self._sustain_active_now)
         
     def stop(self):
         """停止播放 - 增强版，确保模式状态完全重置"""
@@ -1888,9 +1957,10 @@ class MidiPlayer:
         # 可靠重置模式状态，强制回到普通模式
         self.simulator.reset_mode()
         
-        # 停止空格延音踏板监听
+        # 清理空格延音踏板状态
         self._stop_space_listener()
         self.simulator.set_sustain_pedal(False)
+        self.simulator.set_space_pedal(False)
         
         # 通知GUI重置状态指示器
         if self.on_shift_change:
@@ -1918,7 +1988,7 @@ class MidiPlayer:
         if self.on_shift_change:
             self.on_shift_change('normal')
         
-        # 重置MIDI踏板索引，确定初始踏板状态（用于按键时长加成）
+        # 重置MIDI踏板索引，确定初始踏板状态（用于Space长按输出/状态指示）
         self._sustain_event_index = 0
         self._sustain_active_now = False
         for i, evt in enumerate(self._sustain_pedal_events):
@@ -1929,6 +1999,7 @@ class MidiPlayer:
                 break
         if self.on_sustain_change:
             self.on_sustain_change(self._sustain_active_now)
+        self._apply_sustain_pedal_output(self._sustain_active_now)
         
         while not self._stop_event.is_set():
             # 暂停检查
@@ -1949,15 +2020,17 @@ class MidiPlayer:
             
             current_event = events[self.state.current_event_index]
             
-            # === MIDI踏板状态跟踪（用于按键时长加成，不按空格键）===
-            if (self._sustain_pedal_events and
+            # === MIDI踏板状态跟踪（长按踏板开启时输出Space按下/释放）===
+            while (self._sustain_pedal_events and
                    self._sustain_event_index < len(self._sustain_pedal_events)):
                 sustain_evt = self._sustain_pedal_events[self._sustain_event_index]
-                if self.state.current_time >= sustain_evt.time:
-                    self._sustain_active_now = sustain_evt.is_on
-                    self._sustain_event_index += 1
-                    if self.on_sustain_change:
-                        self.on_sustain_change(sustain_evt.is_on)
+                if self.state.current_time < sustain_evt.time:
+                    break
+                self._sustain_active_now = sustain_evt.is_on
+                self._sustain_event_index += 1
+                self._apply_sustain_pedal_output(sustain_evt.is_on)
+                if self.on_sustain_change:
+                    self.on_sustain_change(sustain_evt.is_on)
             
             # 人性化：微小的时间偏移，模拟人手的微小延迟
             timing_offset = 0
@@ -2012,6 +2085,7 @@ class MidiPlayer:
         self.state.is_playing = False
         
         self.simulator.release_all()
+        self.simulator.set_space_pedal(False)
         
         # 仅自然结束时由播放线程负责重置，stop()走自己的清理路径
         if not self._stop_event.is_set():
@@ -3252,107 +3326,42 @@ class MidiPlayer:
                                     next_keys: Optional[set] = None,
                                     is_phrase_end: bool = False) -> float:
         """
-        计算按键持续时长 - 游戏用按键时长做延音踏板
-        
-        核心原则：按键时长 ≈ MIDI音符时长，让游戏内置延音自然工作。
-        钢琴家模拟通过力度、音区、rubato、乐句呼吸来细化表情。
-        
-        同键防吞音由 KeyboardSimulator._do_press() 处理：
-        - 如果同一个键还在按下状态，会先释放等待 SAME_KEY_RELEASE_GAP_MS 再重新按下
-        
-        Args:
-            base_duration: MIDI音符原始时长(秒)
-            current_time: 当前音符开始时间
-            next_event_time: 下一个音符的开始时间
-            midi_note: MIDI音符号（用于判断音区）
-            velocity: MIDI力度值 (0-127)
-            current_key: 当前音符使用的键
-            next_keys: 下一个事件要按的键集合
-            is_phrase_end: 是否为乐句末尾
-            
-        Returns:
-            调整后的按键持续时长(秒)
+        计算音符键短按时长。
+
+        核心原则：音符键最长 150ms、最短 20ms；延音踏板由 Space 长按负责。
+        legato 只在短按范围内略微补足衔接，不再把音符键延到秒级。
         """
+        min_dur = KEY_DURATION_MIN
+        max_dur = KEY_DURATION_MAX
+
         if not SUSTAIN_ENABLED:
-            # 延音关闭时，使用固定短时长
-            return max(SUSTAIN_MIN_MS / 1000.0, min(0.15, base_duration * 0.5))
-        
-        # === 0. 动态延音缩放（基于整首歌曲分析）===
-        profile = getattr(self, '_song_sustain_profile', None)
-        if profile:
-            dynamic_scale = profile.get('dynamic_sustain_scale', SUSTAIN_SCALE)
-            dynamic_overlap = profile.get('dynamic_overlap_ms', SUSTAIN_OVERLAP_MS)
-        else:
-            dynamic_scale = SUSTAIN_SCALE
-            dynamic_overlap = SUSTAIN_OVERLAP_MS
-        
-        # === 1. 基础：以MIDI音符原始时长为基准，使用动态缩放 ===
-        duration = base_duration * dynamic_scale
-        
-        # === 2. 力度→时长映射（钢琴家核心表情） ===
-        # 强音符(ff)按键更久→更饱满的延音；弱音符(pp)更短促→更轻柔
-        vel_ratio = max(0, (velocity - VELOCITY_MIN)) / (127 - VELOCITY_MIN)
-        vel_scale = PIANO_VEL_SUSTAIN_MIN + vel_ratio * (PIANO_VEL_SUSTAIN_MAX - PIANO_VEL_SUSTAIN_MIN)
-        duration *= vel_scale
-        
-        # === 3. 音区表情差异 ===
-        if midi_note >= 72:    # 高音区（Q-U行 + SHIFT区）
-            duration *= PIANO_HIGH_SUSTAIN
-        elif midi_note <= 59:  # 低音区（Z-M行）
-            duration *= PIANO_LOW_SUSTAIN
-            # 低音额外衰减：力度越弱的低音衰减越快，避免低音抢戏
-            if velocity < 90:
-                bass_dampen = 0.85 + 0.15 * (velocity / 127.0)  # 弱力度低音再缩短15%
-                duration *= bass_dampen
-        else:                  # 中音区（A-J行）
-            duration *= PIANO_MID_SUSTAIN
-        
-        # === 4. 弹性速度（rubato）===
-        if PIANO_RUBATO_ENABLED:
-            if base_duration > 0.5:
-                # 长音符微微拉伸 - 歌唱性
-                duration *= PIANO_RUBATO_LONG_STRETCH
-            elif base_duration < 0.15:
-                # 短音符微微紧凑 - 灵巧感
-                duration *= PIANO_RUBATO_SHORT_TIGHTEN
-        
-        # === 5. 乐句呼吸 ===
+            return max(min_dur, min(max_dur, base_duration))
+
+        duration = base_duration * SUSTAIN_SCALE
+
+        if VELOCITY_SCALE:
+            vel_ratio = max(0.0, min(1.0, (velocity - VELOCITY_MIN) / (127 - VELOCITY_MIN)))
+            vel_floor = VELOCITY_DURATION_MIN + vel_ratio * (VELOCITY_DURATION_MAX - VELOCITY_DURATION_MIN)
+            duration = max(duration, vel_floor)
+            duration *= 0.88 + vel_ratio * 0.22
+
+        if midi_note >= 72:
+            duration *= 1.08
+        elif midi_note <= 59:
+            duration *= 0.86
+
         if PIANO_PHRASE_BREATH and is_phrase_end:
-            # 乐句末尾音符拉伸，模拟钢琴家在句尾的自然渐慢
-            duration *= PIANO_PHRASE_END_STRETCH
-        
-        # === 6. MIDI踏板加成：踏板踩下时延长按键时长代替按空格 ===
-        if getattr(self, '_sustain_active_now', False):
-            duration *= SUSTAIN_PEDAL_BOOST
-            # 踏板踩下时最短按键时长更长
-            min_dur = SUSTAIN_PEDAL_MIN_MS / 1000.0
-        else:
-            min_dur = SUSTAIN_MIN_MS / 1000.0
-        
-        # === 7. 连音衔接（增强版：更长更自然的衔接） ===
-        # 核心：让音符之间无缝过渡，像人声歌唱一样连贯
-        # 可通过 _legato_overlap_enabled 开关关闭（关闭时按键时长 = 音符时长，不延伸到下个音符）
+            duration *= 1.08
+
         if next_event_time is not None and self._legato_overlap_enabled:
             gap = next_event_time - current_time
-            overlap_ms = dynamic_overlap
-            
-            if 0 < gap < duration:
-                # 音符已自然重叠 → 额外延长少量，确保重叠足够丰满
-                extra_overlap = overlap_ms * 0.5 / 1000.0  # 额外50%重叠量
-                duration = max(duration, gap + extra_overlap)
-            elif 0 < gap < 2.5 and duration < gap:
-                # 音符时长短于间隔 → 延长填充间隙 + 充足重叠
-                duration = gap + (overlap_ms / 1000.0)
-            
-            # 连续短音符（快速旋律跑动）：确保最小重叠，避免断裂
-            if 0 < gap < 0.25 and duration < gap + 0.04:
-                duration = gap + 0.04  # 至少40ms重叠
-        
-        # === 8. 范围限制 ===
-        duration = max(min_dur, duration)
-        duration = min(SUSTAIN_MAX_S, duration)
-        
-        return duration
+            if 0 < gap <= max_dur:
+                overlap = SUSTAIN_OVERLAP_MS / 1000.0
+                duration = max(duration, min(max_dur, gap + overlap))
+            elif 0 < gap < 0.25:
+                duration = max(duration, min(max_dur, gap * 0.75))
+
+        return max(min_dur, min(max_dur, duration))
     
     
     # ==================== 屏幕防漂移检测 ====================
@@ -3492,14 +3501,14 @@ class MidiPlayer:
 
     def _play_events(self, events: List[PlayEvent], next_event_time: Optional[float] = None):
         """
-        播放一组事件 - 单音直接映射 + 按键时长延音 + SHIFT/CTRL三模式切换
+        播放一组事件 - 单音直接映射 + 短按输出 + SHIFT/CTRL三模式切换
         
         策略：
         1. 收集所有同时发声的MIDI音符
         2. 映射到目标MIDI值（36-95范围）
         3. 判断演奏模式（36-47仅CTRL，48-59 CTRL或普通，60-71三模式，72-83普通或SHIFT，84-95仅SHIFT）
-        4. 按键时长 = MIDI音符时长 × 各种缩放（踏板加成/力度/音区/rubato）
-        5. 钢琴家模拟：力度/音区/rubato/乐句呼吸 细化表情
+        4. 音符键短按控制在20-150ms，踏板由Space长按承担
+        5. 钢琴家模拟：力度/音区/乐句呼吸只做短按范围内的细化
         """
         
         # 获取当前事件时间
@@ -3526,9 +3535,9 @@ class MidiPlayer:
             if velocity < VELOCITY_MIN:
                 continue
             
-            # 使用MIDI音符的原始时长（游戏用按键时长做延音踏板）
+            # 使用MIDI音符的原始时长作为短按计算输入
             event_duration = event.duration
-            # 宽松的范围限制，保留长音符的延音信息
+            # 音符键最终只输出20-150ms短按
             press_duration = max(self.duration_min, min(self.duration_max, event_duration))
             
             # 收集所有音符（根据音部设置过滤）

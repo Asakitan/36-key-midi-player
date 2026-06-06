@@ -161,21 +161,22 @@ DEFAULT_TEMPO = 120  # 默认BPM
 MIN_NOTE_INTERVAL = 0.05  # 最小音符间隔(秒)，50ms内视为同时发声
 KEY_PRESS_DURATION = 0.2  # 默认按键持续时间(秒)
 
-# 按键时长设置（游戏用按键时长做延音踏板，需尊重MIDI音符时长）
-KEY_DURATION_MAX = 10.0  # 最大按键持续时间(秒)，允许超长延音自然衰减
-KEY_DURATION_MIN = 0.5  # 最小按键持续时间(秒)
+# 按键时长设置（音符键只做短按，延音交给 Space 踏板或 legato）
+KEY_DURATION_MAX = 0.15  # 最大按键持续时间(秒)，150ms
+KEY_DURATION_MIN = 0.02  # 最小按键持续时间(秒)，20ms
 
 # 力度(Velocity)映射设置
 # MIDI力度范围 0-127，用于调整按键时长和表现力
 VELOCITY_MIN = 20       # 低于此值的音符跳过（太弱听不到）
 VELOCITY_SCALE = True   # 是否根据力度调整按键时长
-VELOCITY_DURATION_MIN = 0.03  # 最弱力度对应的按键时长
+VELOCITY_DURATION_MIN = 0.02  # 最弱力度对应的按键时长
 VELOCITY_DURATION_MAX = 0.15  # 最强力度对应的按键时长
 
 # 智能轨道优化设置
 # 当同时发声的音符太多时，智能简化和弦（保留骨架音）
-MAX_SIMULTANEOUS_KEYS = 2    # 最大同时按键数（限制为2键）
-LEGATO_OVERLAP_ENABLED = False  # 连音重叠（延音到下个音符），可通过GUI按钮切换
+MAX_SIMULTANEOUS_KEYS = 5    # 最大同时按键数
+LEGATO_OVERLAP_ENABLED = False  # 连音重叠（短按范围内延到下个音符），可通过GUI按钮切换
+LONG_SUSTAIN_PEDAL_ENABLED = True  # 长按型延音踏板：MIDI CC64 用 Space 按下/释放模拟
 TRACK_PRIORITY_MODE = True   # 启用智能优先级模式
 # 和弦简化策略：保留根音、五度音、高音旋律
 MELODY_PRIORITY = True       # 启用旋律优先（高音区为主旋律）
@@ -183,7 +184,7 @@ CHORD_PRESERVE_BASS = True   # 保留低音根音（和弦基础）
 CHORD_PRESERVE_TOP = True    # 保留高音旋律（最重要）
 
 # GUI设置
-WINDOW_TITLE = "咲 Midiplayer v3.5.2 60/88键位"
+WINDOW_TITLE = "咲 Midiplayer v3.5.3 60/88键位"
 WINDOW_SIZE = "900x980"
 BUTTON_WIDTH = 60
 BUTTON_HEIGHT = 60

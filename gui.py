@@ -349,7 +349,7 @@ def get_icon_path():
 class CustomTitleBar(tk.Frame):
     """自定义无边框窗口标题栏 - 扁平暗色设计"""
 
-    def __init__(self, parent, root, title="咲 Midi Player", version="v3.5.1",
+    def __init__(self, parent, root, title="咲 Midi Player", version="v3.5.3",
                  on_close=None, **kwargs):
         super().__init__(parent, bg=ModernColors.TITLEBAR, height=36, **kwargs)
         self.root = root
@@ -1886,9 +1886,17 @@ class ControlPanel(tk.Frame):
                                            font=('Microsoft YaHei UI', 9, 'bold'))
         self.detected_key_label.pack(side=tk.RIGHT)
 
-        # === 第5.55行：连音重叠开关 ===
+        # === 第5.55行：延音/连音开关 ===
         row5_5a = tk.Frame(self, bg=ModernColors.BG_CARD)
         row5_5a.pack(fill=tk.X, padx=12, pady=2)
+        self.long_sustain_var = tk.BooleanVar(value=self.settings.get('long_sustain_pedal', True))
+        self.long_sustain_check = tk.Checkbutton(row5_5a, text="Space长按踏板", variable=self.long_sustain_var,
+                                                 bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_PRIMARY,
+                                                 selectcolor=ModernColors.BG_INPUT,
+                                                 activebackground=ModernColors.BG_CARD,
+                                                 font=('Microsoft YaHei UI', 10, 'bold'),
+                                                 command=self._on_long_sustain_toggle)
+        self.long_sustain_check.pack(side=tk.LEFT)
         self.legato_var = tk.BooleanVar(value=self.settings.get('legato_overlap', False))
         self.legato_check = tk.Checkbutton(row5_5a, text="连音重叠", variable=self.legato_var,
                                            bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_PRIMARY,
@@ -1896,8 +1904,8 @@ class ControlPanel(tk.Frame):
                                            activebackground=ModernColors.BG_CARD,
                                            font=('Microsoft YaHei UI', 10, 'bold'),
                                            command=self._on_legato_toggle)
-        self.legato_check.pack(side=tk.LEFT)
-        self.legato_info_label = tk.Label(row5_5a, text="(开启后按键会延音到下个音符，关闭则严格按时长释放)",
+        self.legato_check.pack(side=tk.LEFT, padx=(12, 0))
+        self.legato_info_label = tk.Label(row5_5a, text="(音符键20-150ms；踏板按MIDI CC64按下/释放Space)",
                                           bg=ModernColors.BG_CARD, fg=ModernColors.TEXT_SECONDARY,
                                           font=('Microsoft YaHei UI', 9))
         self.legato_info_label.pack(side=tk.LEFT, padx=10)
@@ -1967,6 +1975,8 @@ class ControlPanel(tk.Frame):
         self.player._play_ending_glissando = self.glissando_var.get()
         self.player.set_proficiency_enabled(self.proficiency_var.get())
         self.player._direct_c_mode = self.direct_c_var.get()
+        self.player.set_long_sustain_pedal(self.long_sustain_var.get(), save=False)
+        self.player.set_legato_overlap(self.legato_var.get(), save=False)
         saved_density = self.settings.get('bass_density', 1.0)
         self.bass_density_var.set(saved_density)
         self.bass_density_label.configure(text=f"{saved_density:.0%}")
@@ -2284,6 +2294,13 @@ class ControlPanel(tk.Frame):
         else:
             self._update_octave_offset_label()
 
+    def _on_long_sustain_toggle(self):
+        """长按型延音踏板开关切换回调"""
+        val = self.long_sustain_var.get()
+        self.player.set_long_sustain_pedal(val)
+        self.settings.set('long_sustain_pedal', val)
+        self.update_sustain_state(getattr(self.player, '_sustain_active_now', False))
+
     def _on_legato_toggle(self):
         """连音重叠开关切换回调"""
         val = self.legato_var.get()
@@ -2470,10 +2487,12 @@ class ControlPanel(tk.Frame):
 
     def update_sustain_state(self, is_on: bool):
         if self.sustain_pill:
+            long_sustain = getattr(self, 'long_sustain_var', None)
+            long_enabled = bool(long_sustain.get()) if long_sustain is not None else True
             if is_on:
-                self.sustain_pill.set_active(True, "延音 加长")
+                self.sustain_pill.set_active(True, "踏板 Space" if long_enabled else "延音 ON")
             else:
-                self.sustain_pill.set_active(False, "延音 正常")
+                self.sustain_pill.set_active(False, "踏板 释放" if long_enabled else "延音 正常")
 
     def update_progress(self, current: float, total: float):
         if total > 0:
@@ -3273,7 +3292,7 @@ class MidiPlayerGUI:
 
         # ===== 自定义标题栏 =====
         self.title_bar = CustomTitleBar(inner, self.root,
-                        title="咲 Midi Player", version="v3.5.1",
+                        title="咲 Midi Player", version="v3.5.3",
                                         on_close=self._on_close)
         self.title_bar.pack(fill=tk.X)
 
@@ -3436,9 +3455,9 @@ class MidiPlayerGUI:
     def _bind_callbacks(self):
         def on_note(key, note, is_chord=False, hold_duration=None):
             if hold_duration is not None:
-                duration_ms = int(min(2000, max(100, hold_duration * 1000)))
+                duration_ms = int(min(150, max(20, hold_duration * 1000)))
             else:
-                duration_ms = int(min(2000, max(100, note.duration * 1000)))
+                duration_ms = int(min(150, max(20, note.duration * 1000)))
             self.root.after(0, lambda: self.piano.highlight_key(key, duration_ms))
             self.root.after(0, lambda: self.info.update_note(key, note, is_chord))
             vel = note.velocity / 127.0 if hasattr(note, 'velocity') else 0.8
