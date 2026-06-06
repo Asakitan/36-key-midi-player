@@ -7,8 +7,13 @@ import mido
 import mido.midifiles.meta as _mido_meta
 import mido.midifiles.midifiles as _mido_files
 import re
+import bisect
 from typing import List, Tuple, Optional, Set, Dict, Any
 from dataclasses import dataclass, field
+
+# 按键限速 / 抽稀重编曲参数（详见 config.py 注释）
+from config import (PRESS_RATE_LIMIT_ENABLED, MIN_PRESS_INTERVAL_S,
+                    MAX_PRESS_GROUP_NOTES)
 
 # === 修复 mido 无法处理损坏的 meta 事件（如空 key_signature）===
 _original_build_meta_message = _mido_meta.build_meta_message
@@ -421,6 +426,10 @@ class MidiParser:
         # === 延音踏板（CC64）===
         self.sustain_events: List[SustainPedalEvent] = []  # 延音踏板事件列表
         self.has_sustain_pedal: bool = False  # MIDI文件是否包含延音踏板数据
+
+        # === 按键限速 / 抽稀重编曲 ===
+        self.press_rate_limit_enabled: bool = PRESS_RATE_LIMIT_ENABLED
+        self.min_press_interval: float = MIN_PRESS_INTERVAL_S
         
     def load_file(self, filepath: str) -> bool:
         """加载MIDI文件"""
@@ -444,7 +453,10 @@ class MidiParser:
             
             # 极速段检测与时间拉伸
             self._humanize_speed()
-            
+
+            # 按键限速：把"最快按键间隔"抽稀到舒适上限（保留旋律骨架）
+            self._enforce_press_rate_limit()
+
             # 智能分析通道
             self._analyze_channels()
             
@@ -1009,6 +1021,158 @@ class MidiParser:
                   f"总时长增加 {time_shift:.2f}秒 ({time_shift/self.total_time*100:.1f}%), "
                   f"BPM变化: {bpm_ratio:.2%} (范围: 85%~115%)")
     
+    def set_press_rate_limit(self, enabled: bool, interval: float = None):
+        """运行期开关/调节按键限速（需要重新 load_file 才会重新抽稀）"""
+        self.press_rate_limit_enabled = enabled
+        if interval is not None and interval > 0:
+            self.min_press_interval = interval
+
+    def _enforce_press_rate_limit(self):
+        """
+        按键限速 + 抽稀重编曲 —— 把"最快按键间隔"限制到 min_press_interval。
+
+        背景：之前用"延迟/错开按键"来限速会破坏节奏（已回退）。这里改用"抽稀"——
+        当原曲某段按键比上限更密时，按音乐重要性丢掉夹在中间的经过音/装饰音，
+        只保留旋律骨架，且保留下来的音符保持原始时间，从而尽量还原原歌曲走向。
+
+        算法：
+        1. 重要性评分：复用 Skyline 主旋律线 + 低音根音线 + 力度/时值/拍位
+        2. 归并按键组：相近起音(<=CHORD_WINDOW)视为一次按下(和弦)，算一个按键时刻
+        3. 动态规划：在所有按键组里选权重和最大的子集，使相邻被选组的起音间隔
+           >= min_press_interval（带状最小间隔的加权区间调度，O(n log n)，结果最优）
+        4. 组内保留旋律骨架：每个被选组最多留 MAX_PRESS_GROUP_NOTES 个音
+           （最高音=旋律 + 最低音=低音根音）
+
+        若全曲本来就够稀疏（像青花瓷简单版那样），一个音都不动。
+        """
+        if not self.press_rate_limit_enabled:
+            return
+        if not self.notes or self.total_time <= 0:
+            return
+
+        G = self.min_press_interval
+        EPS = 0.003  # 间隔比较容差(秒)，避免浮点抖动误伤正好踩在网格上的音
+        if G <= 0:
+            return
+
+        sorted_notes = sorted(self.notes, key=lambda n: (n.time, n.note))
+
+        # === 归并按键组（相近起音=一次按下）===
+        CHORD_WINDOW = 0.05  # 50ms 内的起音视为同时发声（与播放器 MIN_NOTE_INTERVAL 一致）
+        groups = []          # [(onset_time, [notes])]
+        i = 0
+        n = len(sorted_notes)
+        while i < n:
+            onset = sorted_notes[i].time
+            grp = [sorted_notes[i]]
+            j = i + 1
+            while j < n and sorted_notes[j].time - onset < CHORD_WINDOW:
+                grp.append(sorted_notes[j])
+                j += 1
+            groups.append((onset, grp))
+            i = j
+
+        m = len(groups)
+        if m < 2:
+            return
+
+        # 已经够稀疏：所有相邻组间隔都满足上限 → 不动任何音符
+        min_gap = min(groups[k][0] - groups[k - 1][0] for k in range(1, m))
+        if min_gap >= G - EPS:
+            return
+
+        # === 重要性评分（复用现有 Skyline / 低音线 提取器）===
+        bpm = self.bpm if getattr(self, 'bpm', 0) else 120
+        beat_duration = 60.0 / max(bpm, 1)
+
+        melody_line = self._extract_skyline_melody(sorted_notes, beat_duration)
+        melody_set = set(id(x) for x in melody_line)
+        bass_line = self._extract_bass_line(sorted_notes, beat_duration)
+        bass_set = set(id(x) for x in bass_line)
+
+        importance = {}
+        for note in sorted_notes:
+            nid = id(note)
+            score = 0.0
+            if nid in melody_set:
+                score += 0.8                                   # 主旋律：最高优先级
+            if nid in bass_set:
+                score += 0.6                                   # 低音根音：高优先级
+            score += (note.velocity / 127.0) * 0.15            # 重音更重要
+            if note.duration > beat_duration:
+                score += 0.15                                  # 长音更重要
+            elif note.duration > beat_duration * 0.5:
+                score += 0.08
+            if beat_duration > 0:
+                beat_pos = (note.time % beat_duration) / beat_duration
+                if beat_pos < 0.1 or abs(beat_pos - 0.5) < 0.1:  # 落在强拍(第1/3拍)
+                    score += 0.1
+            importance[nid] = score
+
+        # 组权重 = 该时刻最重要音符的分数（代表这一下按键的音乐价值）
+        group_weight = [max(importance[id(x)] for x in g) for _, g in groups]
+        onsets = [t for t, _ in groups]
+
+        # 每个组之后，下一个允许被选的组下标（起音 >= 本组起音 + G）
+        nxt = [0] * m
+        for idx in range(m):
+            target = onsets[idx] + G - EPS
+            nxt[idx] = bisect.bisect_left(onsets, target, idx + 1)
+
+        # === 动态规划：最大权重 + 最小间隔（从后往前）===
+        dp = [0.0] * (m + 1)
+        take = [False] * m
+        for idx in range(m - 1, -1, -1):
+            take_val = group_weight[idx] + dp[nxt[idx]]
+            skip_val = dp[idx + 1]
+            if take_val >= skip_val:
+                dp[idx] = take_val
+                take[idx] = True
+            else:
+                dp[idx] = skip_val
+
+        # 回溯选中的按键组
+        kept_groups = []
+        idx = 0
+        while idx < m:
+            if take[idx]:
+                kept_groups.append(groups[idx])
+                idx = nxt[idx]
+            else:
+                idx += 1
+
+        # === 组内保留旋律骨架：最高音(旋律) + 最低音(低音根音)，最多 MAX_PRESS_GROUP_NOTES ===
+        kept_notes = []
+        for _, g in kept_groups:
+            if len(g) <= MAX_PRESS_GROUP_NOTES:
+                kept_notes.extend(g)
+                continue
+            by_pitch = sorted(g, key=lambda x: x.note)
+            sel = [by_pitch[-1]]                               # 最高音 = 旋律
+            if MAX_PRESS_GROUP_NOTES >= 2 and by_pitch[0].note != by_pitch[-1].note:
+                sel.append(by_pitch[0])                        # 最低音 = 低音根音
+            if len(sel) < MAX_PRESS_GROUP_NOTES:               # 还有名额按重要性补
+                rest = sorted((x for x in g if x not in sel),
+                              key=lambda x: importance[id(x)], reverse=True)
+                sel.extend(rest[:MAX_PRESS_GROUP_NOTES - len(sel)])
+            kept_notes.extend(sel)
+
+        kept_notes.sort(key=lambda x: (x.time, x.note))
+        if not kept_notes:
+            return  # 安全兜底：绝不清空
+
+        orig = len(self.notes)
+        new = len(kept_notes)
+        kept_ids = set(id(x) for x in kept_notes)
+        mel_total = len(melody_set)
+        mel_kept = sum(1 for nid in melody_set if nid in kept_ids)
+        press_rate = len(kept_groups) / self.total_time if self.total_time > 0 else 0
+        self.notes = kept_notes
+        print(f"[按键限速] 上限{G * 1000:.0f}ms(≈{1.0 / G:.1f}击/秒): "
+              f"音符{orig}→{new}(保留{new / orig * 100:.0f}%), "
+              f"按键{m}→{len(kept_groups)}组(≈{press_rate:.1f}组/秒), "
+              f"旋律线保留{mel_kept}/{mel_total}({mel_kept / max(mel_total, 1) * 100:.0f}%)")
+
     def _analyze_pitch_parts(self):
         """
         智能音部分析 - 多因子分割（不只按音高）
