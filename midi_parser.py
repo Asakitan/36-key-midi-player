@@ -11,9 +11,10 @@ import bisect
 from typing import List, Tuple, Optional, Set, Dict, Any
 from dataclasses import dataclass, field
 
-# 按键限速 / 抽稀重编曲参数（详见 config.py 注释）
-from config import (PRESS_RATE_LIMIT_ENABLED, MIN_PRESS_INTERVAL_S,
-                    MAX_PRESS_GROUP_NOTES)
+# 自动改编 / 智能重编曲参数（详见 config.py 注释）
+from config import (PRESS_RATE_LIMIT_ENABLED, ARRANGE_MELODY_MIN_STEP_S,
+                    ARRANGE_BASS_STEP_BEATS, ARRANGE_HARD_FLOOR_S,
+                    ARRANGE_QUANTIZE, MAX_PRESS_GROUP_NOTES)
 
 # === 修复 mido 无法处理损坏的 meta 事件（如空 key_signature）===
 _original_build_meta_message = _mido_meta.build_meta_message
@@ -427,9 +428,13 @@ class MidiParser:
         self.sustain_events: List[SustainPedalEvent] = []  # 延音踏板事件列表
         self.has_sustain_pedal: bool = False  # MIDI文件是否包含延音踏板数据
 
-        # === 按键限速 / 抽稀重编曲 ===
+        # === 自动改编 / 智能重编曲 ===
         self.press_rate_limit_enabled: bool = PRESS_RATE_LIMIT_ENABLED
-        self.min_press_interval: float = MIN_PRESS_INTERVAL_S
+        self.enable_humanize: bool = True   # 极速段时间拉伸开关(改编开启时自动跳过)
+        self.arrange_melody_min_step: float = ARRANGE_MELODY_MIN_STEP_S
+        self.arrange_bass_step_beats: float = ARRANGE_BASS_STEP_BEATS
+        self.arrange_hard_floor: float = ARRANGE_HARD_FLOOR_S
+        self.arrange_quantize: bool = ARRANGE_QUANTIZE
         
     def load_file(self, filepath: str) -> bool:
         """加载MIDI文件"""
@@ -454,14 +459,15 @@ class MidiParser:
             # 极速段检测与时间拉伸
             self._humanize_speed()
 
-            # 按键限速：把"最快按键间隔"抽稀到舒适上限（保留旋律骨架）
-            self._enforce_press_rate_limit()
-
             # 智能分析通道
             self._analyze_channels()
-            
+
             # 按音高智能分析高/低音部（多因子分析）
             self._analyze_pitch_parts()
+
+            # 自动改编：把复杂多声部重编成"清晰旋律 + 干净低音脉冲"的可弹版本
+            # （放在通道/音部分析之后，利用旋律通道信息更准地抓主旋律）
+            self._auto_arrange()
             
             self._detect_chords()
             self._detect_glissandos()  # 滑奏检测
@@ -925,7 +931,11 @@ class MidiParser:
         """
         if not self.notes or self.total_time <= 0:
             return
-        
+        # 自动改编开启时跳过：改编会把密度降到 ~3/s，时间拉伸既多余、又会把音符推离
+        # 拍格原点(t=0)网格，破坏后续量化对齐。
+        if self.press_rate_limit_enabled or not self.enable_humanize:
+            return
+
         sorted_notes = sorted(self.notes, key=lambda n: n.time)
         
         # === 检测极速段落 ===
@@ -1022,156 +1032,300 @@ class MidiParser:
                   f"BPM变化: {bpm_ratio:.2%} (范围: 85%~115%)")
     
     def set_press_rate_limit(self, enabled: bool, interval: float = None):
-        """运行期开关/调节按键限速（需要重新 load_file 才会重新抽稀）"""
+        """运行期开关/调节自动改编（需重新 load_file 生效）。interval=旋律相邻音最小间隔(秒)。"""
         self.press_rate_limit_enabled = enabled
         if interval is not None and interval > 0:
-            self.min_press_interval = interval
+            self.arrange_melody_min_step = interval
 
-    def _enforce_press_rate_limit(self):
+    # ----- 自动改编辅助 -----
+    @staticmethod
+    def _press_onsets(notes, w=0.05):
+        """把音符按 w 秒归并成按键时刻，返回起音时间列表(升序)。"""
+        ns = sorted(notes, key=lambda n: n.time)
+        out = []
+        i, N = 0, len(ns)
+        while i < N:
+            t0 = ns[i].time
+            out.append(t0)
+            j = i + 1
+            while j < N and ns[j].time - t0 < w:
+                j += 1
+            i = j
+        return out
+
+    @staticmethod
+    def _max_polyphony(sorted_notes, w=0.03):
+        """同时起音(w秒窗)的最大音符数——衡量织体厚度。"""
+        times = [n.time for n in sorted_notes]
+        mp, j = 1, 0
+        for i in range(len(times)):
+            while times[i] - times[j] > w:
+                j += 1
+            mp = max(mp, i - j + 1)
+        return mp
+
+    def _arrange_extract_melody(self, sorted_notes, beat, mel_step, mel_channels=None):
         """
-        按键限速 + 抽稀重编曲 —— 把"最快按键间隔"限制到 min_press_interval。
+        提取主旋律线（Viterbi 声部追踪 + 音区锚定）：每 mel_step 网格槽取一个音。
 
-        背景：之前用"延迟/错开按键"来限速会破坏节奏（已回退）。这里改用"抽稀"——
-        当原曲某段按键比上限更密时，按音乐重要性丢掉夹在中间的经过音/装饰音，
-        只保留旋律骨架，且保留下来的音符保持原始时间，从而尽量还原原歌曲走向。
+        关键设计（修复"旋律塌成低音单调嗡鸣""伴奏尖峰带偏""低音漏进旋律"）：
+        - 转移代价按"八度等价"算：跳一个八度几乎免费(只看音级距离)，让追踪器能爬到真旋律；
+        - 音区锚定：先用滑窗中位数估计旋律所在音区，发射奖励偏向落在该音区±7半音内的音，
+          压制比音区低很多(伴奏低音漏入)或高很多(琶音尖峰)的音；
+        - 网格原点 t=0（与量化一致，修掉"旋律晚半格"）；候选放宽到前4个音 + 旋律通道音；
+        - 后处理：把明显落在低音区(远低于旋律音区且 < 低音分界)的音剔除，给旋律留"呼吸/休止"，
+          避免低音脉冲被当成旋律。
+        """
+        if not sorted_notes:
+            return []
+        mel_channels = set(mel_channels) if mel_channels else set()
+        from collections import defaultdict
+        buckets = defaultdict(list)
+        for n in sorted_notes:
+            slot = int(round(n.time / mel_step))         # 以拍格原点 t=0 归槽
+            buckets[slot].append(n)
+        slots = sorted(buckets)
 
-        算法：
-        1. 重要性评分：复用 Skyline 主旋律线 + 低音根音线 + 力度/时值/拍位
-        2. 归并按键组：相近起音(<=CHORD_WINDOW)视为一次按下(和弦)，算一个按键时刻
-        3. 动态规划：在所有按键组里选权重和最大的子集，使相邻被选组的起音间隔
-           >= min_press_interval（带状最小间隔的加权区间调度，O(n log n)，结果最优）
-        4. 组内保留旋律骨架：每个被选组最多留 MAX_PRESS_GROUP_NOTES 个音
-           （最高音=旋律 + 最低音=低音根音）
+        # 第一遍：滑窗中位数估计每槽旋律所在音区（对偶发尖峰稳健）
+        slot_top = [max(buckets[s], key=lambda x: x.note).note for s in slots]
+        W = 8
+        register = []
+        for i in range(len(slots)):
+            win = slot_top[max(0, i - W): i + W + 1]
+            register.append(sorted(win)[len(win) // 2])
 
-        若全曲本来就够稀疏（像青花瓷简单版那样），一个音都不动。
+        # 每槽候选：最高的前 4 个不同音 + 旋律通道最高音 + 最接近音区中位数的音
+        cand_list = []
+        for i, s in enumerate(slots):
+            slot_notes = buckets[s]
+            seen, cands = set(), []
+            for n in sorted(slot_notes, key=lambda x: x.note, reverse=True):
+                if n.note in seen:
+                    continue
+                seen.add(n.note); cands.append(n)
+                if len(cands) >= 4:
+                    break
+            if mel_channels:
+                mc = [n for n in slot_notes if n.channel in mel_channels]
+                if mc:
+                    top_mc = max(mc, key=lambda x: x.note)
+                    if top_mc.note not in seen:
+                        seen.add(top_mc.note); cands.append(top_mc)
+            near = min(slot_notes, key=lambda x: abs(x.note - register[i]))  # 贴近音区的音
+            if near.note not in seen:
+                cands.append(near)
+            cand_list.append(cands)
+        if not cand_list:
+            return []
+
+        def emis(n, reg):                                 # 发射奖励（越大越像旋律）
+            sc = n.note / 127.0 * 0.3                      # 轻微高音偏好（主导让位给音区锚）
+            if mel_channels and n.channel in mel_channels:
+                sc += 0.6                                   # 旋律通道优先
+            dd = n.note - reg
+            if abs(dd) <= 7:
+                sc += 0.3                                   # 落在旋律音区内：强奖励
+            elif dd < -9:
+                sc -= 0.4                                   # 远低于音区：多半是低音漏入
+            elif dd > 9:
+                sc -= 0.2                                   # 远高于音区：多半是琶音尖峰
+            if beat > 0:
+                bp = (n.time % beat) / beat
+                if bp < 0.15 or abs(bp - 0.5) < 0.15:
+                    sc += 0.12
+            sc += min(n.duration / max(beat, 1e-9), 1.0) * 0.15
+            return sc
+
+        def trans(a, b):                                  # 八度等价转移代价
+            ad = abs(a.note - b.note)
+            if ad == 0:
+                return 0.04                                # 同音重复不再免费（否则旋律塌成一个音）
+            ic = abs(((ad + 6) % 12) - 6)                  # 音级距离 0..6
+            return ic * 0.05 + (ad // 12) * 0.04           # 八度跳跃几乎免费
+
+        INF = float('inf')
+        prev_cost, prev_cands, back = None, None, []
+        for i, cands in enumerate(cand_list):
+            reg = register[i]
+            cost, bk = [], []
+            for c in cands:
+                e = -emis(c, reg)
+                if prev_cost is None:
+                    cost.append(e); bk.append(-1)
+                else:
+                    best, bj = INF, 0
+                    for pj, pc in enumerate(prev_cands):
+                        v = prev_cost[pj] + trans(pc, c) + e
+                        if v < best:
+                            best, bj = v, pj
+                    cost.append(best); bk.append(bj)
+            back.append(bk); prev_cost, prev_cands = cost, cands
+
+        chosen = [None] * len(cand_list)
+        j = min(range(len(prev_cost)), key=lambda k: prev_cost[k])
+        for idx in range(len(cand_list) - 1, -1, -1):
+            chosen[idx] = cand_list[idx][j]
+            j = back[idx][j]
+            if j < 0:
+                j = 0
+        # 低音漏入由发射项的音区惩罚(dd<-9 → -0.4)抑制，不再做后处理硬剔除
+        # （硬剔除会误伤低音区/单通道曲目的真旋律，得不偿失）
+        return chosen
+
+    def _arrange_extract_bass(self, sorted_notes, beat, bass_step_beats):
+        """
+        提取低音脉冲：每 bass_step 拍一个低音根音。
+
+        修复（"鼓点当低音""根音乱跳/选到转位经过音""同音机关枪"）：
+        - 来源优先用 bass_channels（不含鼓 ch9），否则用相对音高分界取低声部；
+        - 每拍取"时值占比最高的低音音级"的最低实例作为根音（比单纯最低音更像真正的根）；
+        - 抑制连续完全相同音高的重复敲击，减少机关枪式重复。
+        """
+        if not sorted_notes:
+            return []
+        bass_step = beat * max(bass_step_beats, 0.25)
+        bch = set(getattr(self, 'bass_channels', []) or [])
+        bch.discard(9)                                    # 鼓通道不算低音
+        src = [n for n in sorted_notes if n.channel in bch] if bch else []
+        if len(src) < 8:                                  # 无低音通道 → 用相对音高分界
+            pitches = sorted(n.note for n in sorted_notes)
+            median = pitches[len(pitches) // 2]
+            split = max(36, min(median - 2, 55))
+            src = [n for n in sorted_notes if n.note <= split]
+            if len(src) < 8:
+                src = sorted_notes
+        from collections import defaultdict
+        buckets = defaultdict(list)
+        for n in src:
+            buckets[int(round(n.time / bass_step))].append(n)
+
+        out = []
+        prev_pitch = None
+        for s in sorted(buckets):
+            cand = buckets[s]
+            pc_dur = defaultdict(float)                    # 音级总时值
+            pc_low = {}                                    # 音级 → 最低实例
+            for n in cand:
+                pc = n.note % 12
+                pc_dur[pc] += max(n.duration, 0.01)
+                if pc not in pc_low or n.note < pc_low[pc].note:
+                    pc_low[pc] = n
+            best_pc = max(pc_dur, key=pc_dur.get)          # 时值占比最高的音级=根音
+            root = pc_low[best_pc]
+            if prev_pitch is not None and root.note == prev_pitch:
+                continue                                   # 抑制完全相同的连续重复
+            out.append(root)
+            prev_pitch = root.note
+        return out
+
+    def _arrange_merge(self, melody, bass):
+        """合并旋律+低音：按硬下限归并按键组 → 每组最多2键(高音+低音)。
+
+        音符已在调用方按各自网格(旋律=细分, 低音=拍)对齐过，这里只做归并去重。
+        """
+        alln = list(melody) + list(bass)
+        if not alln:
+            return []
+        alln.sort(key=lambda n: (n.time, n.note))
+
+        floor = max(self.arrange_hard_floor, 0.05)       # 任意两次按键最小间隔
+        groups = []                                      # [{'t':onset, 'notes':[...]}]
+        for n in alln:
+            if groups and n.time - groups[-1]['t'] < floor - 1e-6:
+                groups[-1]['notes'].append(n)
+            else:
+                groups.append({'t': n.time, 'notes': [n]})
+
+        final = []
+        for grp in groups:
+            uniq = {}                                    # 去掉同音重叠
+            for n in grp['notes']:
+                if n.note not in uniq:
+                    uniq[n.note] = n
+            cand = list(uniq.values())
+            if len(cand) > MAX_PRESS_GROUP_NOTES:
+                cand.sort(key=lambda n: n.note)
+                sel = [cand[-1], cand[0]]                # 最高音(旋律) + 最低音(低音)
+            else:
+                sel = cand
+            for n in sel:
+                n.time = grp['t']                        # 对齐到本组共同起音
+                final.append(n)
+        return final
+
+    def _auto_arrange(self):
+        """
+        自动改编 —— 把复杂多声部 MIDI 重编成"清晰旋律 + 干净低音脉冲"的可弹版本。
+
+        参考自动钢琴缩谱(piano reduction)/难度可控简化的标准做法：
+        1. Skyline 提取主旋律线，规整到统一细分(八分/十六分)，连续成线、绝不打散；
+        2. 按拍生成低音根音脉冲(boom)，替换原曲杂乱内声部；
+        3. 旋律+低音合并(每次最多2键)，轻量对齐节拍网格稳住节奏，加按键硬下限保护。
+
+        本来就简单/稀疏的曲子(儿歌、教学曲、简单版)原样不动。
         """
         if not self.press_rate_limit_enabled:
             return
-        if not self.notes or self.total_time <= 0:
+        if not self.notes or self.total_time <= 0 or len(self.notes) < 8:
             return
 
-        G = self.min_press_interval
-        EPS = 0.003  # 间隔比较容差(秒)，避免浮点抖动误伤正好踩在网格上的音
-        if G <= 0:
+        # 丢掉鼓通道(GM ch9)：否则 kick/snare 会被当成低音根音和旋律候选，污染一切
+        notes = sorted((n for n in self.notes if n.channel != 9),
+                       key=lambda n: (n.time, n.note))
+        if len(notes) < 8:
             return
-
-        sorted_notes = sorted(self.notes, key=lambda n: (n.time, n.note))
-
-        # === 归并按键组（相近起音=一次按下）===
-        CHORD_WINDOW = 0.05  # 50ms 内的起音视为同时发声（与播放器 MIN_NOTE_INTERVAL 一致）
-        groups = []          # [(onset_time, [notes])]
-        i = 0
-        n = len(sorted_notes)
-        while i < n:
-            onset = sorted_notes[i].time
-            grp = [sorted_notes[i]]
-            j = i + 1
-            while j < n and sorted_notes[j].time - onset < CHORD_WINDOW:
-                grp.append(sorted_notes[j])
-                j += 1
-            groups.append((onset, grp))
-            i = j
-
-        m = len(groups)
-        if m < 2:
-            return
-
-        # 已经够稀疏：所有相邻组间隔都满足上限 → 不动任何音符
-        min_gap = min(groups[k][0] - groups[k - 1][0] for k in range(1, m))
-        if min_gap >= G - EPS:
-            return
-
-        # === 重要性评分（复用现有 Skyline / 低音线 提取器）===
         bpm = self.bpm if getattr(self, 'bpm', 0) else 120
-        beat_duration = 60.0 / max(bpm, 1)
+        beat = 60.0 / max(bpm, 1)
+        sixteenth = beat / 4.0
+        eighth = beat / 2.0
 
-        melody_line = self._extract_skyline_melody(sorted_notes, beat_duration)
-        melody_set = set(id(x) for x in melody_line)
-        bass_line = self._extract_bass_line(sorted_notes, beat_duration)
-        bass_set = set(id(x) for x in bass_line)
+        # 旋律细分：十六分够慢(>=阈值)就十六分，否则退到八分(旋律永不比八分更粗，保证可辨认)
+        mel_step = sixteenth if sixteenth >= self.arrange_melody_min_step else eighth
 
-        importance = {}
-        for note in sorted_notes:
-            nid = id(note)
-            score = 0.0
-            if nid in melody_set:
-                score += 0.8                                   # 主旋律：最高优先级
-            if nid in bass_set:
-                score += 0.6                                   # 低音根音：高优先级
-            score += (note.velocity / 127.0) * 0.15            # 重音更重要
-            if note.duration > beat_duration:
-                score += 0.15                                  # 长音更重要
-            elif note.duration > beat_duration * 0.5:
-                score += 0.08
-            if beat_duration > 0:
-                beat_pos = (note.time % beat_duration) / beat_duration
-                if beat_pos < 0.1 or abs(beat_pos - 0.5) < 0.1:  # 落在强拍(第1/3拍)
-                    score += 0.1
-            importance[nid] = score
+        # 已经够简单：薄织体 + 不快 → 不动
+        poly = self._max_polyphony(notes, 0.03)
+        onsets0 = self._press_onsets(notes, 0.05)
+        min_ioi = min((onsets0[k] - onsets0[k - 1] for k in range(1, len(onsets0))), default=99.0)
+        density = len(notes) / self.total_time
+        if poly <= 2 and density <= 4.0 and min_ioi >= mel_step * 0.9:
+            return
 
-        # 组权重 = 该时刻最重要音符的分数（代表这一下按键的音乐价值）
-        group_weight = [max(importance[id(x)] for x in g) for _, g in groups]
-        onsets = [t for t, _ in groups]
+        # 旋律通道优先：多通道时只要旋律通道非空即启用（去掉"必须真子集"的过严限制；
+        # 单轨钢琴曲所有音同通道 → 奖励均匀施加 = 无副作用）
+        all_ch = set(n.channel for n in notes)
+        mc = set(getattr(self, 'melody_channels', []) or [])
+        mc.discard(9)
+        mel_channels = mc if (len(all_ch) > 1 and mc) else None
 
-        # 每个组之后，下一个允许被选的组下标（起音 >= 本组起音 + G）
-        nxt = [0] * m
-        for idx in range(m):
-            target = onsets[idx] + G - EPS
-            nxt[idx] = bisect.bisect_left(onsets, target, idx + 1)
+        melody = self._arrange_extract_melody(notes, beat, mel_step, mel_channels)
+        bass = self._arrange_extract_bass(notes, beat, self.arrange_bass_step_beats)
+        if not melody:
+            return
 
-        # === 动态规划：最大权重 + 最小间隔（从后往前）===
-        dp = [0.0] * (m + 1)
-        take = [False] * m
-        for idx in range(m - 1, -1, -1):
-            take_val = group_weight[idx] + dp[nxt[idx]]
-            skip_val = dp[idx + 1]
-            if take_val >= skip_val:
-                dp[idx] = take_val
-                take[idx] = True
-            else:
-                dp[idx] = skip_val
+        # 分声部对齐到各自网格(以拍格原点 t=0 为基准)：旋律→细分(8/16分)，低音→拍。
+        # 两者网格互为整数倍，天然对齐，节奏干净不抖动
+        # （修掉"旋律落在错位的16分槽、低音单独冒出来"的怪声）。
+        if self.arrange_quantize:
+            bstep = beat * max(self.arrange_bass_step_beats, 0.25)
+            for n in melody:
+                q = round(n.time / mel_step) * mel_step
+                n.time = q if q > 0 else 0.0
+            for n in bass:
+                q = round(n.time / bstep) * bstep
+                n.time = q if q > 0 else 0.0
 
-        # 回溯选中的按键组
-        kept_groups = []
-        idx = 0
-        while idx < m:
-            if take[idx]:
-                kept_groups.append(groups[idx])
-                idx = nxt[idx]
-            else:
-                idx += 1
-
-        # === 组内保留旋律骨架：最高音(旋律) + 最低音(低音根音)，最多 MAX_PRESS_GROUP_NOTES ===
-        kept_notes = []
-        for _, g in kept_groups:
-            if len(g) <= MAX_PRESS_GROUP_NOTES:
-                kept_notes.extend(g)
-                continue
-            by_pitch = sorted(g, key=lambda x: x.note)
-            sel = [by_pitch[-1]]                               # 最高音 = 旋律
-            if MAX_PRESS_GROUP_NOTES >= 2 and by_pitch[0].note != by_pitch[-1].note:
-                sel.append(by_pitch[0])                        # 最低音 = 低音根音
-            if len(sel) < MAX_PRESS_GROUP_NOTES:               # 还有名额按重要性补
-                rest = sorted((x for x in g if x not in sel),
-                              key=lambda x: importance[id(x)], reverse=True)
-                sel.extend(rest[:MAX_PRESS_GROUP_NOTES - len(sel)])
-            kept_notes.extend(sel)
-
-        kept_notes.sort(key=lambda x: (x.time, x.note))
-        if not kept_notes:
-            return  # 安全兜底：绝不清空
+        result = self._arrange_merge(melody, bass)
+        if len(result) < 4:
+            return
 
         orig = len(self.notes)
-        new = len(kept_notes)
-        kept_ids = set(id(x) for x in kept_notes)
-        mel_total = len(melody_set)
-        mel_kept = sum(1 for nid in melody_set if nid in kept_ids)
-        press_rate = len(kept_groups) / self.total_time if self.total_time > 0 else 0
-        self.notes = kept_notes
-        print(f"[按键限速] 上限{G * 1000:.0f}ms(≈{1.0 / G:.1f}击/秒): "
-              f"音符{orig}→{new}(保留{new / orig * 100:.0f}%), "
-              f"按键{m}→{len(kept_groups)}组(≈{press_rate:.1f}组/秒), "
-              f"旋律线保留{mel_kept}/{mel_total}({mel_kept / max(mel_total, 1) * 100:.0f}%)")
+        self.notes = sorted(result, key=lambda n: (n.time, n.note))
+        on2 = self._press_onsets(self.notes, 0.05)
+        pr = len(on2) / self.total_time if self.total_time > 0 else 0
+        sub = '16分' if abs(mel_step - sixteenth) < 1e-6 else '8分'
+        print(f"[自动改编] {orig}→{len(self.notes)}音符 "
+              f"(旋律{len(melody)}+低音{len(bass)}线, 旋律细分={sub}/{mel_step*1000:.0f}ms, "
+              f"≈{pr:.1f}组/秒, 厚度{poly}→≤2)")
 
     def _analyze_pitch_parts(self):
         """
